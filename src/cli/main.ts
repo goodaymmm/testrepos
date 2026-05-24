@@ -3,6 +3,10 @@ import { pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { KAIRON_VERSION } from "../index.js";
 import { initializeProject } from "./commands/init.js";
+import { closeActiveWork } from "./commands/leave.js";
+import { startRuntime } from "./commands/start.js";
+import { getStatusText } from "./commands/status.js";
+import { stopRuntime } from "./commands/stop.js";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -36,22 +40,22 @@ export function createProgram(): Command {
   program
     .command("start")
     .description("Start the Kairon runtime.")
-    .action(() => {
-      console.log("kairon start is not implemented yet.");
+    .action(async () => {
+      console.log(await startRuntime(process.cwd()));
     });
 
   program
     .command("stop")
     .description("Stop the Kairon runtime.")
-    .action(() => {
-      console.log("kairon stop is not implemented yet.");
+    .action(async () => {
+      console.log(await stopRuntime(process.cwd()));
     });
 
   program
     .command("status")
     .description("Show runtime, queue, session, and approval status.")
-    .action(() => {
-      console.log("kairon status is not implemented yet.");
+    .action(async () => {
+      console.log(await getStatusText(process.cwd()));
     });
 
   const task = program.command("task").description("Manage Kairon tasks.");
@@ -76,8 +80,8 @@ export function createProgram(): Command {
   program
     .command("leave")
     .description("Close today's Active Work and switch to standby behavior.")
-    .action(() => {
-      console.log("kairon leave is not implemented yet.");
+    .action(async () => {
+      console.log(await closeActiveWork(process.cwd()));
     });
 
   const maintenance = program
