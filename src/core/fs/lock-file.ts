@@ -13,6 +13,13 @@ export type LockHandle = {
   data: LockFileData;
 };
 
+export class LockAlreadyExistsError extends Error {
+  constructor(readonly lockPath: string) {
+    super(`Lock already exists: ${lockPath}`);
+    this.name = "LockAlreadyExistsError";
+  }
+}
+
 export async function acquireLockFile(
   filePath: string,
   owner: string,
@@ -43,7 +50,7 @@ export async function acquireLockFile(
       return acquireLockFile(filePath, owner, ttlMs);
     }
 
-    throw new Error(`Lock already exists: ${filePath}`);
+    throw new LockAlreadyExistsError(filePath);
   }
 }
 
