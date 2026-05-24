@@ -1,0 +1,138 @@
+# Kairon RAG Memory v0
+
+## 目的
+
+RAG Memory は、Agent が毎回すべての project document を読む必要をなくし、必要な文脈だけを job ごとに渡すための derived index である。
+canonical source は JSON / JSONL / MD であり、RAG index はいつでも再構築できる補助データとして扱う。
+
+## Memory Layers
+
+| Layer | 内容 | 寿命 | Retrieval |
+| --- | --- | --- | --- |
+| rules | AGENTS.md、CLAUDE.md、GEMINI.md、Kairon rules | 長期 | 常に優先 |
+| facts | project構成、test command、API contract | 変更まで | metadata filter |
+| decisions | 承認、設計判断、却下理由 | 長期 | task / resource filter |
+| episodes | run log、review、QA結果 | 中期 | recency + similarity |
+| documents | PRD、仕様、外部公式docs | 長期 | collection routing |
+| code | file summary、symbol、test map | commitごと | path / symbol filter |
+
+## Index Pipeline
+
+```text
+canonical files
+  -> loader
+  -> normalizer
+  -> chunker
+  -> metadata enricher
+  -> embedding
+  -> vector index
+  -> lexical index
+  -> manifest
+```
+
+## Document Metadata
+
+```json
+{
+  "doc_id": "rules:AGENTS.md:sha256:...",
+  "collection": "project_rules",
+  "project_id": "example-app",
+  "source_path": "AGENTS.md",
+  "source_type": "rule",
+  "task_id": null,
+  "resource": "repo:*",
+  "persona": ["planner", "implementer", "reviewer", "qa"],
+  "risk_level": "all",
+  "created_at": "2026-05-23T00:00:00+09:00",
+  "updated_at": "2026-05-23T00:00:00+09:00",
+  "hash": "sha256:..."
+}
+```
+
+## Retrieval Plan
+
+Agent は自由に検索しない。
+Control Plane が task と persona から retrieval plan を作る。
+
+```json
+{
+  "task_id": "TASK-0001",
+  "persona": "implementer",
+  "query": "approval board implementation constraints",
+  "collections": ["project_rules", "task_state", "code_index", "decisions"],
+  "filters": {
+    "project_id": "example-app",
+    "resource": ["repo:path:src/**", "state:approvals"]
+  },
+  "top_k": 8,
+  "rerank": true,
+  "compress": true
+}
+```
+
+## Context Budget
+
+RAG の失敗は「情報不足」だけでなく「情報過多」でも起きる。
+persona ごとに context budget を分ける。
+
+| Persona | 優先 context |
+| --- | --- |
+| planner | requirements、decisions、dependency graph |
+| implementer | rules、acceptance、relevant files、test map |
+| reviewer | diff、rules、past incidents、acceptance |
+| qa | acceptance、test map、past failures、run logs |
+| researcher | external docs、requirements、decision gaps |
+| maintainer | generated paths、cleanup policy、past cleanup |
+
+## Update Policy
+
+- rule / config 更新時は即時 re-index。
+- commit / push 後に code_index を更新する。
+- run 完了時に task_history と episodes を更新する。
+- approval decision 発生時に decisions を更新する。
+- maintenance time に stale chunk と orphan index を掃除する。
+
+## Safety
+
+- secret path は index しない。
+- `.env`, credential, token, private key は chunk 化しない。
+- provider embedding を使う場合は外部送信対象と追加 API 課金の有無を明示する。
+- MVP は外部 embedding API を前提にせず、local embedding を標準にする。
+- retrieval result には source id と hash を必ず含める。
+- RAG result は根拠であり、policy decision の唯一の根拠にしない。
+
+## rag.json
+
+```json
+{
+  "enabled": true,
+  "storage": {
+    "base_dir": ".kairon/rag",
+    "vector": "local",
+    "lexical": "local",
+    "graph": "local"
+  },
+  "embedding_profile": "local_default",
+  "collections": {
+    "project_rules": { "enabled": true, "required": true },
+    "task_state": { "enabled": true },
+    "task_history": { "enabled": true },
+    "code_index": { "enabled": true },
+    "decisions": { "enabled": true },
+    "incidents": { "enabled": true },
+    "external_docs": { "enabled": true }
+  },
+  "security": {
+    "exclude_paths": [".env*", "**/*.pem", "**/*secret*", "**/*token*"],
+    "require_source_hash": true
+  }
+}
+```
+
+## MVP Scope
+
+- local index を作成できる。
+- project rules と task state を検索できる。
+- context bundle を生成できる。
+- source id / hash 付きで retrieval result を保存できる。
+- re-index を maintenance job として実行できる。
