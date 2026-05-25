@@ -21,7 +21,14 @@ export type DailyBootstrapRequest = {
 };
 
 export type ContextSource = {
-  type: "task" | "messages" | "rule" | "scratch" | "extra";
+  type:
+    | "task"
+    | "messages"
+    | "rule"
+    | "scratch"
+    | "daily_report"
+    | "handoff"
+    | "extra";
   path: string;
   sha256: string;
   bytes: number;
@@ -177,6 +184,43 @@ export class ContextBuilder {
       sources.push({ type: "scratch", absolutePath: scratchPath, content: scratch });
     }
 
+    sources.push(...(await this.collectPreviousDaySources(agent, date)));
+
+    return sources;
+  }
+
+  private async collectPreviousDaySources(
+    agent: AgentId,
+    date: string
+  ): Promise<SourceDraft[]> {
+    const paths = getKaironPaths(this.projectRoot);
+    const previousDate = previousDateKey(date);
+    const dailyReportPath = resolveInside(
+      paths.reportsDir,
+      "daily",
+      `${previousDate}.json`
+    );
+    const handoffPath = resolveInside(
+      paths.sessionsDir,
+      previousDate,
+      agent,
+      "handoff.md"
+    );
+    const sources: SourceDraft[] = [];
+    const dailyReport = await readOptionalText(dailyReportPath);
+    if (dailyReport !== null) {
+      sources.push({
+        type: "daily_report",
+        absolutePath: dailyReportPath,
+        content: dailyReport
+      });
+    }
+
+    const handoff = await readOptionalText(handoffPath);
+    if (handoff !== null) {
+      sources.push({ type: "handoff", absolutePath: handoffPath, content: handoff });
+    }
+
     return sources;
   }
 }
@@ -289,4 +333,14 @@ function sha256(content: string): string {
 
 function relativeToProject(projectRoot: string, filePath: string): string {
   return toPosixPath(path.relative(projectRoot, filePath));
+}
+
+function previousDateKey(date: string): string {
+  const parsed = new Date(`${date}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid date: ${date}`);
+  }
+
+  parsed.setUTCDate(parsed.getUTCDate() - 1);
+  return parsed.toISOString().slice(0, 10);
 }

@@ -4,6 +4,7 @@ import { Command } from "commander";
 import { KAIRON_VERSION } from "../index.js";
 import { initializeProject } from "./commands/init.js";
 import { closeActiveWork } from "./commands/leave.js";
+import { runMaintenance } from "./commands/maintenance.js";
 import { startRuntime } from "./commands/start.js";
 import { getStatusText } from "./commands/status.js";
 import { stopRuntime } from "./commands/stop.js";
@@ -91,8 +92,8 @@ export function createProgram(): Command {
   maintenance
     .command("run")
     .description("Run daily maintenance manually.")
-    .action(() => {
-      console.log("kairon maintenance run is not implemented yet.");
+    .action(async () => {
+      console.log(await runMaintenance(process.cwd()));
     });
 
   return program;

@@ -1,0 +1,173 @@
+import { access, mkdir, readdir, stat } from "node:fs/promises";
+import path from "node:path";
+import { loadConfigFile } from "../core/config/load-config.js";
+import { writeJsonFileAtomic } from "../core/fs/json-file.js";
+import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
+
+export type CleanupCandidate = {
+  id: string;
+  path: string;
+  kind: "file" | "directory";
+  reason: string;
+  proposed_action: "move_to_kairon_tmp";
+  destination: string;
+  size_bytes: number;
+};
+
+export type CleanupProposal = {
+  schema_version: string;
+  date: string;
+  proposal_path: string;
+  direct_delete: false;
+  candidates: CleanupCandidate[];
+  morning_review_task: {
+    type: "cleanup_triage";
+    title: string;
+    priority: number;
+    schedule_mode: "active_work";
+    resources: string[];
+    acceptance: string[];
+  };
+  created_at: string;
+};
+
+export type CreateCleanupProposalsRequest = {
+  date: string;
+  candidatePaths?: string[];
+};
+
+type ProjectConfig = {
+  paths?: {
+    generated?: string[];
+  };
+};
+
+export async function createCleanupProposals(
+  projectRoot: string,
+  request: CreateCleanupProposalsRequest
+): Promise<CleanupProposal> {
+  const paths = getKaironPaths(projectRoot);
+  const proposalPath = resolveInside(
+    paths.cleanupDir,
+    "proposals",
+    `${request.date}.json`
+  );
+  const candidateRoots = await resolveCandidateRoots(projectRoot, request);
+  const candidates = await Promise.all(
+    candidateRoots.map((candidatePath, index) =>
+      buildCandidate(projectRoot, request.date, candidatePath, index + 1)
+    )
+  );
+  const proposal: CleanupProposal = {
+    schema_version: "0.1",
+    date: request.date,
+    proposal_path: toProjectPath(paths.root, proposalPath),
+    direct_delete: false,
+    candidates: candidates.filter((candidate): candidate is CleanupCandidate => candidate !== null),
+    morning_review_task: {
+      type: "cleanup_triage",
+      title: `Review cleanup proposals for ${request.date}`,
+      priority: 100,
+      schedule_mode: "active_work",
+      resources: [toProjectPath(paths.root, proposalPath)],
+      acceptance: [
+        "Review each candidate before moving it to .kairon/tmp.",
+        "Do not delete source files directly.",
+        "Record approved moves as follow-up work."
+      ]
+    },
+    created_at: new Date().toISOString()
+  };
+
+  await writeJsonFileAtomic(proposalPath, proposal);
+  return proposal;
+}
+
+async function resolveCandidateRoots(
+  projectRoot: string,
+  request: CreateCleanupProposalsRequest
+): Promise<string[]> {
+  const paths = getKaironPaths(projectRoot);
+  const config = await loadConfigFile<ProjectConfig>(projectRoot, "project.json");
+  const configured = [
+    ...(config.paths?.generated ?? []),
+    ...(request.candidatePaths ?? [])
+  ];
+  const roots = configured
+    .map((pattern) => patternRoot(pattern))
+    .filter((candidate) => candidate.length > 0)
+    .map((candidate) => resolveInside(paths.root, candidate))
+    .filter((candidate) => !isInside(candidate, paths.kaironDir));
+  const unique = [...new Set(roots)];
+  const existing: string[] = [];
+
+  for (const candidate of unique) {
+    try {
+      await access(candidate);
+      existing.push(candidate);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+    }
+  }
+
+  return existing.sort((left, right) =>
+    toProjectPath(paths.root, left).localeCompare(toProjectPath(paths.root, right))
+  );
+}
+
+async function buildCandidate(
+  projectRoot: string,
+  date: string,
+  candidatePath: string,
+  index: number
+): Promise<CleanupCandidate | null> {
+  const stats = await stat(candidatePath);
+  const projectPath = toProjectPath(projectRoot, candidatePath);
+  const id = `CLEAN-${date.replaceAll("-", "")}-${String(index).padStart(3, "0")}`;
+
+  return {
+    id,
+    path: projectPath,
+    kind: stats.isDirectory() ? "directory" : "file",
+    reason: "configured generated path exists after the work day",
+    proposed_action: "move_to_kairon_tmp",
+    destination: toPosixPath(path.join(".kairon", "tmp", date, slug(projectPath))),
+    size_bytes: await sizeBytes(candidatePath)
+  };
+}
+
+async function sizeBytes(candidatePath: string): Promise<number> {
+  const stats = await stat(candidatePath);
+  if (!stats.isDirectory()) {
+    return stats.size;
+  }
+
+  const entries = await readdir(candidatePath, { withFileTypes: true });
+  const sizes = await Promise.all(
+    entries.map((entry) => sizeBytes(path.join(candidatePath, entry.name)))
+  );
+  return sizes.reduce((total, value) => total + value, 0);
+}
+
+function patternRoot(pattern: string): string {
+  const normalized = toPosixPath(pattern).replace(/^\/+/, "");
+  const wildcardIndex = normalized.search(/[*?[\]{}]/);
+  const fixed =
+    wildcardIndex === -1 ? normalized : normalized.slice(0, wildcardIndex);
+  return fixed.replace(/\/+$/, "");
+}
+
+function isInside(candidate: string, root: string): boolean {
+  const relative = path.relative(root, candidate);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function slug(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "-");
+}
+
+function toProjectPath(projectRoot: string, filePath: string): string {
+  return toPosixPath(path.relative(projectRoot, filePath));
+}
