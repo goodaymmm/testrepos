@@ -7,6 +7,7 @@ import { KAIRON_VERSION } from "../index.js";
 import { initializeProject } from "./commands/init.js";
 import { closeActiveWork } from "./commands/leave.js";
 import { runMaintenance } from "./commands/maintenance.js";
+import { runMigrations } from "./commands/migrate.js";
 import { startRuntime } from "./commands/start.js";
 import { getStatusText } from "./commands/status.js";
 import { stopRuntime } from "./commands/stop.js";
@@ -31,6 +32,14 @@ export function createProgram(): Command {
       if (result.gitignoreSuggestionNeeded) {
         console.log("Add `.kairon/` to .gitignore before committing.");
       }
+    });
+
+  program
+    .command("migrate")
+    .description("Migrate existing .kairon configuration to the current schema.")
+    .option("--dry-run", "Show planned migrations without writing files")
+    .action(async (options: { dryRun?: boolean }) => {
+      console.log(await runMigrations(process.cwd(), { dryRun: options.dryRun }));
     });
 
   program

@@ -8,6 +8,7 @@
 
 ```text
 kairon init
+kairon migrate
 kairon doctor
 kairon start
 kairon stop
@@ -36,6 +37,33 @@ discover root rules
 generate .kairon/rules
 run doctor checks
 create sample task if requested
+```
+
+## kairon migrate
+
+既存 `.kairon/config/*.json` を現在のschemaやCLI名に合わせて移行する。
+
+```text
+kairon migrate --dry-run
+kairon migrate
+```
+
+処理。
+
+```text
+load existing config
+detect required migrations
+show dry-run diff if requested
+create .bak-YYYYMMDDHHmmss before writing
+write migrated config
+validate config
+```
+
+MVPでは、旧 Gemini CLI 設定を AntigravityCLI 設定へ移行する。
+
+```text
+agents.gemini.adapter: gemini_cli -> antigravity_cli
+agents.gemini.command: gemini -> agy
 ```
 
 ## kairon doctor

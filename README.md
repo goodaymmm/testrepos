@@ -123,6 +123,15 @@ kairon init
 
 対象プロジェクトに `.kairon/` と初期設定を作成します。既存の root `AGENTS.md` などは上書きしません。
 
+### 設定マイグレーション
+
+```powershell
+kairon migrate --dry-run
+kairon migrate
+```
+
+既存 `.kairon/config/*.json` を現在のschemaやCLI名に合わせて移行します。実行時は対象configのbackupを `.kairon/config/*.bak-YYYYMMDDHHmmss` として作成します。
+
 ### 起動
 
 ```powershell
