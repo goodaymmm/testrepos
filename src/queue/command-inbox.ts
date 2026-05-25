@@ -6,29 +6,37 @@ import { nextId } from "../core/ids/counter.js";
 
 export type CommandStatus = "queued" | "claimed" | "completed" | "failed";
 
-export type ApprovalDecisionCommand = {
+export type CommandOrigin = {
+  source?: "local" | "discord";
+  actor?: unknown;
+  received_at?: string;
+  discord?: {
+    guild_id?: string;
+    channel_id?: string;
+    message_id?: string;
+    interaction_id?: string;
+    custom_id?: string;
+  };
+  nonce?: string;
+};
+
+export type ApprovalDecisionCommand = CommandOrigin & {
   type: "approval.decide";
   approval_id: string;
   decision: "approve" | "reject" | "request_changes";
   reason?: string;
-  actor?: unknown;
-  received_at?: string;
 };
 
-export type ApprovalSnoozeCommand = {
+export type ApprovalSnoozeCommand = CommandOrigin & {
   type: "approval.snooze";
   approval_id: string;
   until: string;
-  actor?: unknown;
-  received_at?: string;
 };
 
-export type CloseActiveWorkCommand = {
+export type CloseActiveWorkCommand = CommandOrigin & {
   type: "schedule.close_active_work";
   date: string;
   reason: string;
-  actor?: unknown;
-  received_at?: string;
 };
 
 export type KaironCommand =
