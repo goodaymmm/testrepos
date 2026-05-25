@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-import { pathToFileURL } from "node:url";
+import { realpathSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { KAIRON_VERSION } from "../index.js";
 import { initializeProject } from "./commands/init.js";
@@ -103,10 +105,37 @@ export async function main(argv = process.argv): Promise<void> {
   await createProgram().parseAsync(argv);
 }
 
-const isEntrypoint =
-  process.argv[1] !== undefined &&
-  import.meta.url === pathToFileURL(process.argv[1]).href;
+export type RealpathResolver = (filePath: string) => string;
+
+export function isCliEntrypoint(
+  importMetaUrl: string,
+  argvPath: string | undefined,
+  realpath: RealpathResolver = realpathSync.native
+): boolean {
+  if (argvPath === undefined) {
+    return false;
+  }
+
+  try {
+    return samePath(
+      realpath(fileURLToPath(importMetaUrl)),
+      realpath(path.resolve(argvPath))
+    );
+  } catch {
+    return importMetaUrl === pathToFileURL(path.resolve(argvPath)).href;
+  }
+}
+
+const isEntrypoint = isCliEntrypoint(import.meta.url, process.argv[1]);
 
 if (isEntrypoint) {
   await main();
+}
+
+function samePath(left: string, right: string): boolean {
+  if (process.platform === "win32") {
+    return left.toLowerCase() === right.toLowerCase();
+  }
+
+  return left === right;
 }
