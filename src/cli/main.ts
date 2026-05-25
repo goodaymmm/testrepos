@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { KAIRON_VERSION } from "../index.js";
+import { runDoctorCommand } from "./commands/doctor.js";
 import { initializeProject } from "./commands/init.js";
 import { closeActiveWork } from "./commands/leave.js";
 import { runMaintenance } from "./commands/maintenance.js";
@@ -45,8 +46,8 @@ export function createProgram(): Command {
   program
     .command("doctor")
     .description("Check whether Kairon can run in this project.")
-    .action(() => {
-      console.log("kairon doctor is not implemented yet.");
+    .action(async () => {
+      console.log(await runDoctorCommand(process.cwd()));
     });
 
   program

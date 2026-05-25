@@ -132,6 +132,14 @@ kairon migrate
 
 既存 `.kairon/config/*.json` を現在のschemaやCLI名に合わせて移行します。実行時は対象configのbackupを `.kairon/config/*.bak-YYYYMMDDHHmmss` として作成します。
 
+### 診断
+
+```powershell
+kairon doctor
+```
+
+Git、`.gitignore`、config、公式CLI、API key混入、Discord設定、safety policyを確認し、`pass` / `warning` / `error` と次の対応を表示します。
+
 ### 起動
 
 ```powershell

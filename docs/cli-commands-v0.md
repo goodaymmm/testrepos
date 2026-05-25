@@ -85,6 +85,19 @@ kairon doctor
 - protected path policy
 - runtime lock
 
+出力。
+
+```text
+doctor.ok=true
+summary.pass=8
+summary.warning=0
+summary.error=0
+PASS git.repository Git repository
+...
+```
+
+`warning` は運用前に確認すべき注意、`error` は通常運用前に解消すべき問題を示す。
+
 ## kairon start
 
 Kairon Runtime を起動する。
