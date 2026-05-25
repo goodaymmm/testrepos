@@ -223,6 +223,7 @@ export const kaironDirectories = [
   "runtime",
   "runtime/pids",
   "runtime/terminals",
+  "runtime/discord",
   "state",
   "reports",
   "reports/daily",
