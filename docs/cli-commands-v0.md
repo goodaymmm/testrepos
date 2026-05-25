@@ -10,6 +10,8 @@
 kairon init
 kairon migrate
 kairon doctor
+kairon config propose
+kairon config apply <proposal-id> [--dry-run]
 kairon docking analyze
 kairon start
 kairon stop
@@ -98,6 +100,49 @@ PASS git.repository Git repository
 ```
 
 `warning` は運用前に確認すべき注意、`error` は通常運用前に解消すべき問題を示す。
+
+## kairon config propose
+
+対象projectのtop-level構成をscanし、`project.json` 向けのconfig proposalを `.kairon/config/proposals/` に保存する。
+
+```text
+kairon config propose
+```
+
+出力例。
+
+```text
+Kairon config proposal created.
+proposal_id=CFG-20260526040500-abcdef12
+proposal_path=.kairon/config/proposals/CFG-20260526040500-abcdef12.json
+target=project.json
+changes=3
+```
+
+このcommandはproposal artifactだけを書き込み、`.kairon/config/project.json` は変更しない。
+
+## kairon config apply
+
+保存済みconfig proposalを人間確認後に適用する。
+
+```text
+kairon config apply CFG-20260526040500-abcdef12 --dry-run
+kairon config apply CFG-20260526040500-abcdef12
+```
+
+処理。
+
+```text
+load .kairon/config/proposals/<proposal-id>.json
+reject stale proposal
+reject proposal for another project root
+show planned project.json changes
+create .kairon/config/project.json.bak-YYYYMMDDHHMMSS before writing
+write .kairon/config/project.json
+run config validation
+```
+
+`--dry-run` は差分だけを表示し、backup作成やconfig書き込みは行わない。
 
 ## kairon docking analyze
 

@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { KAIRON_VERSION } from "../index.js";
+import { applyConfig, proposeConfig } from "./commands/config.js";
 import { analyzeDocking } from "./commands/docking.js";
 import { runDoctorCommand } from "./commands/doctor.js";
 import { initializeProject } from "./commands/init.js";
@@ -49,6 +50,26 @@ export function createProgram(): Command {
     .description("Check whether Kairon can run in this project.")
     .action(async () => {
       console.log(await runDoctorCommand(process.cwd()));
+    });
+
+  const config = program
+    .command("config")
+    .description("Manage Kairon configuration proposals.");
+
+  config
+    .command("propose")
+    .description("Analyze this project and save a config proposal.")
+    .action(async () => {
+      console.log(await proposeConfig(process.cwd()));
+    });
+
+  config
+    .command("apply")
+    .description("Apply a saved config proposal.")
+    .argument("<proposal-id>", "Proposal id from kairon config propose.")
+    .option("--dry-run", "Show planned changes without writing config.")
+    .action(async (proposalId: string, options: { dryRun?: boolean }) => {
+      console.log(await applyConfig(process.cwd(), proposalId, options));
     });
 
   program

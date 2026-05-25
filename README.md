@@ -148,6 +148,16 @@ kairon docking analyze
 
 対象プロジェクトのtop-level構成をscanし、`project.json` 向けの `protected` / `generated` / `source` 候補をJSON proposalとして表示します。configは直接書き換えません。
 
+### 設定proposal
+
+```powershell
+kairon config propose
+kairon config apply CFG-YYYYMMDDHHMMSS-xxxxxxxx --dry-run
+kairon config apply CFG-YYYYMMDDHHMMSS-xxxxxxxx
+```
+
+`config propose` はドッキング解析結果を `.kairon/config/proposals/` に保存します。`config apply` は保存済みproposalを `project.json` に反映します。実適用時は事前に `.bak-YYYYMMDDHHMMSS` backupを作り、proposalが古い場合や対象projectが違う場合は拒否します。
+
 ### 起動
 
 ```powershell
