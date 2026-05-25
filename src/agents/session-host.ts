@@ -119,6 +119,41 @@ export class FileSessionHost {
     };
   }
 
+  async markRunStarted(
+    agent: AgentId,
+    date: string,
+    runId: string
+  ): Promise<SessionMetadata | null> {
+    const current = await this.attachSession(agent, date);
+    if (current === null) {
+      return null;
+    }
+
+    return this.writeSession(agent, date, {
+      ...current,
+      active_run_id: runId,
+      updated_at: this.now().toISOString()
+    });
+  }
+
+  async markRunFinished(
+    agent: AgentId,
+    date: string,
+    runId: string
+  ): Promise<SessionMetadata | null> {
+    const current = await this.attachSession(agent, date);
+    if (current === null) {
+      return null;
+    }
+
+    return this.writeSession(agent, date, {
+      ...current,
+      active_run_id: current.active_run_id === runId ? null : current.active_run_id,
+      last_run_id: runId,
+      updated_at: this.now().toISOString()
+    });
+  }
+
   async closeSession(agent: AgentId, date: string): Promise<SessionMetadata | null> {
     const current = await this.attachSession(agent, date);
     if (current === null) {
@@ -132,6 +167,15 @@ export class FileSessionHost {
     };
     await writeJsonFileAtomic(this.sessionPath(agent, date), updated);
     return updated;
+  }
+
+  private async writeSession(
+    agent: AgentId,
+    date: string,
+    metadata: SessionMetadata
+  ): Promise<SessionMetadata> {
+    await writeJsonFileAtomic(this.sessionPath(agent, date), metadata);
+    return metadata;
   }
 
   private async createSessionMetadata(
