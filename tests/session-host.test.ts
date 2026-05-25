@@ -51,7 +51,8 @@ describe("FileSessionHost", () => {
   it("exposes all MVP CLI adapter definitions", () => {
     expect(defaultAgentAdapters.codex.command).toBe("codex");
     expect(defaultAgentAdapters.claude.command).toBe("claude");
-    expect(defaultAgentAdapters.gemini.command).toBe("gemini");
+    expect(defaultAgentAdapters.gemini.adapter).toBe("antigravity_cli");
+    expect(defaultAgentAdapters.gemini.command).toBe("agy");
     expect(defaultAgentAdapters.gemini.supports.multimodal).toBe(true);
   });
 });

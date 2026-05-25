@@ -8,7 +8,7 @@ Kairon の最初の実装は、全機能を一度に作らず、file-based state
 ## 実装原則
 
 - code-producing change は review gate を通す。
-- MVP acceptance では Codex / Claude / Gemini の実 CLI session を必須にする。
+- MVP acceptance では Codex / Claude / AntigravityCLI の実 CLI session を必須にする。
 - local unit test では process を起動しない fake runner を使ってよい。
 - State Applier だけが canonical state を更新する。
 - Discord Gateway と Agent Runner は command / outbox を作るだけで、canonical state を直接変更しない。
@@ -317,7 +317,7 @@ Done Criteria。
 
 Done Criteria。
 
-- Codex / Claude / Gemini の command availability を確認できる。
+- Codex / Claude / AntigravityCLI の command availability を確認できる。
 - session metadata を作れる。
 - 実 process 接続は次 milestone へ分離できる。
 
@@ -403,7 +403,7 @@ Done Criteria。
 
 ## Milestone 9: Real CLI Session MVP
 
-目的: Codex / Claude / Gemini 実 CLI session を接続する。
+目的: Codex / Claude / AntigravityCLI 実 CLI session を接続する。
 
 ### T9-01 Codex session
 
@@ -423,11 +423,11 @@ Done Criteria。
 - job prompt を送れる。
 - Claude Opus implementation 時の Codex review path を作れる。
 
-### T9-03 Gemini session
+### T9-03 Antigravity/Gemini session
 
 Done Criteria。
 
-- `gemini` availability を確認する。
+- `agy` availability を確認する。
 - daily bootstrap を投入する。
 - Google ecosystem / multimodal / QA job を送れる。
 

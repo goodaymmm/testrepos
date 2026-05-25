@@ -13,7 +13,7 @@ MVP は TypeScript / Node.js を推奨実装とする。
 
 理由。
 
-- Codex / Claude / Gemini CLI は command process として扱いやすい。
+- Codex / Claude / AntigravityCLI は command process として扱いやすい。
 - Discord Gateway と相性がよい。
 - JSON / JSONL / MD file state を扱いやすい。
 - Windows の個人PC常駐運用から始めやすい。
@@ -404,7 +404,7 @@ kairon start
   -> start agent session host
   -> open or attach Codex session
   -> open or attach Claude session
-  -> open or attach Gemini session
+  -> open or attach Antigravity/Gemini session
   -> inject daily bootstrap context
   -> start Discord Gateway if enabled
   -> write runtime status
@@ -456,7 +456,7 @@ kairon task run TASK-0001
   -> State Applier
 ```
 
-ただし、MVP 本番では Claude / Gemini も実 CLI session を使う。
+ただし、MVP 本番では Claude / Antigravity/Gemini も実 CLI session を使う。
 最初の local unit test では process を起動しない fake runner を使ってよいが、MVP acceptance では実 CLI session を必須にする。
 
 ## Testing Strategy
@@ -490,7 +490,7 @@ Kairon 自体の実装も同じ方針に従う。
 - `kairon doctor`
 - `kairon start`
 - 3 CLI availability check
-- sample task run through real Codex / Claude / Gemini session
+- sample task run through real Codex / Claude / AntigravityCLI session
 - review loop
 - Discord approval
 - daily handoff
@@ -520,7 +520,7 @@ Review Gate を満たすまで commit しない。
 8. CLI command thin wrappers
 9. schedule engine and `kairon leave`
 10. Agent session host interface
-11. Codex / Claude / Gemini adapter shell
+11. Codex / Claude / Antigravity/Gemini adapter shell
 12. Git workspace interface and diff snapshot
 13. Review loop manager skeleton
 14. Discord gateway skeleton

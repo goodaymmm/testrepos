@@ -172,7 +172,7 @@ describe("CliSessionRunner", () => {
     });
   });
 
-  it("passes Gemini QA, Google ecosystem, and multimodal capability hints", async () => {
+  it("passes Antigravity/Gemini QA, Google ecosystem, and multimodal capability hints", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
     const invocations: CliInvocation[] = [];
@@ -203,8 +203,8 @@ describe("CliSessionRunner", () => {
     });
 
     expect(invocations[0]).toMatchObject({
-      command: "gemini",
-      args: expect.arrayContaining(["--output-format", "json"])
+      command: "agy",
+      args: expect.arrayContaining(["--sandbox", "--print"])
     });
     expect(invocations[0]?.args.join("\n")).toContain("Capability hints:");
     expect(invocations[0]?.args.join("\n")).toContain("google_ecosystem");

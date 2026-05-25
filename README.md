@@ -14,7 +14,7 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 - runtime lock、schedule、status、leave
 - queue、command inbox、state applier
 - Agent dispatcher、context builder、session host
-- Codex / Claude / Gemini 公式 CLI へ接続する runner 境界
+- Codex / Claude / AntigravityCLI 公式 CLI へ接続する runner 境界
 - review loop / quality gate の骨格
 - git workspace / diff snapshot の骨格
 - Discord approval gateway の正規化・idempotency・message payload
@@ -36,7 +36,7 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 - npm
 - Git
 - PowerShell
-- Codex CLI、Claude Code、Gemini CLI を使う場合は、それぞれ公式 CLI でログイン済みであること
+- Codex CLI、Claude Code、AntigravityCLI を使う場合は、それぞれ公式 CLI でログイン済みであること
 
 Kairon は公式 CLI / 公式認証フローだけを使う設計です。OAuth token、cookie、内部 endpoint を抽出して独自 client から叩く運用はしません。
 
@@ -177,7 +177,7 @@ Kairon の Agent Runner は公式 CLI を前提にします。運用テスト前
 ```powershell
 codex --help
 claude --help
-gemini --help
+agy --help
 ```
 
 CLI が見つからない場合、Kairon は該当 Agent を `setup_required` として扱う設計です。
@@ -200,7 +200,7 @@ CLI が見つからない場合、Kairon は該当 Agent を `setup_required` �
 1. Kairon リポジトリで `npm run typecheck`、`npm test`、`npm run build` が通る。
 2. 検証用プロジェクトで `kairon init` を実行し、 `.kairon/` が生成される。
 3. `.kairon/config/*.json` の schedule、agents、policies、notifications を確認する。
-4. `codex --help`、`claude --help`、`gemini --help` で公式 CLI の availability を確認する。
+4. `codex --help`、`claude --help`、`agy --help` で公式 CLI の availability を確認する。
 5. `kairon start`、`kairon status`、`kairon leave`、`kairon stop` を確認する。
 6. `kairon maintenance run` を実行し、daily report、agent handoff、cleanup proposal が作られることを確認する。
 7. cleanup proposal が直接削除・直接移動をしていないことを確認する。

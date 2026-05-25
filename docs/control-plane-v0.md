@@ -5,7 +5,7 @@
 Control Plane は Agent が迷わず動くための制御プロトコルである。
 LangGraph を workflow runtime、LangChain を tool / retriever / document integration layer、RAG を project memory として使う。
 
-ただし、Kairon の primary Agent は Codex CLI、Claude Code、Gemini CLI のような外部 CLI Agent である。
+ただし、Kairon の primary Agent は Codex CLI、Claude Code、AntigravityCLI のような外部 CLI Agent である。
 LangGraph / LangChain は外部 CLI Agent を置き換えるものではなく、dispatch contract、state transition、context assembly、review loop、approval loop を安定化するために使う。
 Agent 選択と CLI process 制御は Control Plane ではなく、Agent Dispatcher と Agent Runner が担う。
 
@@ -28,7 +28,7 @@ Task / Event / Approval JSON
       -> LangChain Retrievers
       -> Project RAG Index
     -> Agent Runner Contract Node
-      -> Codex CLI / Claude Code / Gemini CLI
+      -> Codex CLI / Claude Code / AntigravityCLI
     -> Outbox Validation Node
     -> Policy Check Node
     -> Git Node
@@ -397,8 +397,8 @@ task は `model_class` を要求し、Control Plane が実 Agent 設定に解決
     },
     "gemini": {
       "enabled": true,
-      "adapter": "gemini_cli",
-      "command": "gemini",
+      "adapter": "antigravity_cli",
+      "command": "agy",
       "node_type": "external_cli",
       "supports": ["read", "write", "large_context"],
       "rule_files": ["GEMINI.md", ".kairon/rules/gemini/GEMINI.md"],

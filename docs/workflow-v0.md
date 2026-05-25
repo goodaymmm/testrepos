@@ -26,7 +26,7 @@ user runs kairon init
 ```text
 codex --version
 claude --version
-gemini --version
+agy --help
 ```
 
 ログインが必要な場合は、Kairon は自動化せず setup task として止める。
@@ -206,19 +206,19 @@ Agent Runner
 Claude は unattended mode を `restricted` とする。
 `ANTHROPIC_API_KEY` が存在する場合は subscription usage と異なる可能性があるため、その run を止めて user confirmation に回す。
 
-### Gemini
+### Antigravity/Gemini
 
 ```text
 Agent Runner
-  -> attach gemini terminal session
+  -> attach gemini terminal session backed by agy
   -> send incremental context as next prompt
-  -> request JSON output where available
+  -> request file-based outbox output
   -> detect usage limit / permission prompt
   -> collect outbox
 ```
 
-Gemini は QA、research、large context review、Google ecosystem、multimodal review を優先する。
-Gemini CLI の背後 service に third-party client として直接アクセスしない。
+Antigravity/Gemini は QA、research、large context review、Google ecosystem、multimodal review を優先する。
+AntigravityCLI の背後 service に third-party client として直接アクセスしない。
 
 ## 9. Runtime Monitoring
 

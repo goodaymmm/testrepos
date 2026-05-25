@@ -36,7 +36,7 @@ export function buildAgentCliInvocation(
 
   return {
     command: request.command,
-    args: ["-p", `${runPrompt}\n\n${request.prompt}`, "--output-format", "json"],
+    args: ["--sandbox", "--print", `${runPrompt}\n\n${request.prompt}`],
     cwd: request.cwd,
     timeoutMs: request.timeoutMs
   };

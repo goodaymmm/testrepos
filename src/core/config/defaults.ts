@@ -75,8 +75,8 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
         },
         gemini: {
           enabled: true,
-          adapter: "gemini_cli",
-          command: "gemini",
+          adapter: "antigravity_cli",
+          command: "agy",
           mode: "persistent_terminal_session",
           personas: ["qa", "researcher", "reviewer"],
           rule_files: ["GEMINI.md", ".kairon/rules/gemini/GEMINI.md"]

@@ -15,7 +15,7 @@ Orchestrator は制御プロトコル、状態遷移契約、policy contract を
 | Schedule Engine | active / standby / maintenance の mode 判定 | Agent 実行 |
 | Work Queue | task / job / approval / maintenance item の queue 管理 | job 内容の解釈 |
 | Agent Dispatcher | job と agent capability を照合し、実行候補を決める | CLI process の詳細制御 |
-| Agent Runner | Codex / Claude / Gemini CLI の起動、継続、stdout/stderr 収集 | policy 判断 |
+| Agent Runner | Codex / Claude / AntigravityCLI の起動、継続、stdout/stderr 収集 | policy 判断 |
 | Session Manager | その日の Agent session と context を保持する | canonical state の直接変更 |
 | Context Builder | RAG / message / task state から context bundle を作る | Agent 選択 |
 | State Applier | outbox を検証し canonical state に反映する | Agent 推論 |
@@ -185,7 +185,7 @@ Agent はその日の日次メンテ終了まで Session と Context を保持�
 
 | Layer | 内容 | 保存先 |
 | --- | --- | --- |
-| Terminal-backed CLI Session | Terminal / pty 上で保持する Codex / Claude / Gemini の継続 session | `sessions/YYYY-MM-DD/{agent}/session.json` |
+| Terminal-backed CLI Session | Terminal / pty 上で保持する Codex / Claude / AntigravityCLI の継続 session | `sessions/YYYY-MM-DD/{agent}/session.json` |
 | Kairon Session Context | 当日の作業要約、読んだ artifact、未完了 handoff、注意点 | `sessions/YYYY-MM-DD/{agent}/scratch.md` |
 
 Terminal-backed CLI Session を同日中の主 memory として使う。

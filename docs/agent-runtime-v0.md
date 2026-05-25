@@ -2,7 +2,7 @@
 
 ## 目的
 
-Agent Runtime は、Codex CLI、Claude Code、Gemini CLI を公式 CLI process として起動し、同日 Session / Context を維持しながら Kairon の run contract に接続する層である。
+Agent Runtime は、Codex CLI、Claude Code、AntigravityCLI を公式 CLI process として起動し、同日 Session / Context を維持しながら Kairon の run contract に接続する層である。
 
 Control Protocol は「何を満たすべきか」を定義する。
 Agent Runtime は「どう起動し、どう読み取り、どう終了または継続するか」を扱う。
@@ -109,27 +109,28 @@ Claude の unattended continuation は provider terms の境界が残るため�
 Claude Code Opus が code-producing implementation を行った場合、review は Codex に渡す。
 Codex 側 review は `codex-plugin-cc` を利用する path を優先する。
 
-## Gemini Adapter
+## Antigravity/Gemini Adapter
 
-Gemini CLI は headless mode を標準にする。
+AntigravityCLI は旧 Gemini CLI 系の Agent として扱い、Kairon 内部の agent id は互換性のため `gemini` を維持する。
+headless mode は `agy --print` を標準にする。
 
 ```text
-gemini -p "<prompt>" --output-format json
+agy --sandbox --print "<prompt>"
 ```
 
-Gemini は QA、research、large context review を優先する。
+Antigravity/Gemini は QA、research、large context review を優先する。
 加えて、Google ecosystem と multimodal review で優先的に起用する。
-Gemini CLI の背後 service に third-party client で直接アクセスしない。
+AntigravityCLI の背後 service に third-party client で直接アクセスしない。
+`agy` に native JSON output flag がない場合でも、Kairon は Agent に `outbox.json` を書かせる file-based contract を主経路にする。
 
 ```json
 {
   "agent": "gemini",
-  "command": "gemini",
+  "command": "agy",
   "args": [
-    "-p",
-    "Execute the Kairon run described in stdin. Produce the required outbox.",
-    "--output-format",
-    "json"
+    "--sandbox",
+    "--print",
+    "Execute the Kairon run described in the prompt. Produce the required outbox."
   ],
   "stdin": ".kairon/runs/RUN-0003/context.md",
   "stdout": ".kairon/runs/RUN-0003/stdout.log",

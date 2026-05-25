@@ -84,7 +84,7 @@ Kairon 用 rule は `.kairon/rules/` に作成し、必要な参照方法だけ�
 | --- | --- |
 | `AGENTS.md` | Codex / generic agent rule |
 | `CLAUDE.md` | Claude Code rule |
-| `GEMINI.md` | Gemini CLI rule |
+| `GEMINI.md` | Antigravity/Gemini rule |
 | `.cursorrules` | editor agent rule |
 | `.github/copilot-instructions.md` | GitHub Copilot rule |
 | `README.md` | project overview |

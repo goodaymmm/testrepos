@@ -11,7 +11,7 @@ Agent Runner は Session Host が保持する session に job prompt を投入�
 
 - 標準 mode は `persistent_terminal_session`。
 - Codex の実 CLI session から実装する。
-- Claude / Gemini も MVP では実 CLI session を起動し、3 CLI の連携と競合チェックを確認する。
+- Claude / Antigravity/Gemini も MVP では実 CLI session を起動し、3 CLI の連携と競合チェックを確認する。
 - Terminal window が見えているかどうかは policy boundary にしない。
 - 公式 CLI process、stdin、stdout、stderr、pid、terminal session id を追跡する。
 - session は日次メンテ終了時に close する。

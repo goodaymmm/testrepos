@@ -2,12 +2,12 @@ import type { AgentAdapterDefinition } from "./codex.js";
 
 export const geminiAdapter: AgentAdapterDefinition = {
   agent: "gemini",
-  adapter: "gemini_cli",
-  command: "gemini",
+  adapter: "antigravity_cli",
+  command: "agy",
   defaultMode: "persistent_terminal_session",
   supports: {
     nonInteractive: true,
-    jsonOutput: true,
+    jsonOutput: false,
     resume: false,
     workspaceWrite: true,
     nativeMcp: false,

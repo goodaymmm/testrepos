@@ -18,7 +18,7 @@ export type JobPromptInput = {
 const agentDisplayNames: Record<AgentId, string> = {
   codex: "Codex",
   claude: "Claude Code",
-  gemini: "Gemini"
+  gemini: "Antigravity"
 };
 
 export function buildDailyBootstrapPrompt(input: BootstrapPromptInput): string {
