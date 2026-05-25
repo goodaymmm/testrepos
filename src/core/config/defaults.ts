@@ -202,6 +202,7 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
 
 export const kaironDirectories = [
   "config",
+  "config/proposals",
   "rules",
   "rules/codex",
   "rules/claude",
