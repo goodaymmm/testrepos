@@ -2,7 +2,7 @@
 
 ## 目的
 
-Kairon は Codex CLI、Claude Code、Gemini CLI を subscription usage の範囲で使うことを想定する。
+Kairon は Codex CLI、Claude Code、AntigravityCLI を subscription usage の範囲で使うことを想定する。
 この設計は API key 課金を避けるためではなく、個人の開発環境で公式 CLI を使い、使用量制限に従って Agent を運用するためのものである。
 
 この文書は法律判断ではなく、Kairon の設計上の compliance guardrail である。
@@ -41,7 +41,7 @@ Kairon が禁止する方式。
 | --- | --- | --- | --- |
 | Codex | ChatGPT plan で Codex CLI 利用が公式に案内されている | 公式 `codex` CLI / `codex exec` のみ使用 | rate limit 回避、Output の programmatic extraction と見なされる使い方 |
 | Claude Code | Pro / Max で Claude Code 利用が公式に案内されている | 公式 `claude` CLI のみ使用 | consumer terms の automated / non-human access 条項との境界 |
-| Gemini CLI | Google account / Google AI Pro / Ultra で Gemini CLI 利用が公式に案内されている | 公式 `gemini` CLI のみ使用 | third-party software で裏サービスへ直接アクセスすると違反リスク |
+| AntigravityCLI | Google account / Google AI Pro / Ultra で AntigravityCLI / Gemini 系 CLI 利用が公式に案内されている | 公式 `agy` CLI のみ使用 | third-party software で裏サービスへ直接アクセスすると違反リスク |
 | Discord | Bot / interaction は Developer Terms と rate limit に従う | approval notification のみ使用 | rate limit 超過、bot token 漏洩 |
 
 ## Codex Guardrail
@@ -61,13 +61,13 @@ Kairon が禁止する方式。
 - Kairon MVP では Claude job に usage cap、cooldown、human review boundary を設定する。
 - 規約上の明確性が必要な場合、Claude Code は user-approved run に限定するか、Anthropic API / Team / Enterprise の許可された automation route を検討する。
 
-## Gemini CLI Guardrail
+## AntigravityCLI Guardrail
 
-- 公式 `gemini` CLI と公式 authentication method だけを使う。
+- 公式 `agy` CLI と公式 authentication method だけを使う。
 - Google account / Google AI Pro / Ultra の quota を尊重する。
 - headless mode は公式 CLI の既存 credential または公式 API key / Vertex AI flow に限定する。
 - Gemini Code Assist service などの裏側 service に、OAuth token を流用した third-party client で直接アクセスしない。
-- quota に達したら Gemini job を defer する。
+- quota に達したら Antigravity/Gemini job を defer する。
 
 ## Discord Guardrail
 

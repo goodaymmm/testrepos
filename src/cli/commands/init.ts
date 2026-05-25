@@ -38,7 +38,7 @@ const ruleFiles: Record<string, string> = {
     ""
   ].join("\n"),
   "gemini/GEMINI.md": [
-    "# Kairon Gemini Rules",
+    "# Kairon Antigravity/Gemini Rules",
     "",
     "- Follow root `GEMINI.md` first when present.",
     "- Prefer QA, research, Google ecosystem, and multimodal review tasks.",

@@ -77,7 +77,7 @@ Kairon Runtime Host
   ├─ Agent Session Host
   │   ├─ Codex Terminal Session
   │   ├─ Claude Terminal Session
-  │   └─ Gemini Terminal Session
+  │   └─ Antigravity/Gemini Terminal Session
   ├─ Agent Runner
   ├─ Session Manager
   ├─ Context Builder
@@ -120,7 +120,7 @@ User / OS service / scheduled task
       -> Agent Session Host
         -> codex CLI terminal session
         -> claude CLI terminal session
-        -> gemini CLI terminal session
+        -> agy CLI terminal session
 ```
 
 Kairon Runtime Host は各 CLI の内部 API を呼ばない。
@@ -211,7 +211,7 @@ Session は 2 層に分ける。
 
 | Layer | 内容 | 目的 |
 | --- | --- | --- |
-| Terminal-backed CLI Session | Terminal / pty 上で開いた Codex / Claude / Gemini の継続 session | 同日中の会話 context を保ち、毎回 0 から読ませない |
+| Terminal-backed CLI Session | Terminal / pty 上で開いた Codex / Claude / AntigravityCLI の継続 session | 同日中の会話 context を保ち、毎回 0 から読ませない |
 | Kairon Session Context | scratch、context manifest、handoff、loaded source hash | CLI session が切れても再開できるようにする |
 
 ```text
@@ -263,7 +263,7 @@ Kairon が守る境界は次である。
 | --- | --- | --- |
 | Codex | `codex` / `codex exec` の公式 CLI process | Terminal-backed session primary。resume は recovery 補助 |
 | Claude | `claude` / `claude -p` 等の公式 CLI process | Terminal-backed session primary。unattended は restricted |
-| Gemini | `gemini` / `gemini -p` 等の公式 CLI process | Terminal-backed session primary。QA / research を優先 |
+| Antigravity/Gemini | `agy` / `agy --print` 等の公式 CLI process | Terminal-backed session primary。QA / research を優先。Kairon 内部の agent id は互換性のため `gemini` を維持 |
 
 Provider ごとの細部は `docs/agent-runtime-v0.md` と `docs/subscription-compliance-v0.md` に置く。
 

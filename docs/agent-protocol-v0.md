@@ -332,7 +332,7 @@ ChatGPT / Claude / Gemini app 連携は、まず通知と deeplink 補助とし�
 
 MVP は単一 Agent ではなく、複数 Agent 疎通を必須にする。
 
-- Codex / Claude Code / Gemini CLI の adapter を持つ。
+- Codex / Claude Code / AntigravityCLI の adapter を持つ。
 - 3 Agent が同じ task / message / approval / run schema を読み書きできる。
 - Agent は直接会話できない場合も message bus で疎通できる。
 - 1 task について planner -> implementer -> reviewer -> qa -> approval の流れを実行できる。

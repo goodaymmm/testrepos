@@ -74,7 +74,7 @@ start session manager
 start Agent Session Host
 open Codex terminal-backed session
 open Claude terminal-backed session
-open Gemini terminal-backed session
+open Antigravity/Gemini terminal-backed session
 inject daily bootstrap context
 start schedule loop
 ```
