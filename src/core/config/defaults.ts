@@ -228,5 +228,6 @@ export const kaironDirectories = [
   "reports",
   "reports/daily",
   "cleanup",
+  "cleanup/proposals",
   "tmp"
 ];
