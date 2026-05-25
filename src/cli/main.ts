@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { KAIRON_VERSION } from "../index.js";
+import { analyzeDocking } from "./commands/docking.js";
 import { runDoctorCommand } from "./commands/doctor.js";
 import { initializeProject } from "./commands/init.js";
 import { closeActiveWork } from "./commands/leave.js";
@@ -88,6 +89,17 @@ export function createProgram(): Command {
     .argument("<taskId>", "Task id, for example TASK-0001")
     .action(() => {
       console.log("kairon task run is not implemented yet.");
+    });
+
+  const docking = program
+    .command("docking")
+    .description("Analyze and manage Kairon project docking.");
+
+  docking
+    .command("analyze")
+    .description("Analyze this project and print a project config proposal.")
+    .action(async () => {
+      process.stdout.write(await analyzeDocking(process.cwd()));
     });
 
   program

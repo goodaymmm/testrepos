@@ -140,6 +140,14 @@ kairon doctor
 
 Git、`.gitignore`、config、公式CLI、API key混入、Discord設定、safety policyを確認し、`pass` / `warning` / `error` と次の対応を表示します。
 
+### ドッキング解析
+
+```powershell
+kairon docking analyze
+```
+
+対象プロジェクトのtop-level構成をscanし、`project.json` 向けの `protected` / `generated` / `source` 候補をJSON proposalとして表示します。configは直接書き換えません。
+
 ### 起動
 
 ```powershell
