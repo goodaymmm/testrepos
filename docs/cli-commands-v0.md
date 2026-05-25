@@ -10,6 +10,7 @@
 kairon init
 kairon migrate
 kairon doctor
+kairon docking analyze
 kairon start
 kairon stop
 kairon status
@@ -97,6 +98,27 @@ PASS git.repository Git repository
 ```
 
 `warning` は運用前に確認すべき注意、`error` は通常運用前に解消すべき問題を示す。
+
+## kairon docking analyze
+
+対象projectのtop-level構成をscanし、`project.json` 向けのconfig proposalを表示する。
+
+```text
+kairon docking analyze
+```
+
+処理。
+
+```text
+scan top-level files and directories
+classify protected / generated / source path candidates
+detect primary_language / frameworks / package_managers
+print project_config proposal JSON
+do not write .kairon/config/project.json
+```
+
+MVPでは、`.mcp.json`、`.claude/**`、`.gemini/**`、`.antigravitycli/**` を protected 候補に寄せる。
+`tmpclaude-*`、`dist/**`、`build/**`、`coverage/**`、`node_modules/**` は generated 候補に寄せる。
 
 ## kairon start
 
