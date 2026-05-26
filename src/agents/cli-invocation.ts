@@ -28,7 +28,7 @@ export function buildAgentCliInvocation(
   if (request.agent === "claude") {
     return {
       command: request.command,
-      args: ["-p", request.prompt, "--output-format", "stream-json"],
+      args: ["-p", request.prompt, "--output-format", "stream-json", "--verbose"],
       cwd: request.cwd,
       timeoutMs: request.timeoutMs
     };
@@ -36,8 +36,18 @@ export function buildAgentCliInvocation(
 
   return {
     command: request.command,
-    args: ["--sandbox", "--print", `${runPrompt}\n\n${request.prompt}`],
+    args: [
+      "--print",
+      "--print-timeout",
+      antigravityPrintTimeout(request.timeoutMs),
+      `${runPrompt}\n\n${request.prompt}`
+    ],
     cwd: request.cwd,
     timeoutMs: request.timeoutMs
   };
+}
+
+function antigravityPrintTimeout(timeoutMs: number | undefined): string {
+  const seconds = Math.max(1, Math.ceil((timeoutMs ?? 300_000) / 1_000));
+  return `${seconds}s`;
 }

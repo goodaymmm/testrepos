@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import path from "node:path";
 
 export type CliInvocation = {
   command: string;
@@ -27,12 +28,35 @@ export type CommandRunner = (
   invocation: CliInvocation
 ) => Promise<CommandRunResult>;
 
+export type ProcessInvocation = {
+  command: string;
+  args: string[];
+  env: NodeJS.ProcessEnv;
+  shell: boolean;
+};
+
+export function buildProcessInvocation(
+  invocation: CliInvocation,
+  platform: NodeJS.Platform = process.platform
+): ProcessInvocation {
+  const env = invocation.env ?? process.env;
+
+  return {
+    command: invocation.command,
+    args: invocation.args,
+    env,
+    shell: shouldUseWindowsShellShim(invocation.command, platform)
+  };
+}
+
 export const spawnCommandRunner: CommandRunner = async (invocation) =>
   new Promise<CommandRunResult>((resolve) => {
     const startedAt = new Date().toISOString();
-    const child = spawn(invocation.command, invocation.args, {
+    const processInvocation = buildProcessInvocation(invocation);
+    const child = spawn(processInvocation.command, processInvocation.args, {
       cwd: invocation.cwd,
-      env: invocation.env ?? process.env,
+      env: processInvocation.env,
+      shell: processInvocation.shell,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true
     });
@@ -103,3 +127,19 @@ export const spawnCommandRunner: CommandRunner = async (invocation) =>
     }
     child.stdin.end();
   });
+
+function shouldUseWindowsShellShim(
+  command: string,
+  platform: NodeJS.Platform
+): boolean {
+  if (platform !== "win32") {
+    return false;
+  }
+
+  const executableName = path.basename(command).toLowerCase();
+  return (
+    executableName === "codex" ||
+    executableName.endsWith(".cmd") ||
+    executableName.endsWith(".bat")
+  );
+}

@@ -88,12 +88,13 @@ describe("runAgentSmoke", () => {
     });
     expect(invocations[1]).toMatchObject({
       command: "claude",
-      args: expect.arrayContaining(["-p", "--output-format", "stream-json"])
+      args: expect.arrayContaining(["-p", "--output-format", "stream-json", "--verbose"])
     });
     expect(invocations[2]).toMatchObject({
       command: "agy",
-      args: expect.arrayContaining(["--sandbox", "--print"])
+      args: expect.arrayContaining(["--print", "--print-timeout", "30s"])
     });
+    expect(invocations[2]?.args).not.toContain("--sandbox");
   });
 
   it("returns setup_required without invoking a missing CLI", async () => {
