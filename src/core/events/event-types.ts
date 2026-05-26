@@ -3,6 +3,7 @@ export type KaironEventType =
   | "message.created"
   | "approval.requested"
   | "approval.decided"
+  | "approval.snoozed"
   | "run.completed"
   | "schedule.override.created"
   | "active_work.closed";
@@ -12,6 +13,7 @@ export const kaironEventTypes = [
   "message.created",
   "approval.requested",
   "approval.decided",
+  "approval.snoozed",
   "run.completed",
   "schedule.override.created",
   "active_work.closed"

@@ -87,6 +87,38 @@ describe("StateApplier", () => {
     });
   });
 
+  it("materializes approval snooze commands", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const applier = new StateApplier(root);
+
+    await applier.appendEvent({
+      type: "approval.requested",
+      task_id: "TASK-0001",
+      payload: {
+        approval: {
+          id: "APR-0001",
+          type: "merge",
+          title: "Merge approval"
+        }
+      }
+    });
+    await applier.applyCommand({
+      type: "approval.snooze",
+      approval_id: "APR-0001",
+      until: "2026-05-26T09:00:00.000Z",
+      reason: "review later"
+    });
+
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "approvals", "APR-0001.json"))
+    ).resolves.toMatchObject({
+      status: "snoozed",
+      snooze_until: "2026-05-26T09:00:00.000Z",
+      reason: "review later"
+    });
+  });
+
   it("applies outbox events and approvals", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

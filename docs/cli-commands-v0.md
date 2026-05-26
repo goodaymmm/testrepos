@@ -11,6 +11,9 @@ kairon init
 kairon migrate
 kairon doctor
 kairon agent smoke --agent codex|claude|gemini
+kairon approval list
+kairon approval show APR-0001
+kairon approval decide APR-0001 --action approve|reject|request_changes|snooze
 kairon config propose
 kairon config apply <proposal-id> [--dry-run]
 kairon docking analyze
@@ -146,6 +149,52 @@ outbox=.kairon/runs/RUN-0001/outbox.json
 ```
 
 実CLIを起動するため、unit testではcommand runner mockで検証し、実Agent smokeは手動運用テストとして扱う。
+
+## kairon approval list
+
+承認待ちを一覧する。
+
+```text
+kairon approval list
+kairon approval list --status all
+kairon approval list --status snoozed
+```
+
+既定では `pending` の approval だけを表示する。
+
+## kairon approval show
+
+承認内容を安全表示する。
+
+```text
+kairon approval show APR-0001
+```
+
+表示時は `diff`、`patch`、`log`、`stdout`、`stderr`、secret-like key を省略またはredactする。
+完全な artifact は `.kairon/approvals/APR-xxxx.json` に残すが、CLI表示では過剰表示しない。
+
+## kairon approval decide
+
+承認を決定する。
+
+```text
+kairon approval decide APR-0001 --action approve
+kairon approval decide APR-0001 --action reject --reason "risk accepted only after redesign"
+kairon approval decide APR-0001 --action request_changes --reason "tests are missing"
+kairon approval decide APR-0001 --action snooze --until 2026-05-26T09:00:00.000Z
+```
+
+処理。
+
+```text
+load approval
+reject when status is not pending or snoozed
+validate requested action against approval actions
+append approval.decided or approval.snoozed event
+materialize approval state
+```
+
+`snooze` で `--until` を省略した場合は、実行時刻から1時間後を既定にする。
 
 ## kairon config propose
 

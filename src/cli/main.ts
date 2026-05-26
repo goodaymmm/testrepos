@@ -5,6 +5,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { KAIRON_VERSION } from "../index.js";
 import { runAgentSmokeCommand } from "./commands/agent.js";
+import {
+  decideApprovalCommand,
+  listApprovalsCommand,
+  showApprovalCommand
+} from "./commands/approval.js";
 import { applyConfig, proposeConfig } from "./commands/config.js";
 import { analyzeDocking } from "./commands/docking.js";
 import { runDoctorCommand } from "./commands/doctor.js";
@@ -90,6 +95,37 @@ export function createProgram(): Command {
     .option("--dry-run", "Show planned changes without writing config.")
     .action(async (proposalId: string, options: { dryRun?: boolean }) => {
       console.log(await applyConfig(process.cwd(), proposalId, options));
+    });
+
+  const approval = program
+    .command("approval")
+    .description("Inspect and decide Kairon approvals.");
+
+  approval
+    .command("list")
+    .description("List approvals.")
+    .option("--status <status>", "Approval status filter. Defaults to pending; use all for every status.")
+    .action(async (options: { status?: string }) => {
+      console.log(await listApprovalsCommand(process.cwd(), options));
+    });
+
+  approval
+    .command("show")
+    .description("Show a sanitized approval detail.")
+    .argument("<approvalId>", "Approval id, for example APR-0001")
+    .action(async (approvalId: string) => {
+      console.log(await showApprovalCommand(process.cwd(), approvalId));
+    });
+
+  approval
+    .command("decide")
+    .description("Apply an approval decision.")
+    .argument("<approvalId>", "Approval id, for example APR-0001")
+    .requiredOption("--action <action>", "approve, reject, request_changes, or snooze.")
+    .option("--reason <reason>", "Decision reason.")
+    .option("--until <iso-date>", "Snooze until this ISO timestamp. Defaults to one hour.")
+    .action(async (approvalId: string, options) => {
+      console.log(await decideApprovalCommand(process.cwd(), approvalId, options));
     });
 
   program

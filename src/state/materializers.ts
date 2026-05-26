@@ -22,6 +22,9 @@ export async function materializeEvent(
     case "approval.decided":
       await materializeApprovalDecided(projectRoot, event);
       return;
+    case "approval.snoozed":
+      await materializeApprovalSnoozed(projectRoot, event);
+      return;
     case "run.completed":
       await materializeRunCompleted(projectRoot, event);
       return;
@@ -138,6 +141,44 @@ async function materializeApprovalDecided(
     reason: event.payload?.reason,
     decided_by: event.payload?.actor,
     decided_at: event.created_at,
+    updated_at: event.created_at
+  });
+}
+
+async function materializeApprovalSnoozed(
+  projectRoot: string,
+  event: KaironEvent
+): Promise<void> {
+  const approvalId = String(event.payload?.approval_id);
+
+  if (!approvalId || approvalId === "undefined") {
+    throw new Error("approval.snoozed requires approval id");
+  }
+
+  const approvalPath = path.join(
+    getKaironPaths(projectRoot).approvalsDir,
+    `${approvalId}.json`
+  );
+
+  let current: Record<string, unknown> = {
+    schema_version: "0.1",
+    id: approvalId,
+    created_at: event.created_at
+  };
+
+  try {
+    current = await readJsonFile<Record<string, unknown>>(approvalPath);
+  } catch {
+    // A missing file is materialized as a minimal snoozed approval for recovery.
+  }
+
+  await writeJsonFileAtomic(approvalPath, {
+    ...current,
+    status: "snoozed",
+    snooze_until: event.payload?.until,
+    reason: event.payload?.reason,
+    snoozed_by: event.payload?.actor,
+    snoozed_at: event.created_at,
     updated_at: event.created_at
   });
 }
