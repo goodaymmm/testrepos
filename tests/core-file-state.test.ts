@@ -31,6 +31,15 @@ describe("core file state utilities", () => {
     expect(await readJsonLines(jsonlPath)).toEqual([{ index: 1 }, { index: 2 }]);
   });
 
+  it("reads UTF-8 JSON files that include a byte order mark", async () => {
+    const root = await createTempProject();
+    const jsonPath = path.join(root, ".kairon", "config", "bom.json");
+    await mkdir(path.dirname(jsonPath), { recursive: true });
+    await writeFile(jsonPath, "\uFEFF{\"ok\":true}\n", "utf8");
+
+    await expect(readJsonFile(jsonPath)).resolves.toEqual({ ok: true });
+  });
+
   it("blocks duplicate lock acquisition", async () => {
     const root = await createTempProject();
     const lockPath = path.join(root, ".kairon", "runtime", "state.lock");

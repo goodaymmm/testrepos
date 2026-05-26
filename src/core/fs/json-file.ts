@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 
 export async function readJsonFile<T>(filePath: string): Promise<T> {
   try {
-    return JSON.parse(await readFile(filePath, "utf8")) as T;
+    return JSON.parse(stripUtf8Bom(await readFile(filePath, "utf8"))) as T;
   } catch (error) {
     throw new Error(`Failed to read JSON file ${filePath}: ${String(error)}`);
   }
@@ -28,4 +28,8 @@ export async function writeJsonFileAtomic(
     await rm(tempPath, { force: true });
     throw new Error(`Failed to write JSON file ${filePath}: ${String(error)}`);
   }
+}
+
+function stripUtf8Bom(value: string): string {
+  return value.charCodeAt(0) === 0xfeff ? value.slice(1) : value;
 }
