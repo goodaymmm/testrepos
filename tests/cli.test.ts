@@ -11,6 +11,7 @@ describe("createProgram", () => {
 
     expect(commandNames).toEqual([
       "agent",
+      "approval",
       "config",
       "docking",
       "doctor",

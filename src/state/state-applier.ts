@@ -39,6 +39,14 @@ export type InternalCommand =
       received_at?: string;
     }
   | {
+      type: "approval.snooze";
+      approval_id: string;
+      until: string;
+      reason?: string;
+      actor?: unknown;
+      received_at?: string;
+    }
+  | {
       type: "schedule.close_active_work";
       date: string;
       reason: string;
@@ -111,6 +119,21 @@ export class StateApplier {
           payload: {
             approval_id: command.approval_id,
             decision: command.decision,
+            reason: command.reason,
+            actor: command.actor
+          },
+          created_at: command.received_at
+        }
+      ]);
+    }
+
+    if (command.type === "approval.snooze") {
+      return this.applyEvents([
+        {
+          type: "approval.snoozed",
+          payload: {
+            approval_id: command.approval_id,
+            until: command.until,
             reason: command.reason,
             actor: command.actor
           },

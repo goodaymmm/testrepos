@@ -18,6 +18,7 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 - review loop / quality gate の実行経路
 - git workspace / diff snapshot / transaction metadata の実行境界
 - Discord approval gateway の正規化・idempotency・message payload
+- approval queue CLI
 - daily report、agent handoff、cleanup proposal
 
 現時点で未完成または後続作業の範囲:
@@ -168,6 +169,18 @@ kairon review run REV-0001 --timeout-ms 120000
 指定した review loop の reviewer を設定から読み込み、公式CLI runnerへ投入します。reviewer の `outbox.json` に含まれる `review_result` を保存し、`minimum_score`、`block_on_severity`、`max_iterations` を使って quality gate を評価します。
 
 通過した場合は loop を `approved` にし、基準未満の場合は修正用の queue item を作成します。最大反復回数に達した場合は approval queue にエスカレーションします。実行結果は `.kairon/reviews/loops/` と `.kairon/reviews/results/` に残ります。
+
+### 承認待ち確認と決定
+
+```powershell
+kairon approval list
+kairon approval show APR-0001
+kairon approval decide APR-0001 --action approve --reason "内容を確認済み"
+kairon approval decide APR-0001 --action request_changes --reason "テスト追加が必要"
+kairon approval decide APR-0001 --action snooze --until 2026-05-26T09:00:00.000Z
+```
+
+`approval list` は既定で pending の承認だけを表示します。`show` は diff、log、stdout、stderr、secret-like key を過剰表示しない安全な詳細表示です。`decide` は `approve`、`reject`、`request_changes`、`snooze` を state に反映します。すでに決定済みの approval へ再決定しようとした場合は拒否します。
 
 ### ドッキング解析
 
