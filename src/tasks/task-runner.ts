@@ -62,6 +62,11 @@ export type RunTaskRequest = {
   date?: string;
 };
 
+export type RunQueuedTaskRequest = {
+  timeoutMs?: number;
+  date?: string;
+};
+
 export type RunTaskResult = {
   schema_version: string;
   task_id: string;
@@ -170,6 +175,26 @@ export class TaskRunner {
       await queue.fail(queueItem.id, { message: String(error) });
       throw error;
     }
+  }
+
+  async runQueuedAgentItem(
+    item: QueueItem,
+    request: RunQueuedTaskRequest = {}
+  ): Promise<RunTaskResult> {
+    if (item.type !== "agent.run") {
+      throw new Error(`Unsupported queued task item: ${item.type}`);
+    }
+    if (item.task_id === undefined) {
+      throw new Error("Queued agent.run item is missing task_id.");
+    }
+
+    assertTaskId(item.task_id);
+    const task = await readJsonFile<TaskRecord>(taskPath(this.projectRoot, item.task_id));
+    return this.processAgentRun(item, task, {
+      taskId: item.task_id,
+      timeoutMs: request.timeoutMs,
+      date: request.date
+    });
   }
 
   private async processAgentRun(
