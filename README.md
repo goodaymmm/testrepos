@@ -16,7 +16,7 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 - Agent dispatcher、context builder、session host
 - Codex / Claude / AntigravityCLI 公式 CLI へ接続する runner 境界
 - review loop / quality gate の実行経路
-- git workspace / diff snapshot の骨格
+- git workspace / diff snapshot / transaction metadata の実行境界
 - Discord approval gateway の正規化・idempotency・message payload
 - daily report、agent handoff、cleanup proposal
 
@@ -27,6 +27,7 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 - Board UI
 - persistent PTY の本格運用
 - LangGraph / RAG の本実装
+- Git transaction の task runner / review runner 連携
 - merge / deploy の自動実行
 
 ## 前提
