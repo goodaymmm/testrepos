@@ -9,7 +9,8 @@ import {
 import {
   WorkQueue,
   type QueueItem,
-  type QueueItemType
+  type QueueItemType,
+  type ScheduleMode
 } from "./work-queue.js";
 
 export type QueueWorkerResult =
@@ -36,6 +37,11 @@ export type QueueWorkerHandlers = {
   >;
 };
 
+export type ProcessNextOptions = {
+  scheduleMode?: ScheduleMode;
+  now?: Date;
+};
+
 export class QueueWorker {
   constructor(
     private readonly projectRoot: string,
@@ -44,16 +50,24 @@ export class QueueWorker {
     private readonly handlers: QueueWorkerHandlers
   ) {}
 
-  async processNext(workerId: string): Promise<QueueWorkerResult> {
+  async processNext(
+    workerId: string,
+    options: ProcessNextOptions = {}
+  ): Promise<QueueWorkerResult> {
     const command = await this.commandInbox.claim(workerId);
 
     if (command !== null) {
       return this.processCommand(command);
     }
 
-    const activeWorkClosed = await this.isActiveWorkClosed();
+    const activeWorkClosed = await this.isActiveWorkClosed(options.now);
     const item = await this.workQueue.claim(workerId, {
-      blocked: (candidate) => activeWorkClosed && isActiveWorkDispatch(candidate)
+      now: options.now,
+      blocked: (candidate) =>
+        isBlockedBySchedule(candidate, {
+          activeWorkClosed,
+          scheduleMode: options.scheduleMode
+        })
     });
 
     if (item === null) {
@@ -125,7 +139,7 @@ export class QueueWorker {
     };
   }
 
-  private async isActiveWorkClosed(): Promise<boolean> {
+  private async isActiveWorkClosed(now = new Date()): Promise<boolean> {
     const overridePath = path.join(
       getKaironPaths(this.projectRoot).stateDir,
       "schedule_override.json"
@@ -145,7 +159,7 @@ export class QueueWorker {
         return true;
       }
 
-      return Date.parse(override.expires_at) > Date.now();
+      return Date.parse(override.expires_at) > now.getTime();
     } catch (error) {
       if (String(error).includes("ENOENT")) {
         return false;
@@ -154,6 +168,24 @@ export class QueueWorker {
       throw error;
     }
   }
+}
+
+export function isBlockedBySchedule(
+  item: QueueItem,
+  options: {
+    activeWorkClosed?: boolean;
+    scheduleMode?: ScheduleMode;
+  }
+): boolean {
+  if (options.scheduleMode === "maintenance") {
+    return item.type !== "maintenance.run";
+  }
+
+  if (options.scheduleMode === "standby_work") {
+    return !isStandbyAllowedDispatch(item);
+  }
+
+  return options.activeWorkClosed === true && isActiveWorkDispatch(item);
 }
 
 function isActiveWorkDispatch(item: QueueItem): boolean {
@@ -166,4 +198,29 @@ function isActiveWorkDispatch(item: QueueItem): boolean {
   }
 
   return ["agent.run", "review.run", "git.transaction"].includes(item.type);
+}
+
+function isStandbyAllowedDispatch(item: QueueItem): boolean {
+  if (item.schedule_mode === "active_work") {
+    return false;
+  }
+
+  if (item.schedule_mode === "standby_work") {
+    return true;
+  }
+
+  if (item.schedule_mode === "maintenance") {
+    return false;
+  }
+
+  if (["approval.command", "schedule.command", "maintenance.run"].includes(item.type)) {
+    return true;
+  }
+
+  const payload = item.payload ?? {};
+  return (
+    payload.approved === true ||
+    payload.approval_status === "approved" ||
+    payload.approval_decision === "approve"
+  );
 }

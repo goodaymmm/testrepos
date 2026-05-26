@@ -19,11 +19,12 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 - git workspace / diff snapshot / transaction metadata の実行境界
 - Discord approval gateway の正規化・idempotency・message payload
 - approval queue CLI
+- runtime loop scheduler の1 tick実行、schedule別queue制御、maintenance重複防止
 - daily report、agent handoff、cleanup proposal
 
 現時点で未完成または後続作業の範囲:
 
-- 24 時間常駐 loop の完成
+- 24 時間常駐daemonとしてのloop運用
 - live Discord Gateway 接続と実メッセージ投稿
 - Board UI
 - persistent PTY の本格運用
@@ -206,7 +207,13 @@ kairon config apply CFG-YYYYMMDDHHMMSS-xxxxxxxx
 kairon start
 ```
 
-runtime lock を取得します。現時点の `start` は常駐 loop 全体を起動する完成版ではなく、runtime 起動状態を表す lock を作る段階です。
+runtime lock を取得し、現在のscheduleに基づいて runtime tick を1回実行します。
+
+- `active_work`: ready queue item を処理します。
+- `standby_work`: command inboxを優先し、standby指定または承認済みの安全なqueue itemだけを処理します。
+- `maintenance`: 日次メンテナンスを同一日1回だけ実行し、重複時はskipします。
+
+実行結果は `.kairon/runtime/last-tick.json` に記録されます。現時点では24時間常駐daemonの完成版ではなく、runtime loopのschedule境界を検証可能にした段階です。
 
 ### 状態確認
 
@@ -278,7 +285,7 @@ CLI が見つからない場合、Kairon は該当 Agent を `setup_required` �
 2. 検証用プロジェクトで `kairon init` を実行し、 `.kairon/` が生成される。
 3. `.kairon/config/*.json` の schedule、agents、policies、notifications を確認する。
 4. `codex --help`、`claude --help`、`agy --help` で公式 CLI の availability を確認する。
-5. `kairon start`、`kairon status`、`kairon leave`、`kairon stop` を確認する。
+5. `kairon start`、`kairon status`、`kairon leave`、`kairon stop` を確認し、`.kairon/runtime/last-tick.json` を確認する。
 6. `kairon maintenance run` を実行し、daily report、agent handoff、cleanup proposal が作られることを確認する。
 7. cleanup proposal が直接削除・直接移動をしていないことを確認する。
 8. merge / deploy / protected branch push が approval required のままになっていることを確認する。

@@ -272,18 +272,28 @@ kairon start
 
 ```text
 acquire runtime lock
-start queue worker
-start session manager
-start Agent Session Host
-open Codex terminal-backed session
-open Claude terminal-backed session
-open Antigravity/Gemini terminal-backed session
-inject daily bootstrap context
-start schedule loop
+resolve current schedule mode
+run one runtime tick
+write .kairon/runtime/last-tick.json
 ```
 
-MVP では foreground command として実行してよい。
-service 化は Phase 2 以降に回す。
+runtime tick の動作。
+
+```text
+active_work:
+  process ready queue item
+
+standby_work:
+  process command inbox first
+  process only standby-safe or approved queue item
+  keep normal active work queued
+
+maintenance:
+  run daily maintenance once per local date
+  skip when .kairon/runtime/maintenance-runs/YYYY-MM-DD.json exists
+```
+
+T15-01時点では、24時間daemonの完成版ではなく、`kairon start` で1 tickを実行してschedule境界を検証する。service化、interval loop、persistent PTY session orchestration は後続scope。
 
 ## kairon stop
 
@@ -481,7 +491,8 @@ Discord からは `/kairon leave` を同じ command として扱う。
 ## MVP Notes
 
 - `kairon start` は最初は foreground でよい。
-- `kairon task run` は現段階では同期実行の最小経路として動く。runtime loop連携は T15 scope。
+- `kairon start` はT15-01時点で1 tickのruntime loopを実行する。
+- `kairon task run` は現段階では同期実行の最小経路として動く。queue itemの非同期処理はruntime loop経由でも進められる。
 - `kairon stop` は terminal session を閉じる前に handoff を書く。
 - Discord が disabled の場合、approval は `.kairon/approvals` に file として残す。
 - `kairon leave` は Runtime を停止しない。本日の Active Work だけを閉じる。
