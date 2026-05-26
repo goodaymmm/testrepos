@@ -79,7 +79,7 @@ Claude Code は subscription 利用時、公式 Claude Code の認証状態を�
 `ANTHROPIC_API_KEY` が存在する場合は API usage になる可能性があるため警告する。
 
 ```text
-claude -p "<prompt>" --output-format stream-json
+claude -p "<prompt>" --output-format stream-json --verbose
 ```
 
 MVP では `--bare` を標準にしない。
@@ -96,6 +96,7 @@ Claude は tool permission を job capability から生成する。
     "Execute the Kairon run described in stdin. Produce the required outbox.",
     "--output-format",
     "stream-json",
+    "--verbose",
     "--allowedTools",
     "Read,Edit,Bash(git diff *),Bash(npm test *)"
   ],
@@ -115,7 +116,7 @@ AntigravityCLI は旧 Gemini CLI 系の Agent として扱い、Kairon 内部の
 headless mode は `agy --print` を標準にする。
 
 ```text
-agy --sandbox --print "<prompt>"
+agy --print --print-timeout 120s "<prompt>"
 ```
 
 Antigravity/Gemini は QA、research、large context review を優先する。
@@ -128,8 +129,9 @@ AntigravityCLI の背後 service に third-party client で直接アクセスし
   "agent": "gemini",
   "command": "agy",
   "args": [
-    "--sandbox",
     "--print",
+    "--print-timeout",
+    "120s",
     "Execute the Kairon run described in the prompt. Produce the required outbox."
   ],
   "stdin": ".kairon/runs/RUN-0003/context.md",

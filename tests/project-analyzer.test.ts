@@ -142,7 +142,8 @@ async function createEnglishAppLikeProject(): Promise<string> {
     "docker-compose.yml",
     "image.png",
     "lesson_view.xml",
-    "pubspec.yaml"
+    "pubspec.yaml",
+    "tmpclaude-file-cwd"
   ];
 
   for (const file of files) {

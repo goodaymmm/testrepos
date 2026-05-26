@@ -215,6 +215,7 @@ function classifyFile(
   name: string,
   state: {
     protectedPaths: Set<string>;
+    generatedPaths: Set<string>;
     sourcePaths: Set<string>;
     evidence: ProjectPathEvidence[];
   }
@@ -225,6 +226,11 @@ function classifyFile(
 
   if (protectedExactFiles.has(name) || name.startsWith(".env")) {
     addPath(state.protectedPaths, state.evidence, "protected", name, "local credential or tool config");
+    return;
+  }
+
+  if (name.startsWith("tmpclaude-")) {
+    addPath(state.generatedPaths, state.evidence, "generated", "tmpclaude-*", "Claude temporary working file");
     return;
   }
 

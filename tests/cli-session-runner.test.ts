@@ -164,6 +164,7 @@ describe("CliSessionRunner", () => {
 
     expect(invocations[0]?.args).toContain("--output-format");
     expect(invocations[0]?.args).toContain("stream-json");
+    expect(invocations[0]?.args).toContain("--verbose");
     expect(invocations[0]?.args).not.toContain("--bare");
     expect(record.review_loop).toMatchObject({
       reviewers: ["codex"],
@@ -204,8 +205,9 @@ describe("CliSessionRunner", () => {
 
     expect(invocations[0]).toMatchObject({
       command: "agy",
-      args: expect.arrayContaining(["--sandbox", "--print"])
+      args: expect.arrayContaining(["--print", "--print-timeout", "300s"])
     });
+    expect(invocations[0]?.args).not.toContain("--sandbox");
     expect(invocations[0]?.args.join("\n")).toContain("Capability hints:");
     expect(invocations[0]?.args.join("\n")).toContain("google_ecosystem");
     expect(invocations[0]?.args.join("\n")).toContain("multimodal");
