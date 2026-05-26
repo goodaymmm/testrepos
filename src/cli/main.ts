@@ -12,6 +12,7 @@ import { initializeProject } from "./commands/init.js";
 import { closeActiveWork } from "./commands/leave.js";
 import { runMaintenance } from "./commands/maintenance.js";
 import { runMigrations } from "./commands/migrate.js";
+import { runReviewLoopCommand } from "./commands/review.js";
 import { startRuntime } from "./commands/start.js";
 import { getStatusText } from "./commands/status.js";
 import { stopRuntime } from "./commands/stop.js";
@@ -139,6 +140,19 @@ export function createProgram(): Command {
     .option("--worker-id <id>", "Worker id recorded on the queue claim.")
     .action(async (taskId: string, options) => {
       console.log(await runTaskCommand(process.cwd(), taskId, options));
+    });
+
+  const review = program
+    .command("review")
+    .description("Run and inspect Kairon review loops.");
+
+  review
+    .command("run")
+    .description("Execute reviewer agents for a review loop.")
+    .argument("<loopId>", "Review loop id, for example REV-0001")
+    .option("--timeout-ms <ms>", "CLI execution timeout in milliseconds.")
+    .action(async (loopId: string, options: { timeoutMs?: string }) => {
+      console.log(await runReviewLoopCommand(process.cwd(), loopId, options));
     });
 
   const docking = program

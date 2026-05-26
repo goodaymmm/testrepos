@@ -19,6 +19,7 @@ kairon stop
 kairon status
 kairon task create
 kairon task run TASK-0001
+kairon review run REV-0001
 kairon leave
 kairon maintenance run
 ```
@@ -335,6 +336,45 @@ complete or fail queue item
 
 実行結果は `.kairon/runs/RUN-xxxx/runner.json` と `.kairon/runs/RUN-xxxx/outbox.json` に残る。
 code-producing taskでは、既存のreview loop境界に接続される。
+
+## kairon review run
+
+指定 review loop の reviewer を実行し、quality gate を評価する。
+
+```text
+kairon review run REV-0001
+kairon review run REV-0001 --timeout-ms 120000
+```
+
+処理。
+
+```text
+load .kairon/reviews/loops/REV-xxxx.json
+select configured reviewers from review policy
+route Claude Opus implementation review through Codex when configured
+invoke CliSessionRunner for each reviewer
+load reviewer outbox review_result
+validate review_result schema
+write .kairon/reviews/results/REV-xxxx.json
+evaluate minimum_score / block_on_severity / tests / secret scan
+approve loop, request fix, or escalate to approval queue
+write per-iteration execution artifact
+```
+
+出力例。
+
+```text
+Kairon review loop executed.
+loop_id=REV-0001
+status=approved
+decision=passed
+next_action=approve
+review_runs=RUN-0002
+review_results=REV-0002
+```
+
+基準未満で最大反復回数未満の場合は `review_fix` 用の `agent.run` queue item を作成する。
+最大反復回数に達した場合は `.kairon/approvals/APR-xxxx.json` に `review_escalation` を作成する。
 
 ## kairon maintenance run
 

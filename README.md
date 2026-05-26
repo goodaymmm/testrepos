@@ -6,7 +6,7 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 
 ## 現在の位置づけ
 
-このリポジトリは MVP の基盤実装です。T0 から T10 までの事前定義タスクが完了しており、次は運用テストで不足を洗い出す段階です。
+このリポジトリは MVP の基盤実装です。現在は運用テストで不足を洗い出しながら、実 CLI 接続、タスク投入、レビュー実行経路を順次固めている段階です。
 
 現時点で実装済みの主な範囲:
 
@@ -15,7 +15,7 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 - queue、command inbox、state applier
 - Agent dispatcher、context builder、session host
 - Codex / Claude / AntigravityCLI 公式 CLI へ接続する runner 境界
-- review loop / quality gate の骨格
+- review loop / quality gate の実行経路
 - git workspace / diff snapshot の骨格
 - Discord approval gateway の正規化・idempotency・message payload
 - daily report、agent handoff、cleanup proposal
@@ -157,6 +157,16 @@ kairon task run TASK-0001 --timeout-ms 120000
 ```
 
 `task create` は `.kairon/tasks/TASK-xxxx/task.json` を作成します。`task run` は `agent.run` queue itemを作り、dispatcherでAgentを選択し、既存のCLI runnerへ投入します。Agentが書いた `outbox.json` は State Applier に渡され、message / approval / task status へ反映されます。
+
+### レビュー実行
+
+```powershell
+kairon review run REV-0001 --timeout-ms 120000
+```
+
+指定した review loop の reviewer を設定から読み込み、公式CLI runnerへ投入します。reviewer の `outbox.json` に含まれる `review_result` を保存し、`minimum_score`、`block_on_severity`、`max_iterations` を使って quality gate を評価します。
+
+通過した場合は loop を `approved` にし、基準未満の場合は修正用の queue item を作成します。最大反復回数に達した場合は approval queue にエスカレーションします。実行結果は `.kairon/reviews/loops/` と `.kairon/reviews/results/` に残ります。
 
 ### ドッキング解析
 

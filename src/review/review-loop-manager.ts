@@ -1,6 +1,13 @@
 import path from "node:path";
-import { loadReviewPolicy, evaluateQualityGate, type QualityGateDecision, type ReviewPolicy, type ReviewResult } from "./quality-gate.js";
-import { writeJsonFileAtomic } from "../core/fs/json-file.js";
+import {
+  loadReviewPolicy,
+  evaluateQualityGate,
+  parseReviewResult,
+  type QualityGateDecision,
+  type ReviewPolicy,
+  type ReviewResult
+} from "./quality-gate.js";
+import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside } from "../core/fs/paths.js";
 import { nextId } from "../core/ids/counter.js";
 import { WorkQueue } from "../queue/work-queue.js";
@@ -118,7 +125,7 @@ export class ReviewLoopManager {
 
   async saveReviewResult(result: ReviewResult): Promise<ReviewResult> {
     const stored = {
-      ...result,
+      ...parseReviewResult(result),
       created_at: result.created_at ?? new Date().toISOString()
     };
     await writeJsonFileAtomic(
@@ -131,6 +138,17 @@ export class ReviewLoopManager {
       stored
     );
     return stored;
+  }
+
+  async loadLoopState(loopId: string): Promise<ReviewLoopState> {
+    return readJsonFile<ReviewLoopState>(
+      resolveInside(
+        getKaironPaths(this.projectRoot).kaironDir,
+        "reviews",
+        "loops",
+        `${loopId}.json`
+      )
+    );
   }
 
   async evaluate(results: ReviewResult[]): Promise<QualityGateDecision> {
@@ -202,7 +220,7 @@ export class ReviewLoopManager {
     };
   }
 
-  private async saveLoopState(state: ReviewLoopState): Promise<void> {
+  async saveLoopState(state: ReviewLoopState): Promise<void> {
     await writeJsonFileAtomic(
       resolveInside(
         getKaironPaths(this.projectRoot).kaironDir,
