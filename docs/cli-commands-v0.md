@@ -273,39 +273,68 @@ kairon status
 
 ## kairon task create
 
-手動で task を作成する。
+手動で task artifact を作成する。
 
 ```text
-kairon task create --title "Add approval queue" --persona implementer
+kairon task create --title "Add approval queue" --persona implementer --capability coding
+```
+
+主なoption。
+
+```text
+--description <text>
+--capability <capability>  repeatable
+--tag <tag>                repeatable
+--approval-required
+--code-producing
+--commit-requested
+--priority <number>
+--schedule-mode active_work|standby_work|maintenance
 ```
 
 生成物。
 
 ```text
 .kairon/tasks/TASK-xxxx/task.json
-.kairon/messages/TASK-xxxx.jsonl
-task.propose event
+task.created event
+```
+
+出力例。
+
+```text
+Kairon task created.
+task_id=TASK-0001
+task_path=.kairon/tasks/TASK-0001/task.json
+status=ready
+persona=implementer
 ```
 
 ## kairon task run
 
-指定 task を dispatch する。
+指定 task をqueueへ積み、dispatcher / runner / state applierへ同期的に流す。
 
 ```text
 kairon task run TASK-0001
+kairon task run TASK-0001 --timeout-ms 120000
 ```
 
 処理。
 
 ```text
 load task
-build dispatch_request
-select session
-build incremental context
-send prompt to Agent Session
-collect outbox
-apply state
+enqueue agent.run queue item
+claim queued item
+build dispatch request from persona / capabilities / tags
+select agent through AgentDispatcher
+build run context
+invoke CliSessionRunner
+collect required outbox
+apply outbox through StateApplier
+complete or fail queue item
 ```
+
+実行結果は `.kairon/runs/RUN-xxxx/runner.json` と `.kairon/runs/RUN-xxxx/outbox.json` に残る。
+code-producing taskでは、既存のreview loop境界に接続される。
 
 ## kairon maintenance run
 
@@ -363,7 +392,7 @@ Discord からは `/kairon leave` を同じ command として扱う。
 ## MVP Notes
 
 - `kairon start` は最初は foreground でよい。
-- `kairon task run` は active runtime がない場合、error にする。
+- `kairon task run` は現段階では同期実行の最小経路として動く。runtime loop連携は T15 scope。
 - `kairon stop` は terminal session を閉じる前に handoff を書く。
 - Discord が disabled の場合、approval は `.kairon/approvals` に file として残す。
 - `kairon leave` は Runtime を停止しない。本日の Active Work だけを閉じる。

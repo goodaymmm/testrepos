@@ -23,7 +23,6 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 現時点で未完成または後続作業の範囲:
 
 - 24 時間常駐 loop の完成
-- `kairon task create` / `kairon task run` の実処理
 - live Discord Gateway 接続と実メッセージ投稿
 - Board UI
 - persistent PTY の本格運用
@@ -149,6 +148,15 @@ kairon agent smoke --agent gemini
 ```
 
 設定済みの公式CLIへ最小promptを送り、`.kairon/runs/RUN-xxxx/` に `stdin.md`、`stdout.log`、`stderr.log`、`runner.json`、`outbox.json` を記録します。CLIが見つからない場合は実行せず `setup_required` としてoutboxへ記録します。
+
+### タスク作成と実行
+
+```powershell
+kairon task create --title "調査結果を整理する" --persona researcher --capability research
+kairon task run TASK-0001 --timeout-ms 120000
+```
+
+`task create` は `.kairon/tasks/TASK-xxxx/task.json` を作成します。`task run` は `agent.run` queue itemを作り、dispatcherでAgentを選択し、既存のCLI runnerへ投入します。Agentが書いた `outbox.json` は State Applier に渡され、message / approval / task status へ反映されます。
 
 ### ドッキング解析
 

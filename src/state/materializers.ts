@@ -22,6 +22,9 @@ export async function materializeEvent(
     case "approval.decided":
       await materializeApprovalDecided(projectRoot, event);
       return;
+    case "run.completed":
+      await materializeRunCompleted(projectRoot, event);
+      return;
     case "schedule.override.created":
       await materializeScheduleOverride(projectRoot, event);
       return;
@@ -137,6 +140,35 @@ async function materializeApprovalDecided(
     decided_at: event.created_at,
     updated_at: event.created_at
   });
+}
+
+async function materializeRunCompleted(
+  projectRoot: string,
+  event: KaironEvent
+): Promise<void> {
+  const taskId = String(event.task_id ?? event.payload?.task_id);
+
+  if (!taskId || taskId === "undefined") {
+    return;
+  }
+
+  const taskPath = resolveInside(getKaironPaths(projectRoot).tasksDir, taskId, "task.json");
+
+  try {
+    const current = await readJsonFile<Record<string, unknown>>(taskPath);
+    const status = event.payload?.status === "completed" ? "completed" : "failed";
+    await writeJsonFileAtomic(taskPath, {
+      ...current,
+      status,
+      last_run_id: event.run_id,
+      last_run_status: event.payload?.status,
+      updated_at: event.created_at
+    });
+  } catch (error) {
+    if (!String(error).includes("ENOENT")) {
+      throw error;
+    }
+  }
 }
 
 async function materializeScheduleOverride(
