@@ -310,6 +310,24 @@ Transaction schema。
 `command_hint` は人間と Agent の判断材料であり、自動実行する rollback command ではない。
 rollback 自動実行は別 policy で許可された場合だけ行う。
 
+## Implementation Status
+
+T13-02 では次の最小実行境界を実装済み。
+
+- `GitWorkspaceManager.allocate` に path write lock を追加。
+- `GitTransactionExecutor.executeCommit` で review 済み diff だけを commit 対象にする。
+- `git worktree add -B`、`git add --all`、`git commit`、`git rev-parse` を injectable command runner 経由で実行する。
+- transaction artifact を `.kairon/git/transactions/GTX-xxxx.json` に保存する。
+- `commit_sha`、`parent_sha`、rollback metadata を transaction に記録する。
+- `allow_auto_push=false` または protected branch push は approval queue へ止める。
+
+未接続の範囲。
+
+- `task run` から自動で Git transaction を開始する runtime wiring。
+- 実 worktree での end-to-end smoke。
+- push 承認後の実 push resume。
+- rollback command の自動実行。
+
 ## Commit Policy
 
 Commit を許可する条件。
