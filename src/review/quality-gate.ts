@@ -1,4 +1,5 @@
 import { loadConfigFile } from "../core/config/load-config.js";
+import { z } from "zod";
 
 export type ReviewSeverity = "info" | "low" | "medium" | "high" | "critical";
 
@@ -60,6 +61,47 @@ export type QualityGateDecision = {
   review_ids: string[];
 };
 
+const reviewSeveritySchema = z.enum(["info", "low", "medium", "high", "critical"]);
+
+export const reviewResultSchema = z.object({
+  schema_version: z.string().min(1),
+  review_id: z.string().min(1),
+  task_id: z.string().min(1),
+  run_id: z.string().min(1),
+  reviewer: z.string().min(1),
+  target: z
+    .object({
+      branch: z.string().optional(),
+      commit_sha: z.string().optional(),
+      diff_path: z.string().optional(),
+      diff_sha256: z.string().optional()
+    })
+    .passthrough(),
+  status: z.enum(["approved", "changes_requested", "commented"]),
+  score: z
+    .object({
+      overall: z.number().min(0).max(1),
+      correctness: z.number().min(0).max(1).optional(),
+      safety: z.number().min(0).max(1).optional(),
+      test_coverage: z.number().min(0).max(1).optional(),
+      maintainability: z.number().min(0).max(1).optional(),
+      policy_compliance: z.number().min(0).max(1).optional()
+    })
+    .passthrough(),
+  findings: z.array(
+    z.object({
+      severity: reviewSeveritySchema,
+      file: z.string().optional(),
+      line: z.number().int().positive().optional(),
+      body: z.string().min(1)
+    })
+  ),
+  required_changes: z.array(z.string()).optional(),
+  tests_passed: z.boolean().optional(),
+  secret_scan_passed: z.boolean().optional(),
+  created_at: z.string().optional()
+});
+
 type PoliciesConfig = {
   review: ReviewPolicy;
 };
@@ -75,6 +117,10 @@ const severityRank: Record<ReviewSeverity, number> = {
 export async function loadReviewPolicy(projectRoot: string): Promise<ReviewPolicy> {
   const config = await loadConfigFile<PoliciesConfig>(projectRoot, "policies.json");
   return config.review;
+}
+
+export function parseReviewResult(value: unknown): ReviewResult {
+  return reviewResultSchema.parse(value) satisfies ReviewResult;
 }
 
 export function evaluateQualityGate(
