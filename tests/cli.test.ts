@@ -10,6 +10,7 @@ describe("createProgram", () => {
       .sort();
 
     expect(commandNames).toEqual([
+      "agent",
       "config",
       "docking",
       "doctor",

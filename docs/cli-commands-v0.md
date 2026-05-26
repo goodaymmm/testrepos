@@ -10,6 +10,7 @@
 kairon init
 kairon migrate
 kairon doctor
+kairon agent smoke --agent codex|claude|gemini
 kairon config propose
 kairon config apply <proposal-id> [--dry-run]
 kairon docking analyze
@@ -100,6 +101,50 @@ PASS git.repository Git repository
 ```
 
 `warning` は運用前に確認すべき注意、`error` は通常運用前に解消すべき問題を示す。
+
+## kairon agent smoke
+
+設定済みの公式CLIへ最小promptを投げ、stdout / stderr / runner metadata / outboxを保存する。
+
+```text
+kairon agent smoke --agent codex
+kairon agent smoke --agent claude
+kairon agent smoke --agent gemini
+```
+
+任意option。
+
+```text
+--timeout-ms <ms>
+```
+
+処理。
+
+```text
+check configured CLI availability
+create smoke task artifact under .kairon/tasks/TASK-xxxx/task.json
+create run artifact under .kairon/runs/RUN-xxxx/
+invoke official CLI with a minimal Kairon job prompt
+require .kairon/runs/RUN-xxxx/outbox.json
+write stdout.log / stderr.log / runner.json
+return setup_required without invoking CLI when command is missing
+```
+
+出力例。
+
+```text
+Kairon agent smoke completed.
+agent=codex
+status=completed
+run_id=RUN-0001
+task_id=TASK-0001
+command=codex
+command_available=true
+runner=.kairon/runs/RUN-0001/runner.json
+outbox=.kairon/runs/RUN-0001/outbox.json
+```
+
+実CLIを起動するため、unit testではcommand runner mockで検証し、実Agent smokeは手動運用テストとして扱う。
 
 ## kairon config propose
 
