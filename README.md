@@ -140,6 +140,16 @@ kairon doctor
 
 Git、`.gitignore`、config、公式CLI、API key混入、Discord設定、safety policyを確認し、`pass` / `warning` / `error` と次の対応を表示します。
 
+### Agent Smoke
+
+```powershell
+kairon agent smoke --agent codex
+kairon agent smoke --agent claude
+kairon agent smoke --agent gemini
+```
+
+設定済みの公式CLIへ最小promptを送り、`.kairon/runs/RUN-xxxx/` に `stdin.md`、`stdout.log`、`stderr.log`、`runner.json`、`outbox.json` を記録します。CLIが見つからない場合は実行せず `setup_required` としてoutboxへ記録します。
+
 ### ドッキング解析
 
 ```powershell

@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { KAIRON_VERSION } from "../index.js";
+import { runAgentSmokeCommand } from "./commands/agent.js";
 import { applyConfig, proposeConfig } from "./commands/config.js";
 import { analyzeDocking } from "./commands/docking.js";
 import { runDoctorCommand } from "./commands/doctor.js";
@@ -50,6 +51,19 @@ export function createProgram(): Command {
     .description("Check whether Kairon can run in this project.")
     .action(async () => {
       console.log(await runDoctorCommand(process.cwd()));
+    });
+
+  const agent = program
+    .command("agent")
+    .description("Run and inspect Kairon AI agents.");
+
+  agent
+    .command("smoke")
+    .description("Run a minimal official CLI smoke check for one agent.")
+    .requiredOption("--agent <agent>", "Agent id: codex, claude, or gemini.")
+    .option("--timeout-ms <ms>", "CLI execution timeout in milliseconds.")
+    .action(async (options: { agent?: string; timeoutMs?: string }) => {
+      console.log(await runAgentSmokeCommand(process.cwd(), options));
     });
 
   const config = program
