@@ -119,6 +119,32 @@ export class WorkQueue {
     });
   }
 
+  async claimById(
+    itemId: string,
+    workerId: string,
+    options: Omit<ClaimOptions, "blocked"> = {}
+  ): Promise<QueueItem | null> {
+    return this.withQueueLock(async (state) => {
+      const now = options.now ?? new Date();
+      const claimTtlMs = options.claimTtlMs ?? 300_000;
+      recoverExpiredClaims(state, now);
+
+      const item = state.items.find((candidate) => candidate.id === itemId);
+      if (item === undefined || item.status !== "ready") {
+        return null;
+      }
+
+      const nowIso = now.toISOString();
+      item.status = "claimed";
+      item.claimed_by = workerId;
+      item.claimed_at = nowIso;
+      item.claim_expires_at = new Date(now.getTime() + claimTtlMs).toISOString();
+      item.attempts += 1;
+      item.updated_at = nowIso;
+      return { ...item };
+    });
+  }
+
   async complete(
     itemId: string,
     result: Record<string, unknown> = {}

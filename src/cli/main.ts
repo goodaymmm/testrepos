@@ -15,6 +15,11 @@ import { runMigrations } from "./commands/migrate.js";
 import { startRuntime } from "./commands/start.js";
 import { getStatusText } from "./commands/status.js";
 import { stopRuntime } from "./commands/stop.js";
+import {
+  collectOption,
+  createTaskCommand,
+  runTaskCommand
+} from "./commands/task.js";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -112,18 +117,28 @@ export function createProgram(): Command {
   task
     .command("create")
     .description("Create a task.")
-    .option("--title <title>", "Task title")
-    .option("--persona <persona>", "Requested persona")
-    .action(() => {
-      console.log("kairon task create is not implemented yet.");
+    .requiredOption("--title <title>", "Task title.")
+    .requiredOption("--persona <persona>", "Requested persona.")
+    .option("--description <description>", "Task description.")
+    .option("--capability <capability>", "Capability hint. Repeatable.", collectOption, [])
+    .option("--tag <tag>", "Task tag. Repeatable.", collectOption, [])
+    .option("--approval-required", "Mark the task as requiring approval.")
+    .option("--code-producing", "Mark the task as code-producing.")
+    .option("--commit-requested", "Mark the task as expecting a commit.")
+    .option("--priority <priority>", "Queue priority. Higher runs first.")
+    .option("--schedule-mode <mode>", "active_work, standby_work, or maintenance.")
+    .action(async (options) => {
+      console.log(await createTaskCommand(process.cwd(), options));
     });
 
   task
     .command("run")
     .description("Queue a task run.")
     .argument("<taskId>", "Task id, for example TASK-0001")
-    .action(() => {
-      console.log("kairon task run is not implemented yet.");
+    .option("--timeout-ms <ms>", "CLI execution timeout in milliseconds.")
+    .option("--worker-id <id>", "Worker id recorded on the queue claim.")
+    .action(async (taskId: string, options) => {
+      console.log(await runTaskCommand(process.cwd(), taskId, options));
     });
 
   const docking = program
