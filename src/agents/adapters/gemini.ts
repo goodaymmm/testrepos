@@ -6,7 +6,7 @@ export const geminiAdapter: AgentAdapterDefinition = {
   command: "agy",
   defaultMode: "persistent_terminal_session",
   supports: {
-    nonInteractive: true,
+    nonInteractive: false,
     jsonOutput: false,
     resume: false,
     workspaceWrite: true,
@@ -14,6 +14,6 @@ export const geminiAdapter: AgentAdapterDefinition = {
     multimodal: true
   },
   subscriptionMode: true,
-  requiresVisibleTerminal: false,
-  sessionStrategy: "terminal_session_primary_kairon_context_checkpoint"
+  requiresVisibleTerminal: true,
+  sessionStrategy: "terminal_session_primary_visible_terminal_required"
 };

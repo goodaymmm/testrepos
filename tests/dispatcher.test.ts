@@ -41,7 +41,7 @@ describe("AgentDispatcher", () => {
     });
   });
 
-  it("prioritizes Gemini for Google ecosystem and multimodal work", async () => {
+  it("falls back to Codex for automated QA while Gemini requires a PTY runner", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
 
@@ -55,11 +55,11 @@ describe("AgentDispatcher", () => {
         ]
       })
     ).resolves.toMatchObject({
-      agent: "gemini"
+      agent: "codex"
     });
   });
 
-  it("honors policy and capability constraints", async () => {
+  it("honors policy, capability, and non-interactive runner constraints", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
 
@@ -74,8 +74,6 @@ describe("AgentDispatcher", () => {
           { agent: "gemini", status: "ready" }
         ]
       })
-    ).resolves.toMatchObject({
-      agent: "gemini"
-    });
+    ).rejects.toThrow("No available agent");
   });
 });

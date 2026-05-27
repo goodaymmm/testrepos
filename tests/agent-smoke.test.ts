@@ -16,7 +16,7 @@ describe("runAgentSmoke", () => {
     await initializeProject({ projectRoot: root });
     const invocations: CliInvocation[] = [];
 
-    for (const agent of ["codex", "claude", "gemini"] satisfies AgentId[]) {
+    for (const agent of ["codex", "claude"] satisfies AgentId[]) {
       const result = await runAgentSmoke(
         root,
         {
@@ -81,20 +81,50 @@ describe("runAgentSmoke", () => {
       });
     }
 
-    expect(invocations).toHaveLength(3);
+    const geminiResult = await runAgentSmoke(
+      root,
+      {
+        agent: "gemini",
+        date: "2026-05-26",
+        timeoutMs: 30_000
+      },
+      {
+        commandAvailability: async () => true,
+        commandRunner: async (invocation) => {
+          invocations.push(invocation);
+          return commandResult(invocation);
+        }
+      }
+    );
+
+    expect(geminiResult).toMatchObject({
+      agent: "gemini",
+      command: "agy",
+      command_available: true,
+      status: "setup_required"
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runs", geminiResult.run_id, "outbox.json"))
+    ).resolves.toMatchObject({
+      agent: "gemini",
+      status: "failed",
+      events: [
+        {
+          type: "message.created",
+          payload: { reason: "cli_pty_required" }
+        }
+      ]
+    });
+
+    expect(invocations).toHaveLength(2);
     expect(invocations[0]).toMatchObject({
       command: "codex",
-      args: ["exec", "--json", "--sandbox", "workspace-write", "-"]
+      args: ["exec", "--json", "-"]
     });
     expect(invocations[1]).toMatchObject({
       command: "claude",
       args: expect.arrayContaining(["-p", "--output-format", "stream-json", "--verbose"])
     });
-    expect(invocations[2]).toMatchObject({
-      command: "agy",
-      args: expect.arrayContaining(["--print", "--print-timeout", "30s"])
-    });
-    expect(invocations[2]?.args).not.toContain("--sandbox");
   });
 
   it("returns setup_required without invoking a missing CLI", async () => {

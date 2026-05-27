@@ -1,4 +1,5 @@
 import { loadConfigFile } from "../core/config/load-config.js";
+import { getAgentAdapter } from "./adapters/index.js";
 import type { AgentId, RunnerMode, SessionScope } from "./types.js";
 import { agentIds, isAgentId } from "./types.js";
 
@@ -73,7 +74,9 @@ const capabilityMatrix: Record<AgentId, string[]> = {
     "workspace.write",
     "json.output",
     "native.mcp",
+    "qa",
     "resume",
+    "research",
     "review"
   ],
   claude: [
@@ -83,6 +86,8 @@ const capabilityMatrix: Record<AgentId, string[]> = {
     "json.output",
     "native.mcp",
     "planning",
+    "qa",
+    "research",
     "review"
   ],
   gemini: [
@@ -156,11 +161,19 @@ export class AgentDispatcher {
           return false;
         }
 
-        if (config.personas !== undefined && !config.personas.includes(request.persona)) {
+        if (
+          config.personas !== undefined &&
+          !config.personas.includes(request.persona) &&
+          agent !== dispatchConfig.default_agent
+        ) {
           return false;
         }
 
         if (!supportsRequiredCapabilities(agent, request.requiredCapabilities)) {
+          return false;
+        }
+
+        if (!getAgentAdapter(agent).supports.nonInteractive) {
           return false;
         }
 

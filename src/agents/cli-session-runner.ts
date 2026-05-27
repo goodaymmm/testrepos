@@ -1,4 +1,4 @@
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { buildAgentCliInvocation } from "./cli-invocation.js";
 import {
@@ -12,6 +12,7 @@ import {
   buildDailyBootstrapPrompt,
   buildJobPrompt
 } from "./prompt-envelope.js";
+import { getAgentAdapter } from "./adapters/index.js";
 import {
   FileSessionHost,
   type CommandAvailabilityChecker,
@@ -216,6 +217,7 @@ export class CliSessionRunner {
       persona: request.persona,
       contextPath: bundle.context_path,
       expectedOutboxPath: toProjectPath(this.projectRoot, outboxPath),
+      contextContent: await readContextContent(this.projectRoot, bundle.context_path),
       capabilities: request.capabilities
     });
 
@@ -254,6 +256,24 @@ export class CliSessionRunner {
         return record;
       }
 
+      if (!getAgentAdapter(request.agent).supports.nonInteractive) {
+        await this.writeFailureOutbox({
+          request,
+          outboxPath,
+          reason: "cli_pty_required",
+          message: `${session.command} requires an interactive terminal or PTY adapter for Kairon automation.`
+        });
+        record = await this.writeSetupRequiredRecord({
+          kind: "job",
+          session,
+          bundle,
+          paths,
+          stderr: `Kairon setup required: ${session.command} requires an interactive terminal or PTY adapter.\n`,
+          request
+        });
+        return record;
+      }
+
       const invocation = buildAgentCliInvocation({
         agent: request.agent,
         command: session.command,
@@ -263,7 +283,10 @@ export class CliSessionRunner {
       });
       const result = await this.commandRunner(invocation);
       const outboxStatus = await this.ensureOutbox(request, outboxPath, result);
-      const status = outboxStatus === "generated_failure" ? "failed" : statusFromResult(result);
+      const status =
+        outboxStatus.source === "generated_failure"
+          ? "failed"
+          : (outboxStatus.runStatus ?? statusFromResult(result));
       const reviewLoop = await this.maybeStartReviewLoop(request);
 
       await writeRunLogs(paths, result);
@@ -317,12 +340,28 @@ export class CliSessionRunner {
     request: RunAgentJobRequest,
     outboxPath: string,
     result: CommandRunResult
-  ): Promise<"agent_outbox" | "generated_failure"> {
+  ): Promise<{
+    source: "agent_outbox" | "stdout_outbox" | "generated_failure";
+    runStatus?: Extract<CliSessionRunStatus, "completed" | "failed">;
+  }> {
     try {
       await access(outboxPath);
-      await readJsonFile<unknown>(outboxPath);
-      return "agent_outbox";
+      const outbox = await readJsonFile<unknown>(outboxPath);
+      return {
+        source: "agent_outbox",
+        runStatus: runStatusFromOutbox(outbox)
+      };
     } catch {
+      const stdoutOutbox = extractOutboxFromStdout(result.stdout);
+      if (stdoutOutbox !== undefined) {
+        const outbox = withOutboxDefaults(stdoutOutbox, request);
+        await writeJsonFileAtomic(outboxPath, outbox);
+        return {
+          source: "stdout_outbox",
+          runStatus: runStatusFromOutbox(outbox)
+        };
+      }
+
       await this.writeFailureOutbox({
         request,
         outboxPath,
@@ -333,7 +372,7 @@ export class CliSessionRunner {
             : "Agent process failed before writing a valid outbox.",
         result
       });
-      return "generated_failure";
+      return { source: "generated_failure" };
     }
   }
 
@@ -512,6 +551,104 @@ async function writeText(filePath: string, content: string): Promise<void> {
 
 function truncate(value: string, max = 2_000): string {
   return value.length <= max ? value : `${value.slice(0, max)}...`;
+}
+
+async function readContextContent(
+  projectRoot: string,
+  contextPath: string
+): Promise<string> {
+  return readFile(resolveInside(projectRoot, contextPath), "utf8");
+}
+
+function extractOutboxFromStdout(stdout: string): unknown | undefined {
+  for (const candidate of stdoutCandidates(stdout)) {
+    const match = /KAIRON_OUTBOX_JSON_START\s*([\s\S]*?)\s*KAIRON_OUTBOX_JSON_END/.exec(
+      candidate
+    );
+    if (match?.[1] === undefined) {
+      continue;
+    }
+
+    try {
+      return JSON.parse(match[1]) as unknown;
+    } catch {
+      continue;
+    }
+  }
+
+  return undefined;
+}
+
+function stdoutCandidates(stdout: string): string[] {
+  const candidates = [stdout];
+
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim().startsWith("{")) {
+      continue;
+    }
+
+    try {
+      collectStrings(JSON.parse(line) as unknown, candidates);
+    } catch {
+      continue;
+    }
+  }
+
+  return candidates;
+}
+
+function collectStrings(value: unknown, output: string[]): void {
+  if (typeof value === "string") {
+    output.push(value);
+    return;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      collectStrings(item, output);
+    }
+    return;
+  }
+
+  if (value !== null && typeof value === "object") {
+    for (const item of Object.values(value)) {
+      collectStrings(item, output);
+    }
+  }
+}
+
+function withOutboxDefaults(
+  outbox: unknown,
+  request: RunAgentJobRequest
+): Record<string, unknown> {
+  const value =
+    outbox !== null && typeof outbox === "object" && !Array.isArray(outbox)
+      ? (outbox as Record<string, unknown>)
+      : {};
+
+  return {
+    schema_version: "0.1",
+    run_id: request.runId,
+    task_id: request.taskId,
+    agent: request.agent,
+    persona: request.persona,
+    ...value
+  };
+}
+
+function runStatusFromOutbox(
+  outbox: unknown
+): Extract<CliSessionRunStatus, "completed" | "failed"> | undefined {
+  if (outbox === null || typeof outbox !== "object" || Array.isArray(outbox)) {
+    return undefined;
+  }
+
+  const status = (outbox as { status?: unknown }).status;
+  if (status === undefined) {
+    return undefined;
+  }
+
+  return status === "completed" ? "completed" : "failed";
 }
 
 function terminalIdFor(agent: AgentId, date: string): string {

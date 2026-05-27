@@ -30,7 +30,7 @@ describe("CliSessionRunner", () => {
 
     expect(invocations[0]).toMatchObject({
       command: "codex",
-      args: ["exec", "--json", "--sandbox", "workspace-write", "-"]
+      args: ["exec", "--json", "-"]
     });
     expect(invocations[0]?.stdin).toContain("KAIRON_DAILY_BOOTSTRAP_START");
     expect(record).toMatchObject({
@@ -94,7 +94,7 @@ describe("CliSessionRunner", () => {
       readJsonFile(path.join(root, ".kairon", "runs", "RUN-0001", "runner.json"))
     ).resolves.toMatchObject({
       command: "codex",
-      args: ["exec", "--json", "--sandbox", "workspace-write", "-"]
+      args: ["exec", "--json", "-"]
     });
     await expect(
       readFile(path.join(root, ".kairon", "runs", "RUN-0001", "stdout.log"), "utf8")
@@ -129,6 +129,55 @@ describe("CliSessionRunner", () => {
           payload: { reason: "cli_command_missing" }
         }
       ]
+    });
+  });
+
+  it("persists a stdout fallback outbox when file tools are blocked", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) =>
+        commandResult(invocation, {
+          exitCode: 1,
+          stdout: [
+            "tool write was blocked",
+            "KAIRON_OUTBOX_JSON_START",
+            JSON.stringify({
+              schema_version: "0.1",
+              run_id: "RUN-0005",
+              task_id: "TASK-0005",
+              agent: "claude",
+              persona: "smoke",
+              status: "completed",
+              events: [
+                {
+                  type: "message.created",
+                  payload: { message_type: "stdout.fallback.completed" }
+                }
+              ]
+            }),
+            "KAIRON_OUTBOX_JSON_END"
+          ].join("\n")
+        })
+    });
+
+    const record = await runner.runAgentJob({
+      agent: "claude",
+      date: "2026-05-25",
+      runId: "RUN-0005",
+      taskId: "TASK-0005",
+      persona: "smoke"
+    });
+
+    expect(record.status).toBe("completed");
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runs", "RUN-0005", "outbox.json"))
+    ).resolves.toMatchObject({
+      run_id: "RUN-0005",
+      task_id: "TASK-0005",
+      agent: "claude",
+      status: "completed"
     });
   });
 
@@ -173,7 +222,7 @@ describe("CliSessionRunner", () => {
     });
   });
 
-  it("passes Antigravity/Gemini QA, Google ecosystem, and multimodal capability hints", async () => {
+  it("reports Antigravity/Gemini as setup-required until a PTY adapter is configured", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
     const invocations: CliInvocation[] = [];
@@ -193,7 +242,7 @@ describe("CliSessionRunner", () => {
       }
     });
 
-    await runner.runAgentJob({
+    const record = await runner.runAgentJob({
       agent: "gemini",
       date: "2026-05-25",
       runId: "RUN-0004",
@@ -203,14 +252,25 @@ describe("CliSessionRunner", () => {
       tags: ["google_ecosystem", "multimodal"]
     });
 
-    expect(invocations[0]).toMatchObject({
+    expect(invocations).toHaveLength(0);
+    expect(record).toMatchObject({
+      agent: "gemini",
       command: "agy",
-      args: expect.arrayContaining(["--print", "--print-timeout", "300s"])
+      status: "setup_required",
+      command_available: true
     });
-    expect(invocations[0]?.args).not.toContain("--sandbox");
-    expect(invocations[0]?.args.join("\n")).toContain("Capability hints:");
-    expect(invocations[0]?.args.join("\n")).toContain("google_ecosystem");
-    expect(invocations[0]?.args.join("\n")).toContain("multimodal");
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runs", "RUN-0004", "outbox.json"))
+    ).resolves.toMatchObject({
+      agent: "gemini",
+      status: "failed",
+      events: [
+        {
+          type: "message.created",
+          payload: { reason: "cli_pty_required" }
+        }
+      ]
+    });
   });
 });
 

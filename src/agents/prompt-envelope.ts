@@ -11,6 +11,7 @@ export type JobPromptInput = {
   taskId: string;
   persona: string;
   contextPath: string;
+  contextContent?: string;
   expectedOutboxPath: string;
   capabilities?: string[];
 };
@@ -58,12 +59,42 @@ export function buildJobPrompt(input: JobPromptInput): string {
     "",
     "Instructions:",
     "- Use the current project session context.",
-    "- Read the attached job context.",
-    "- Write the required outbox JSON.",
+    "- The job context is embedded in this prompt; do not call file read tools just to read the context path.",
+    "- Prefer writing the required outbox JSON file when file tools are available.",
+    "- If file writing, tool execution, or approval is blocked, print the complete outbox JSON between the stdout fallback markers below.",
     "- Do not modify canonical state directly.",
+    "",
+    "Stdout fallback format:",
+    "KAIRON_OUTBOX_JSON_START",
+    JSON.stringify(
+      {
+        schema_version: "0.1",
+        run_id: input.runId,
+        task_id: input.taskId,
+        persona: input.persona,
+        status: "completed",
+        events: [
+          {
+            type: "message.created",
+            payload: {
+              message_type: "agent.run.completed",
+              body: "Short completion summary."
+            }
+          }
+        ]
+      },
+      null,
+      2
+    ),
+    "KAIRON_OUTBOX_JSON_END",
     "",
     "Context path:",
     input.contextPath,
+    "",
+    "Embedded context:",
+    "KAIRON_CONTEXT_START",
+    input.contextContent ?? "",
+    "KAIRON_CONTEXT_END",
     "",
     `KAIRON_JOB_END ${input.runId}`,
     ""
