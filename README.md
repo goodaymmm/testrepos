@@ -290,6 +290,32 @@ CLI が見つからない場合、Kairon は該当 Agent を `setup_required` �
 7. cleanup proposal が直接削除・直接移動をしていないことを確認する。
 8. merge / deploy / protected branch push が approval required のままになっていることを確認する。
 
+### T11-T15 運用テスト対象
+
+T11からT15では、初期ドッキング後の運用に必要なCLI経路を追加しています。運用テストでは、次の単位で確認します。
+
+| 区分 | 対象 | 確認内容 |
+| --- | --- | --- |
+| T11-01 | `kairon migrate` | dry-run、実移行、backup作成、AntigravityCLI設定への移行、再実行時の安全性 |
+| T11-02 | `kairon doctor` | Git repo、`.gitignore`、config schema、CLI availability、API key混入、Discord env、policy診断 |
+| T11-03 | `kairon docking analyze` | 対象projectの protected / generated / source 候補を提案し、configを直接変更しない |
+| T11-04 | `kairon config propose/apply` | proposal保存、dry-run、backup作成、project不一致拒否、stale proposal拒否、適用後validation |
+| T12-01 | `kairon agent smoke` | Codex / Claude / AntigravityCLI の実CLI smoke、missing CLI時の `setup_required`、run artifact生成 |
+| T12-02 | `kairon task create/run` | task作成、queue投入、dispatcher選択、CLI runner実行、outbox適用、run artifact生成 |
+| T13-01 | `kairon review run` | reviewer選択、review result保存、quality gate通過/失敗、fix queue作成、最大反復時のapproval escalation |
+| T13-02 | Git transaction | review承認済みdiffのcommit、未承認block、diff変更検知、protected push approval、rollback metadata記録 |
+| T14-01 | `kairon approval` | list/show/decide、redaction、approve/reject/request_changes/snooze、二重決定拒否、state反映 |
+| T15-01 | `kairon start` runtime tick | Active Work queue処理、Standby Work制限、承認済みitem処理、Maintenance 1日1回実行、`last-tick.json` 記録 |
+
+今回のT11-T15運用テスト対象外:
+
+- T12-03 persistent PTY session reuse
+- T12-04 usage limit / permission detector
+- T13-03 GitHub branch protection validation
+- T14-02 live Discord Gateway
+- T15-02 daily maintenance expansion
+- T15-03 backup / tmp proposal management
+
 ## 推奨する次の進め方
 
 1. 検証用プロジェクトに `kairon init`
