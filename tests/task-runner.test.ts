@@ -103,7 +103,7 @@ describe("TaskRunner", () => {
     expect(result.applied_event_ids.length).toBeGreaterThan(0);
     expect(invocations[0]).toMatchObject({
       command: "codex",
-      args: ["exec", "--json", "--sandbox", "workspace-write", "-"]
+      args: ["exec", "--json", "-"]
     });
     await expect(new WorkQueue(root).list("completed")).resolves.toMatchObject([
       {
@@ -133,16 +133,16 @@ describe("TaskRunner", () => {
     await initializeProject({ projectRoot: root });
     const invocations: CliInvocation[] = [];
     const runner = new TaskRunner(root, {
-      commandAvailability: async (command) => command !== "agy",
+      commandAvailability: async (command) => command !== "codex",
       commandRunner: async (invocation) => {
         invocations.push(invocation);
         return commandResult(invocation);
       }
     });
     const task = await runner.createTask({
-      title: "Run QA",
-      persona: "qa",
-      capabilities: ["qa"]
+      title: "Implement missing CLI path",
+      persona: "implementer",
+      capabilities: ["coding"]
     });
 
     const result = await runner.runTask({ taskId: task.task_id, date: "2026-05-26" });
@@ -150,21 +150,63 @@ describe("TaskRunner", () => {
     expect(invocations).toEqual([]);
     expect(result).toMatchObject({
       status: "setup_required",
-      agent: "gemini",
-      command: "agy",
+      agent: "codex",
+      command: "codex",
       command_available: false
     });
     await expect(
       readJsonFile(path.join(root, ".kairon", "runs", result.run_id, "outbox.json"))
     ).resolves.toMatchObject({
       status: "failed",
-      agent: "gemini",
+      agent: "codex",
       events: [
         {
           type: "message.created",
           payload: { reason: "cli_command_missing" }
         }
       ]
+    });
+  });
+
+  it("falls back to Codex for researcher tasks until Antigravity has a PTY runner", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const invocations: CliInvocation[] = [];
+    const runner = new TaskRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) => {
+        invocations.push(invocation);
+        const prompt = promptFromInvocation(invocation);
+        const runId = /KAIRON_JOB_START (RUN-\d+)/.exec(prompt)?.[1] ?? "";
+        const taskId = /Task: (TASK-\d+)/.exec(prompt)?.[1] ?? "";
+        const outboxPath = /Expected outbox: (.+)/.exec(prompt)?.[1] ?? "";
+        await writeTaskOutbox(root, {
+          outboxPath,
+          runId,
+          taskId,
+          agent: "codex",
+          persona: "researcher",
+          status: "completed"
+        });
+        return commandResult(invocation);
+      }
+    });
+    const task = await runner.createTask({
+      title: "Research through fallback",
+      persona: "researcher",
+      capabilities: ["research"]
+    });
+
+    const result = await runner.runTask({ taskId: task.task_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      agent: "codex",
+      persona: "researcher"
+    });
+    expect(invocations[0]).toMatchObject({
+      command: "codex",
+      args: ["exec", "--json", "-"]
     });
   });
 

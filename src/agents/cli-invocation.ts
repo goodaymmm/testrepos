@@ -18,7 +18,7 @@ export function buildAgentCliInvocation(
   if (request.agent === "codex") {
     return {
       command: request.command,
-      args: ["exec", "--json", "--sandbox", "workspace-write", "-"],
+      args: ["exec", "--json", "-"],
       cwd: request.cwd,
       stdin: request.prompt,
       timeoutMs: request.timeoutMs

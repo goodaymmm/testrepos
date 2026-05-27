@@ -26,7 +26,7 @@ Agent Runtime は「どう起動し、どう読み取り、どう終了または
 | dry_run | CLI 起動前までを検証する | docking、policy test |
 
 MVP は `persistent_terminal_session` を標準にする。
-CLI が interactive approval を要求する場合は、その job を止めて approval queue に積むか、`foreground_terminal` に切り替える。
+CLI が interactive approval を要求する場合は、stdout fallbackを使う、その job を止めて approval queue に積む、または `foreground_terminal` / PTY adapter に切り替える。
 
 ## Agent Adapter Contract
 
@@ -53,17 +53,18 @@ Codex は Terminal-backed CLI Session を標準にする。
 `codex exec` は one-shot fallback、dry run、recovery 用に使う。
 
 ```text
-codex exec --json --sandbox workspace-write -
+codex exec --json -
 ```
 
-入力は `context.md` を stdin に渡す。
-出力は JSONL として `stdout.log` に保存し、最終結果または指定 schema 出力を `outbox.json` に変換する。
+入力は job prompt と embedded context を stdin に渡す。
+出力は JSONL として `stdout.log` に保存する。
+Agent が file tool で `outbox.json` を作成できない場合、`KAIRON_OUTBOX_JSON_START` / `KAIRON_OUTBOX_JSON_END` に囲んだJSONをstdoutへ出力し、Kaironが `outbox.json` として保存する。
 
 ```json
 {
   "agent": "codex",
   "command": "codex",
-  "args": ["exec", "--json", "--sandbox", "workspace-write", "-"],
+  "args": ["exec", "--json", "-"],
   "stdin": ".kairon/runs/RUN-0001/context.md",
   "stdout": ".kairon/runs/RUN-0001/stdout.log",
   "stderr": ".kairon/runs/RUN-0001/stderr.log"
@@ -113,16 +114,18 @@ Codex 側 review は `codex-plugin-cc` を利用する path を優先する。
 ## Antigravity/Gemini Adapter
 
 AntigravityCLI は旧 Gemini CLI 系の Agent として扱い、Kairon 内部の agent id は互換性のため `gemini` を維持する。
-headless mode は `agy --print` を標準にする。
+現行の `agy --print` は Terminal UI 寄りの挙動で、Node child process pipe からstdoutを安定取得できないため、自動runnerでは PTY adapter が必要である。
+PTY adapter が未設定の場合、Kairon は `setup_required` として扱い、automated task dispatch では non-interactive agent へfallbackする。
 
 ```text
-agy --print --print-timeout 120s "<prompt>"
+agy --print --print-timeout 120s "<prompt>"  # PTY adapter required
 ```
 
 Antigravity/Gemini は QA、research、large context review を優先する。
 加えて、Google ecosystem と multimodal review で優先的に起用する。
 AntigravityCLI の背後 service に third-party client で直接アクセスしない。
 `agy` に native JSON output flag がない場合でも、Kairon は Agent に `outbox.json` を書かせる file-based contract を主経路にする。
+ただし plain pipe実行では出力・file writeを検出できないため、PTY supportをT16以降の対象にする。
 
 ```json
 {

@@ -176,7 +176,7 @@ describe("ReviewLoopExecutor", () => {
     });
     expect(invocations[0]).toMatchObject({
       command: "codex",
-      args: ["exec", "--json", "--sandbox", "workspace-write", "-"]
+      args: ["exec", "--json", "-"]
     });
   });
 });
