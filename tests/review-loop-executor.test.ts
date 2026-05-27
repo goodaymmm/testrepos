@@ -144,6 +144,55 @@ describe("ReviewLoopExecutor", () => {
     });
   });
 
+  it("pauses review loops when a reviewer CLI is rate limited", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) =>
+        commandResult(invocation, {
+          exitCode: 1,
+          stdout: JSON.stringify({
+            type: "result",
+            is_error: true,
+            error: "rate_limit",
+            result: "You've hit your limit"
+          })
+        })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "setup_required",
+      decision: {
+        status: "failed",
+        blocking_findings: []
+      },
+      next_action: {
+        action: "setup_required",
+        reviewers: ["claude"]
+      },
+      review_result_ids: []
+    });
+    expect(result.decision.reasons.join("\n")).toContain(
+      "claude: setup required for claude"
+    );
+    await expect(new WorkQueue(root).list("ready")).resolves.toEqual([]);
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "reviews", "loops", "REV-0001.json"))
+    ).resolves.toMatchObject({
+      status: "setup_required",
+      iteration: 1,
+      history: expect.arrayContaining([{ run_id: "RUN-0002", type: "review" }])
+    });
+  });
+
   it("routes Claude Opus implementation review through Codex", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

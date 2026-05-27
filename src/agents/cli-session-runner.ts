@@ -282,6 +282,31 @@ export class CliSessionRunner {
         timeoutMs: request.timeoutMs
       });
       const result = await this.commandRunner(invocation);
+      const setupRequired = classifyCliSetupRequired(result);
+      if (setupRequired !== undefined) {
+        await this.writeSetupRequiredOutbox({
+          request,
+          outboxPath,
+          reason: setupRequired.reason,
+          message: setupRequired.message,
+          result
+        });
+        await writeRunLogs(paths, result);
+        await this.writeTerminalState(session, result, "setup_required");
+        record = this.createRecord({
+          kind: "job",
+          session,
+          bundle,
+          paths,
+          result,
+          invocation,
+          request,
+          status: "setup_required"
+        });
+        await writeJsonFileAtomic(paths.runnerMetadataPath, record);
+        return record;
+      }
+
       const outboxStatus = await this.ensureOutbox(request, outboxPath, result);
       const status =
         outboxStatus.source === "generated_failure"
@@ -342,7 +367,7 @@ export class CliSessionRunner {
     result: CommandRunResult
   ): Promise<{
     source: "agent_outbox" | "stdout_outbox" | "generated_failure";
-    runStatus?: Extract<CliSessionRunStatus, "completed" | "failed">;
+    runStatus?: CliSessionRunStatus;
   }> {
     try {
       await access(outboxPath);
@@ -401,6 +426,37 @@ export class CliSessionRunner {
             timed_out: input.result?.timedOut ?? false,
             stdout_excerpt: truncate(input.result?.stdout ?? ""),
             stderr_excerpt: truncate(input.result?.stderr ?? "")
+          }
+        }
+      ]
+    });
+  }
+
+  private async writeSetupRequiredOutbox(input: {
+    request: RunAgentJobRequest;
+    outboxPath: string;
+    reason: string;
+    message: string;
+    result: CommandRunResult;
+  }): Promise<void> {
+    await writeJsonFileAtomic(input.outboxPath, {
+      schema_version: "0.1",
+      run_id: input.request.runId,
+      task_id: input.request.taskId,
+      agent: input.request.agent,
+      persona: input.request.persona,
+      status: "setup_required",
+      events: [
+        {
+          type: "message.created",
+          payload: {
+            message_type: "agent.run.setup_required",
+            reason: input.reason,
+            message: input.message,
+            exit_code: input.result.exitCode,
+            timed_out: input.result.timedOut,
+            stdout_excerpt: truncate(input.result.stdout),
+            stderr_excerpt: truncate(input.result.stderr)
           }
         }
       ]
@@ -531,9 +587,13 @@ function terminalStatusFromResult(result: CommandRunResult): TerminalState["stat
 }
 
 function terminalStatusFromRunStatus(
-  status: Extract<CliSessionRunStatus, "completed" | "failed">
+  status: CliSessionRunStatus
 ): TerminalState["status"] {
-  return status === "completed" ? "ready" : "failed";
+  if (status === "completed") {
+    return "ready";
+  }
+
+  return status === "setup_required" ? "setup_required" : "failed";
 }
 
 async function writeRunLogs(
@@ -638,7 +698,7 @@ function withOutboxDefaults(
 
 function runStatusFromOutbox(
   outbox: unknown
-): Extract<CliSessionRunStatus, "completed" | "failed"> | undefined {
+): CliSessionRunStatus | undefined {
   if (outbox === null || typeof outbox !== "object" || Array.isArray(outbox)) {
     return undefined;
   }
@@ -648,7 +708,30 @@ function runStatusFromOutbox(
     return undefined;
   }
 
-  return status === "completed" ? "completed" : "failed";
+  if (status === "completed" || status === "setup_required") {
+    return status;
+  }
+
+  return "failed";
+}
+
+function classifyCliSetupRequired(
+  result: CommandRunResult
+): { reason: string; message: string } | undefined {
+  const output = `${result.stdout}\n${result.stderr}`.toLowerCase();
+  if (
+    output.includes('"error":"rate_limit"') ||
+    output.includes('"error": "rate_limit"') ||
+    output.includes("rate_limit") ||
+    output.includes("you've hit your limit")
+  ) {
+    return {
+      reason: "cli_rate_limited",
+      message: "Agent CLI is rate limited. Retry after the provider reset window."
+    };
+  }
+
+  return undefined;
 }
 
 function terminalIdFor(agent: AgentId, date: string): string {

@@ -181,6 +181,53 @@ describe("CliSessionRunner", () => {
     });
   });
 
+  it("classifies provider rate limits as setup-required", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) =>
+        commandResult(invocation, {
+          exitCode: 1,
+          stdout: JSON.stringify({
+            type: "result",
+            is_error: true,
+            error: "rate_limit",
+            result: "You've hit your limit"
+          })
+        })
+    });
+
+    const record = await runner.runAgentJob({
+      agent: "claude",
+      date: "2026-05-25",
+      runId: "RUN-0006",
+      taskId: "TASK-0006",
+      persona: "smoke"
+    });
+
+    expect(record.status).toBe("setup_required");
+    expect(record.exit_code).toBe(1);
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runs", "RUN-0006", "outbox.json"))
+    ).resolves.toMatchObject({
+      run_id: "RUN-0006",
+      agent: "claude",
+      status: "setup_required",
+      events: [
+        {
+          type: "message.created",
+          payload: { reason: "cli_rate_limited" }
+        }
+      ]
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runtime", "terminals", "TERM-claude-20260525.json"))
+    ).resolves.toMatchObject({
+      status: "setup_required"
+    });
+  });
+
   it("routes Claude Opus code production into the Codex review path", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

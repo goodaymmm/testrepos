@@ -30,7 +30,13 @@ export type ReviewLoopState = {
   schema_version: string;
   loop_id: string;
   task_id: string;
-  status: "not_required" | "running" | "approved" | "changes_requested" | "escalated";
+  status:
+    | "not_required"
+    | "running"
+    | "approved"
+    | "changes_requested"
+    | "setup_required"
+    | "escalated";
   iteration: number;
   max_iterations: number;
   implementer: AgentId;
@@ -58,6 +64,11 @@ export type ReviewNextAction =
   | {
       action: "request_fix";
       queue_item_id: string;
+      reasons: string[];
+    }
+  | {
+      action: "setup_required";
+      reviewers: AgentId[];
       reasons: string[];
     }
   | {
