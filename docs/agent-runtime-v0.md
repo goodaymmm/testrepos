@@ -59,6 +59,7 @@ codex exec --json -
 入力は job prompt と embedded context を stdin に渡す。
 出力は JSONL として `stdout.log` に保存する。
 Agent が file tool で `outbox.json` を作成できない場合、`KAIRON_OUTBOX_JSON_START` / `KAIRON_OUTBOX_JSON_END` に囲んだJSONをstdoutへ出力し、Kaironが `outbox.json` として保存する。
+CLI が provider quota や rate limit に到達した場合は通常の実行失敗へ変換せず、`setup_required` として記録する。
 
 ```json
 {
@@ -110,6 +111,7 @@ Claude は tool permission を job capability から生成する。
 Claude の unattended continuation は provider terms の境界が残るため、Kairon では `claude_unattended_mode` を `restricted` にする。
 Claude Code Opus が code-producing implementation を行った場合、review は Codex に渡す。
 Codex 側 review は `codex-plugin-cc` を利用する path を優先する。
+Claude reviewer が rate limit に到達した場合、review loop は `review_result` missing の修正要求を作らず、`setup_required` として再実行待ちにする。
 
 ## Antigravity/Gemini Adapter
 

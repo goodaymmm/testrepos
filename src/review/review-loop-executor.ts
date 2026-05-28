@@ -94,6 +94,8 @@ export class ReviewLoopExecutor {
 
     const reviewRuns: Array<{ runId: string; record: CliSessionRunRecord }> = [];
     const reviewResults: ReviewResult[] = [];
+    const setupRequiredReviewers: AgentId[] = [];
+    const setupRequiredReasons: string[] = [];
     const date = request.date ?? localDateKey(this.now());
     const allocatedRunIds = new Set(state.history.map((entry) => entry.run_id));
 
@@ -121,6 +123,16 @@ export class ReviewLoopExecutor {
         capabilities: ["review", "json.output"],
         extraSources: [instructionPath]
       });
+      reviewRuns.push({ runId, record });
+
+      if (record.status === "setup_required") {
+        setupRequiredReviewers.push(reviewer);
+        setupRequiredReasons.push(
+          `${reviewer}: setup required for ${record.command}`
+        );
+        continue;
+      }
+
       const result = await this.readOrSynthesizeReviewResult(state, {
         reviewer,
         reviewId,
@@ -129,8 +141,46 @@ export class ReviewLoopExecutor {
       });
 
       await this.manager.saveReviewResult(result);
-      reviewRuns.push({ runId, record });
       reviewResults.push(result);
+    }
+
+    if (setupRequiredReviewers.length > 0) {
+      const decision: QualityGateDecision = {
+        status: "failed",
+        reasons: setupRequiredReasons,
+        blocking_findings: [],
+        review_ids: reviewResults.map((result) => result.review_id)
+      };
+      const nextAction: ReviewNextAction = {
+        action: "setup_required",
+        reviewers: setupRequiredReviewers,
+        reasons: setupRequiredReasons
+      };
+      const nextState = updateLoopState(state, {
+        reviewRunIds: reviewRuns.map((run) => run.runId),
+        decision,
+        nextAction,
+        now: this.now()
+      });
+      await this.manager.saveLoopState(nextState);
+      const artifactPath = await this.writeIterationArtifact(nextState, {
+        reviewRunIds: reviewRuns.map((run) => run.runId),
+        reviewResults,
+        decision,
+        nextAction
+      });
+
+      return {
+        schema_version: "0.1",
+        loop_id: nextState.loop_id,
+        status: nextState.status,
+        iteration: nextState.iteration,
+        review_run_ids: reviewRuns.map((run) => run.runId),
+        review_result_ids: reviewResults.map((result) => result.review_id),
+        iteration_path: artifactPath,
+        decision,
+        next_action: nextAction
+      };
     }
 
     const decision = await this.manager.evaluate(reviewResults);
@@ -327,7 +377,10 @@ export function formatReviewLoopExecutionResult(
 }
 
 function shouldRunReviews(state: ReviewLoopState): boolean {
-  return state.code_producing && ["running", "changes_requested"].includes(state.status);
+  return (
+    state.code_producing &&
+    ["running", "changes_requested", "setup_required"].includes(state.status)
+  );
 }
 
 function updateLoopState(
@@ -342,6 +395,8 @@ function updateLoopState(
   const nextStatus: ReviewLoopState["status"] =
     input.nextAction.action === "approve"
       ? "approved"
+      : input.nextAction.action === "setup_required"
+        ? "setup_required"
       : input.nextAction.action === "escalate"
         ? "escalated"
         : input.nextAction.action === "request_fix"
