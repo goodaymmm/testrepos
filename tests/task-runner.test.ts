@@ -128,6 +128,49 @@ describe("TaskRunner", () => {
     });
   });
 
+  it("marks operation-test tasks with expiring queue metadata", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runner = new TaskRunner(root, {
+      now: () => new Date("2026-05-26T07:00:00.000Z"),
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) => {
+        const prompt = promptFromInvocation(invocation);
+        const runId = /KAIRON_JOB_START (RUN-\d+)/.exec(prompt)?.[1] ?? "";
+        const taskId = /Task: (TASK-\d+)/.exec(prompt)?.[1] ?? "";
+        const outboxPath = /Expected outbox: (.+)/.exec(prompt)?.[1] ?? "";
+        await writeTaskOutbox(root, {
+          outboxPath,
+          runId,
+          taskId,
+          agent: "codex",
+          persona: "implementer",
+          status: "completed"
+        });
+        return commandResult(invocation);
+      }
+    });
+    const task = await runner.createTask({
+      title: "Operation smoke",
+      persona: "implementer",
+      tags: ["operation-test"]
+    });
+
+    await runner.runTask({ taskId: task.task_id, date: "2026-05-26" });
+
+    await expect(new WorkQueue(root).list("completed")).resolves.toMatchObject([
+      {
+        id: "JOB-0001",
+        task_id: "TASK-0001",
+        test_scope: {
+          kind: "operation_test",
+          tags: ["operation-test"],
+          expires_at: "2026-05-27T07:00:00.000Z"
+        }
+      }
+    ]);
+  });
+
   it("returns setup_required when the selected agent CLI is missing", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

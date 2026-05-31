@@ -50,6 +50,52 @@ describe("RuntimeLoop", () => {
     ]);
   });
 
+  it("does not let stale operation-test queue items affect the runtime tick", async () => {
+    const root = await createInitializedProject();
+    const queue = new WorkQueue(root);
+    const stale = await queue.enqueue({
+      type: "agent.run",
+      priority: 100,
+      test_scope: {
+        kind: "operation_test",
+        tags: ["operation-test"],
+        expires_at: "2026-05-25T07:59:00.000Z"
+      }
+    });
+    const normal = await queue.enqueue({
+      type: "maintenance.run",
+      priority: 10,
+      schedule_mode: "active_work"
+    });
+
+    const result = await new RuntimeLoop(root, {
+      now: () => new Date("2026-05-25T08:00:00.000Z"),
+      handlers: {
+        items: {
+          "agent.run": async () => {
+            throw new Error("stale test item should not run");
+          },
+          "maintenance.run": async () => ({ maintained: true })
+        }
+      }
+    }).runTick();
+
+    expect(result).toMatchObject({
+      mode: "active_work",
+      action: "processed-item",
+      queue_result: {
+        status: "processed-item",
+        item_id: normal.id
+      }
+    });
+    await expect(queue.list("failed")).resolves.toMatchObject([
+      { id: stale.id, error: { code: "stale_test_queue_item" } }
+    ]);
+    await expect(queue.list("completed")).resolves.toMatchObject([
+      { id: normal.id, result: { maintained: true } }
+    ]);
+  });
+
   it("keeps active work blocked during standby and processes standby-safe items", async () => {
     const root = await createInitializedProject();
     const queue = new WorkQueue(root);

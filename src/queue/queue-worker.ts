@@ -60,6 +60,8 @@ export class QueueWorker {
       return this.processCommand(command);
     }
 
+    await this.workQueue.expireStaleTestItems(options.now);
+
     const activeWorkClosed = await this.isActiveWorkClosed(options.now);
     const item = await this.workQueue.claim(workerId, {
       now: options.now,

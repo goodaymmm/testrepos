@@ -11,7 +11,12 @@ import type { AgentId } from "../agents/types.js";
 import { nextId } from "../core/ids/counter.js";
 import { readJsonFile } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
-import { WorkQueue, type QueueItem, type ScheduleMode } from "../queue/work-queue.js";
+import {
+  WorkQueue,
+  type QueueItem,
+  type QueueTestScope,
+  type ScheduleMode
+} from "../queue/work-queue.js";
 import { StateApplier } from "../state/state-applier.js";
 
 export type CreateTaskRequest = {
@@ -139,11 +144,14 @@ export class TaskRunner {
     assertTaskId(request.taskId);
     const task = await readJsonFile<TaskRecord>(taskPath(this.projectRoot, request.taskId));
     const queue = new WorkQueue(this.projectRoot);
+    const now = this.now();
     const queueItem = await queue.enqueue({
       type: "agent.run",
       task_id: request.taskId,
       priority: task.priority,
       schedule_mode: task.schedule_mode,
+      test_scope: buildTestScope(task.tags, now),
+      created_at: now.toISOString(),
       payload: {
         persona: task.persona,
         capabilities: task.capabilities,
@@ -337,6 +345,19 @@ function readNumber(value: unknown): number | undefined {
 
 function uniqueStrings(values: string[] | undefined): string[] {
   return [...new Set(values ?? [])].filter((value) => value.length > 0);
+}
+
+function buildTestScope(tags: string[], now: Date): QueueTestScope | undefined {
+  const matchedTags = tags.filter((tag) => tag === "operation-test" || tag === "manual-test");
+  if (matchedTags.length === 0) {
+    return undefined;
+  }
+
+  return {
+    kind: matchedTags.includes("manual-test") ? "manual_test" : "operation_test",
+    tags: matchedTags,
+    expires_at: new Date(now.getTime() + 24 * 60 * 60 * 1000).toISOString()
+  };
 }
 
 function toProjectPath(projectRoot: string, filePath: string): string {

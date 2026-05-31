@@ -4,6 +4,7 @@ import { initializeProject } from "../src/cli/commands/init.js";
 import { runMaintenance } from "../src/cli/commands/maintenance.js";
 import { readJsonFile } from "../src/core/fs/json-file.js";
 import { runDailyMaintenance } from "../src/maintenance/run.js";
+import { WorkQueue } from "../src/queue/work-queue.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("runDailyMaintenance", () => {
@@ -24,6 +25,32 @@ describe("runDailyMaintenance", () => {
     ).resolves.toMatchObject({
       agent: "codex"
     });
+  });
+
+  it("expires stale test queue items during daily maintenance", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const queue = new WorkQueue(root);
+    const stale = await queue.enqueue({
+      type: "agent.run",
+      test_scope: {
+        kind: "manual_test",
+        tags: ["manual-test"],
+        expires_at: "2026-05-25T01:00:00.000Z"
+      }
+    });
+
+    await expect(
+      runDailyMaintenance(root, {
+        date: "2026-05-25",
+        now: new Date("2026-05-25T02:00:00.000Z")
+      })
+    ).resolves.toMatchObject({
+      expired_test_queue_item_ids: [stale.id]
+    });
+    await expect(queue.list("failed")).resolves.toMatchObject([
+      { id: stale.id, error: { code: "stale_test_queue_item" } }
+    ]);
   });
 
   it("exposes maintenance run through the CLI command handler", async () => {

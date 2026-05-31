@@ -50,6 +50,66 @@ describe("WorkQueue", () => {
     });
   });
 
+  it("expires stale test queue items before dispatch", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const queue = new WorkQueue(root);
+
+    const stale = await queue.enqueue({
+      type: "agent.run",
+      test_scope: {
+        kind: "operation_test",
+        tags: ["operation-test"],
+        expires_at: "2026-05-25T01:00:00.000Z"
+      }
+    });
+    const fresh = await queue.enqueue({
+      type: "agent.run",
+      test_scope: {
+        kind: "operation_test",
+        tags: ["operation-test"],
+        expires_at: "2026-05-25T03:00:00.000Z"
+      }
+    });
+
+    await expect(
+      queue.expireStaleTestItems(new Date("2026-05-25T02:00:00.000Z"))
+    ).resolves.toMatchObject([
+      {
+        id: stale.id,
+        status: "failed",
+        error: { code: "stale_test_queue_item" }
+      }
+    ]);
+    await expect(queue.list("failed")).resolves.toMatchObject([
+      { id: stale.id, status: "failed" }
+    ]);
+    await expect(queue.list("ready")).resolves.toMatchObject([
+      { id: fresh.id, status: "ready" }
+    ]);
+  });
+
+  it("expires legacy operation-test payload queue items after the compatibility ttl", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const queue = new WorkQueue(root);
+    const item = await queue.enqueue({
+      type: "agent.run",
+      payload: { tags: ["operation-test"] },
+      created_at: "2026-05-25T01:00:00.000Z"
+    });
+
+    await expect(
+      queue.expireStaleTestItems(new Date("2026-05-26T01:00:00.000Z"))
+    ).resolves.toMatchObject([
+      {
+        id: item.id,
+        status: "failed",
+        error: { code: "stale_test_queue_item" }
+      }
+    ]);
+  });
+
   it("completes and fails claimed items", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
