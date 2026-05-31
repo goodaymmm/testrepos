@@ -67,7 +67,7 @@ Kairon が禁止する方式。
 - Google account / Google AI Pro / Ultra の quota を尊重する。
 - headless mode は公式 CLI の既存 credential または公式 API key / Vertex AI flow に限定する。
 - Gemini Code Assist service などの裏側 service に、OAuth token を流用した third-party client で直接アクセスしない。
-- quota に達したら Antigravity/Gemini job を defer する。
+- quota に達したら Antigravity job を defer する。内部 agent id は互換性のため `gemini` を維持する。
 
 ## Discord Guardrail
 

@@ -3,6 +3,7 @@ import { realpathSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command } from "commander";
+import { agentCliIdHint } from "../agents/display.js";
 import { KAIRON_VERSION } from "../index.js";
 import { runAgentSmokeCommand } from "./commands/agent.js";
 import {
@@ -71,7 +72,7 @@ export function createProgram(): Command {
   agent
     .command("smoke")
     .description("Run a minimal official CLI smoke check for one agent.")
-    .requiredOption("--agent <agent>", "Agent id: codex, claude, or gemini.")
+    .requiredOption("--agent <agent>", `Agent id: ${agentCliIdHint()}.`)
     .option("--timeout-ms <ms>", "CLI execution timeout in milliseconds.")
     .action(async (options: { agent?: string; timeoutMs?: string }) => {
       console.log(await runAgentSmokeCommand(process.cwd(), options));

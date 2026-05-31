@@ -1,6 +1,7 @@
 import { access, readFile } from "node:fs/promises";
 import path from "node:path";
 import { defaultAgentAdapters } from "../agents/adapters/index.js";
+import { agentDisplayName } from "../agents/display.js";
 import {
   isCommandAvailable,
   type CommandAvailabilityChecker
@@ -221,12 +222,12 @@ async function checkAgentConfig(projectRoot: string): Promise<DoctorCheck> {
     const adapter = defaultAgentAdapters[agent];
     const configured = config.agents[agent];
     if (configured?.enabled !== true) {
-      details.push(`${agent}.enabled is not true`);
+      details.push(`${agentDisplayName(agent)}.enabled is not true`);
       continue;
     }
 
     details.push(
-      `${agent}: adapter=${configured.adapter ?? adapter.adapter}, command=${configured.command ?? adapter.command}`
+      `${agentDisplayName(agent)}: adapter=${configured.adapter ?? adapter.adapter}, command=${configured.command ?? adapter.command}`
     );
   }
 
@@ -261,9 +262,9 @@ async function checkAgentCliAvailability(
   for (const agent of agentIds) {
     const command = config.agents[agent]?.command ?? defaultAgentAdapters[agent].command;
     const available = await commandAvailability(command);
-    details.push(`${agent}: ${command} available=${available}`);
+    details.push(`${agentDisplayName(agent)}: ${command} available=${available}`);
     if (!available) {
-      missing.push(`${agent}:${command}`);
+      missing.push(`${agentDisplayName(agent)}:${command}`);
     }
   }
 

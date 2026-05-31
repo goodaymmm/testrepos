@@ -18,7 +18,7 @@ MVP で「動いた」と言える条件。
 
 ```text
 project-root に Kairon を init
-  -> Codex / Claude / Antigravity/Gemini terminal session を開始
+  -> Codex / Claude / Antigravity terminal session を開始
   -> sample task を queue に追加
   -> Codex に差分 job prompt を投入
   -> outbox.json を取得
@@ -40,7 +40,7 @@ project-root に Kairon を init
 - root rule discovery
 - Terminal-backed Codex session
 - Terminal-backed Claude session
-- Terminal-backed Antigravity/Gemini session
+- Terminal-backed Antigravity session
 - Review Loop Manager
 - Work Queue
 - Agent Dispatcher
@@ -70,7 +70,7 @@ project-root に Kairon を init
 | --- | --- | --- |
 | Codex | 実CLIで対応 | coding / review / repo write / terminal session の主経路を検証する |
 | Claude | 実CLIで対応 | planner / implementer / reviewer と Codex review loop を検証する |
-| Gemini | 実CLIで対応 | QA / research / Google ecosystem / multimodal review を検証する |
+| Antigravity | 実CLIで対応 | QA / research / Google ecosystem / multimodal review を検証する。内部 agent id は互換性のため `gemini` を維持 |
 
 MVP では 3 Agent の実 CLI session を起動する。
 ただし、code-producing job の最初の推奨 loop は Claude + Codex とする。
@@ -109,7 +109,7 @@ MVP では 3 Agent の実 CLI session を起動する。
 
 - Codex terminal session start
 - Claude terminal session start
-- Antigravity/Gemini terminal session start
+- Antigravity terminal session start
 - daily bootstrap prompt injection
 - incremental job prompt injection
 - stdout / stderr capture
@@ -233,7 +233,7 @@ kairon maintenance run
 
 - `kairon init` が空ではない既存 repo に `.kairon/` を生成する。
 - `kairon doctor` が CLI / config / Discord / Git 状態を検査する。
-- `kairon start` が Runtime Host と Codex / Claude / Antigravity/Gemini Terminal-backed Session を起動する。
+- `kairon start` が Runtime Host と Codex / Claude / Antigravity Terminal-backed Session を起動する。
 - sample task を実装 Agent session に流せる。
 - `runs/RUN-xxxx/outbox.json` が作られる。
 - code-producing run が review gate を通過するまで done にならない。

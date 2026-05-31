@@ -293,7 +293,7 @@ Done Criteria。
 
 - persona / policy / available sessions から agent を選べる。
 - MVP では implementer default を Codex にできる。
-- Google ecosystem / multimodal では Gemini を優先候補にできる。
+- Google ecosystem / multimodal では Antigravity を優先候補にできる。内部 agent id は互換性のため `gemini` を維持する。
 
 ### T6-02 context builder
 
@@ -423,7 +423,7 @@ Done Criteria。
 - job prompt を送れる。
 - Claude Opus implementation 時の Codex review path を作れる。
 
-### T9-03 Antigravity/Gemini session
+### T9-03 Antigravity session
 
 Done Criteria。
 

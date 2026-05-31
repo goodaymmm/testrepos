@@ -44,7 +44,9 @@ export function validateConfigFile(fileName: string, value: unknown): Validation
   if (fileName === "agents.json") {
     const result = agentsConfigSchema.safeParse(value);
     if (!result.success) {
-      errors.push(`${fileName}: codex, claude, and gemini must be enabled for MVP`);
+      errors.push(
+        `${fileName}: codex, claude, and gemini (Antigravity compatibility id) must be enabled for MVP`
+      );
     }
   }
 

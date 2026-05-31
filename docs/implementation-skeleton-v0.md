@@ -404,7 +404,7 @@ kairon start
   -> start agent session host
   -> open or attach Codex session
   -> open or attach Claude session
-  -> open or attach Antigravity/Gemini session
+  -> open or attach Antigravity session
   -> inject daily bootstrap context
   -> start Discord Gateway if enabled
   -> write runtime status
@@ -456,7 +456,7 @@ kairon task run TASK-0001
   -> State Applier
 ```
 
-ただし、MVP 本番では Claude / Antigravity/Gemini も実 CLI session を使う。
+ただし、MVP 本番では Claude / Antigravity も実 CLI session を使う。
 最初の local unit test では process を起動しない fake runner を使ってよいが、MVP acceptance では実 CLI session を必須にする。
 
 ## Testing Strategy
@@ -504,7 +504,7 @@ Kairon 本体の code-producing change も review gate を通す。
 - 実装: Codex または Claude
 - Review: Claude + Codex
 - Claude Opus 実装時: Codex review via `codex-plugin-cc`
-- Gemini: Discord / Google ecosystem / multimodal / large context で追加 review
+- Antigravity: Discord / Google ecosystem / multimodal / large context で追加 review。内部 agent id は互換性のため `gemini` を維持
 
 Review Gate を満たすまで commit しない。
 
@@ -520,7 +520,7 @@ Review Gate を満たすまで commit しない。
 8. CLI command thin wrappers
 9. schedule engine and `kairon leave`
 10. Agent session host interface
-11. Codex / Claude / Antigravity/Gemini adapter shell
+11. Codex / Claude / Antigravity adapter shell
 12. Git workspace interface and diff snapshot
 13. Review loop manager skeleton
 14. Discord gateway skeleton

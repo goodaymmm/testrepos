@@ -22,6 +22,12 @@ describe("runDoctor", () => {
     expect(statusById(result, "cli.availability")).toBe("pass");
     expect(statusById(result, "env.api_keys")).toBe("pass");
     expect(statusById(result, "discord.config")).toBe("pass");
+    expect(checkById(result, "config.agents")?.details).toContain(
+      "antigravity(gemini): adapter=antigravity_cli, command=agy"
+    );
+    expect(checkById(result, "cli.availability")?.details).toContain(
+      "antigravity(gemini): agy available=true"
+    );
   });
 
   it("warns when migration or subscription-only environment cleanup is needed", async () => {
@@ -63,6 +69,9 @@ describe("runDoctor", () => {
     expect(result.ok).toBe(false);
     expect(statusById(result, "cli.availability")).toBe("error");
     expect(statusById(result, "discord.config")).toBe("error");
+    expect(checkById(result, "cli.availability")?.nextAction).toContain(
+      "antigravity(gemini):agy"
+    );
   });
 
   it("formats doctor output with summary, checks, and next actions", async () => {

@@ -2,6 +2,7 @@ import {
   formatAgentSmokeResult,
   runAgentSmoke
 } from "../../agents/smoke-runner.js";
+import { agentCliIdHint } from "../../agents/display.js";
 import { createAntigravityPtySessionRunner } from "../../agents/pty-session-runner.js";
 import { isAgentId } from "../../agents/types.js";
 
@@ -15,7 +16,7 @@ export async function runAgentSmokeCommand(
   options: AgentSmokeCommandOptions
 ): Promise<string> {
   if (options.agent === undefined || !isAgentId(options.agent)) {
-    throw new Error("Invalid --agent. Use one of: codex, claude, gemini.");
+    throw new Error(`Invalid --agent. Use one of: ${agentCliIdHint()}.`);
   }
 
   const timeoutMs =

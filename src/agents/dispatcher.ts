@@ -1,5 +1,6 @@
 import { loadConfigFile } from "../core/config/load-config.js";
 import { getAgentAdapter } from "./adapters/index.js";
+import { agentDisplayName } from "./display.js";
 import type { AgentId, RunnerMode, SessionScope } from "./types.js";
 import { agentIds, isAgentId } from "./types.js";
 
@@ -52,7 +53,7 @@ type DispatchConfig = {
   personas?: Record<string, { preferred_agents?: string[]; max_parallel?: number }>;
 };
 
-const geminiSignals = [
+const antigravitySignals = [
   "google",
   "gcp",
   "firebase",
@@ -189,7 +190,7 @@ export class AgentDispatcher {
       dispatchConfig.personas?.[request.persona]?.preferred_agents ?? [];
     const defaultAgent = dispatchConfig.default_agent;
     const ordered = uniqueAgentIds([
-      ...(prefersGemini(request) ? ["gemini"] : []),
+      ...(prefersAntigravity(request) ? ["gemini"] : []),
       ...preferredAgents,
       ...(defaultAgent === undefined ? [] : [defaultAgent]),
       ...agentIds
@@ -230,7 +231,7 @@ function uniqueAgentIds(values: readonly string[]): AgentId[] {
   return result;
 }
 
-function prefersGemini(request: DispatchRequest): boolean {
+function prefersAntigravity(request: DispatchRequest): boolean {
   const signals = [
     request.modelClass,
     ...(request.requiredCapabilities ?? []),
@@ -241,7 +242,7 @@ function prefersGemini(request: DispatchRequest): boolean {
     .map((value) => value.toLowerCase());
 
   return signals.some((signal) =>
-    geminiSignals.some((geminiSignal) => signal.includes(geminiSignal))
+    antigravitySignals.some((antigravitySignal) => signal.includes(antigravitySignal))
   );
 }
 
@@ -275,9 +276,9 @@ function buildReason(
   request: DispatchRequest,
   session: AgentSessionAvailability | undefined
 ): string {
-  const parts = [`${agent} selected for persona ${request.persona}`];
+  const parts = [`${agentDisplayName(agent)} selected for persona ${request.persona}`];
 
-  if (prefersGemini(request) && agent === "gemini") {
+  if (prefersAntigravity(request) && agent === "gemini") {
     parts.push("google or multimodal signal matched");
   }
 

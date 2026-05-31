@@ -109,7 +109,7 @@ Kairon 本体の code-producing change は次を通す。
 - 可能なら Claude review
 
 Claude Opus が実装した場合は Codex review via `codex-plugin-cc` を優先する。
-Gemini は Discord / Google ecosystem / multimodal / large context の追加 review に使う。
+Antigravity は Discord / Google ecosystem / multimodal / large context の追加 review に使う。内部 agent id は互換性のため `gemini` を維持する。
 
 ## References
 

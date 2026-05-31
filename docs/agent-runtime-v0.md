@@ -113,9 +113,9 @@ Claude Code Opus が code-producing implementation を行った場合、review �
 Codex 側 review は `codex-plugin-cc` を利用する path を優先する。
 Claude reviewer が rate limit に到達した場合、review loop は `review_result` missing の修正要求を作らず、`setup_required` として再実行待ちにする。
 
-## Antigravity/Gemini Adapter
+## Antigravity Adapter
 
-AntigravityCLI は旧 Gemini CLI 系の Agent として扱い、Kairon 内部の agent id は互換性のため `gemini` を維持する。
+AntigravityCLI は `agy` を正式な実行対象とし、Kairon 内部の agent id は互換性のため `gemini` を維持する。
 現行の `agy --print` は Terminal UI 寄りの挙動で、Node child process pipe からstdoutを安定取得できないため、自動runnerでは PTY adapter が必要である。
 T16では non-interactive runner とは別に `interactiveSessionRunner` の接続点を追加し、Antigravity を正式な interactive agent として実行できる runtime path を用意する。
 T17では `node-pty` backed runner を追加し、CLI / runtime queue / review loop から `agy --prompt-interactive` をPTY上で起動する。
@@ -125,7 +125,7 @@ interactive runner が未設定、またはPTY起動に失敗した場合、Kair
 agy --prompt-interactive "<prompt>"  # PTY adapter path
 ```
 
-Antigravity/Gemini は QA、research、large context review を優先する。
+Antigravity は QA、research、large context review を優先する。
 加えて、Google ecosystem と multimodal review で優先的に起用する。
 AntigravityCLI の背後 service に third-party client で直接アクセスしない。
 `agy` に native JSON output flag がない場合でも、Kairon は Agent に `outbox.json` を書かせる file-based contract を主経路にする。

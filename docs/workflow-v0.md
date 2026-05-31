@@ -206,18 +206,19 @@ Agent Runner
 Claude は unattended mode を `restricted` とする。
 `ANTHROPIC_API_KEY` が存在する場合は subscription usage と異なる可能性があるため、その run を止めて user confirmation に回す。
 
-### Antigravity/Gemini
+### Antigravity
 
 ```text
 Agent Runner
-  -> attach gemini terminal session backed by agy
+  -> attach Antigravity terminal session backed by agy
   -> send incremental context as next prompt
   -> request file-based outbox output
   -> detect usage limit / permission prompt
   -> collect outbox
 ```
 
-Antigravity/Gemini は QA、research、large context review、Google ecosystem、multimodal review を優先する。
+Antigravity は QA、research、large context review、Google ecosystem、multimodal review を優先する。
+Kairon 内部の agent id は互換性のため `gemini` を維持する。
 AntigravityCLI の背後 service に third-party client として直接アクセスしない。
 
 ## 9. Runtime Monitoring
