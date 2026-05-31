@@ -41,6 +41,66 @@ describe("config proposal workflow", () => {
     expect(result.changes.map((change) => change.path)).toContain("paths.protected");
   });
 
+  it("ignores ordering-only differences in unordered project config arrays", async () => {
+    const root = await createProjectForProposal();
+    const projectConfigPath = path.join(root, ".kairon", "config", "project.json");
+    const proposal = await createConfigProposal({
+      projectRoot: root,
+      now: new Date(2026, 4, 26, 4, 6, 0)
+    });
+    const project = proposal.artifact.project_config;
+
+    await writeJsonFileAtomic(projectConfigPath, {
+      ...project,
+      paths: {
+        protected: [...project.paths.protected].reverse(),
+        generated: [...project.paths.generated].reverse(),
+        source: [...project.paths.source].reverse()
+      }
+    });
+
+    const result = await createConfigProposal({
+      projectRoot: root,
+      now: new Date(2026, 4, 26, 4, 7, 0)
+    });
+
+    expect(result.changes).toEqual([]);
+  });
+
+  it("preserves manually configured paths that the analyzer does not rediscover", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const projectConfigPath = path.join(root, ".kairon", "config", "project.json");
+    const project = await readJsonFile<{
+      paths: { protected: string[]; generated: string[]; source: string[] };
+    }>(projectConfigPath);
+
+    project.paths.protected.push("local-secrets/**");
+    project.paths.generated.push("tmpclaude-*");
+    project.paths.source.push("manual-docs/**");
+    await writeJsonFileAtomic(projectConfigPath, project);
+
+    const proposal = await createConfigProposal({
+      projectRoot: root,
+      now: new Date(2026, 4, 26, 4, 8, 0)
+    });
+    await applyConfigProposal({
+      projectRoot: root,
+      proposalId: proposal.proposal_id,
+      now: new Date(2026, 4, 26, 4, 9, 0)
+    });
+    const stored = await readJsonFile<{
+      paths: { protected: string[]; generated: string[]; source: string[] };
+    }>(projectConfigPath);
+
+    expect(proposal.artifact.project_config.paths.protected).toContain("local-secrets/**");
+    expect(proposal.artifact.project_config.paths.generated).toContain("tmpclaude-*");
+    expect(proposal.artifact.project_config.paths.source).toContain("manual-docs/**");
+    expect(stored.paths.protected).toContain("local-secrets/**");
+    expect(stored.paths.generated).toContain("tmpclaude-*");
+    expect(stored.paths.source).toContain("manual-docs/**");
+  });
+
   it("dry-runs a proposal apply without writing project.json or backups", async () => {
     const root = await createProjectForProposal();
     const projectConfigPath = path.join(root, ".kairon", "config", "project.json");
