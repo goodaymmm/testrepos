@@ -5,6 +5,7 @@ import {
 } from "../agents/cli-session-runner.js";
 import type { CommandRunner } from "../agents/command-runner.js";
 import { AgentDispatcher } from "../agents/dispatcher.js";
+import type { InteractiveSessionRunner } from "../agents/interactive-session-runner.js";
 import type { CommandAvailabilityChecker } from "../agents/session-host.js";
 import type { AgentId } from "../agents/types.js";
 import { nextId } from "../core/ids/counter.js";
@@ -90,6 +91,7 @@ export class TaskRunner {
     private readonly options: {
       commandAvailability?: CommandAvailabilityChecker;
       commandRunner?: CommandRunner;
+      interactiveSessionRunner?: InteractiveSessionRunner;
       now?: () => Date;
     } = {}
   ) {}
@@ -215,12 +217,14 @@ export class TaskRunner {
       taskId: task.id,
       persona,
       requiredCapabilities: capabilities,
-      tags
+      tags,
+      allowInteractiveAgents: this.options.interactiveSessionRunner !== undefined
     });
     const runId = await nextId(this.projectRoot, "run");
     const record = await new CliSessionRunner(this.projectRoot, {
       commandAvailability: this.options.commandAvailability,
       commandRunner: this.options.commandRunner,
+      interactiveSessionRunner: this.options.interactiveSessionRunner,
       now: this.options.now
     }).runAgentJob({
       agent: decision.agent,

@@ -19,6 +19,7 @@ export type DispatchRequest = {
   scheduleMode?: string;
   availableSessions?: AgentSessionAvailability[];
   excludedAgents?: AgentId[];
+  allowInteractiveAgents?: boolean;
   policy?: {
     allowedAgents?: AgentId[];
     excludedAgents?: AgentId[];
@@ -173,7 +174,10 @@ export class AgentDispatcher {
           return false;
         }
 
-        if (!getAgentAdapter(agent).supports.nonInteractive) {
+        if (
+          !getAgentAdapter(agent).supports.nonInteractive &&
+          request.allowInteractiveAgents !== true
+        ) {
           return false;
         }
 

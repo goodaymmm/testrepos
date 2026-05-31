@@ -3,6 +3,7 @@ import { CliSessionRunner, type CliSessionRunRecord } from "./cli-session-runner
 import type { CommandAvailabilityChecker } from "./session-host.js";
 import type { AgentId } from "./types.js";
 import type { CommandRunner } from "./command-runner.js";
+import type { InteractiveSessionRunner } from "./interactive-session-runner.js";
 import { nextId } from "../core/ids/counter.js";
 import { writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
@@ -36,6 +37,7 @@ export async function runAgentSmoke(
   options: {
     commandAvailability?: CommandAvailabilityChecker;
     commandRunner?: CommandRunner;
+    interactiveSessionRunner?: InteractiveSessionRunner;
     now?: () => Date;
   } = {}
 ): Promise<AgentSmokeResult> {
@@ -55,6 +57,7 @@ export async function runAgentSmoke(
   const record = await new CliSessionRunner(projectRoot, {
     commandAvailability: options.commandAvailability,
     commandRunner: options.commandRunner,
+    interactiveSessionRunner: options.interactiveSessionRunner,
     now: options.now
   }).runAgentJob({
     agent: request.agent,

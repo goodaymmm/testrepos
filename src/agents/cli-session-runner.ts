@@ -7,6 +7,7 @@ import {
   type CommandRunner,
   type CommandRunResult
 } from "./command-runner.js";
+import type { InteractiveSessionRunner } from "./interactive-session-runner.js";
 import { ContextBuilder, type ContextBundle } from "./context-builder.js";
 import {
   buildDailyBootstrapPrompt,
@@ -109,12 +110,14 @@ export class CliSessionRunner {
   private readonly sessionHost: FileSessionHost;
   private readonly contextBuilder: ContextBuilder;
   private readonly commandRunner: CommandRunner;
+  private readonly interactiveSessionRunner?: InteractiveSessionRunner;
 
   constructor(
     private readonly projectRoot: string,
     options: {
       commandAvailability?: CommandAvailabilityChecker;
       commandRunner?: CommandRunner;
+      interactiveSessionRunner?: InteractiveSessionRunner;
       now?: () => Date;
     } = {}
   ) {
@@ -124,6 +127,7 @@ export class CliSessionRunner {
     });
     this.contextBuilder = new ContextBuilder(projectRoot);
     this.commandRunner = options.commandRunner ?? spawnCommandRunner;
+    this.interactiveSessionRunner = options.interactiveSessionRunner;
   }
 
   async bootstrapAgentSession(
@@ -160,6 +164,16 @@ export class CliSessionRunner {
         bundle,
         paths,
         stderr: `Kairon setup required: ${session.command} is not available.\n`
+      });
+    }
+
+    if (!getAgentAdapter(request.agent).supports.nonInteractive) {
+      return this.writeSetupRequiredRecord({
+        kind: "daily_bootstrap",
+        session,
+        bundle,
+        paths,
+        stderr: `Kairon setup required: ${session.command} requires an interactive terminal or PTY adapter.\n`
       });
     }
 
@@ -257,6 +271,68 @@ export class CliSessionRunner {
       }
 
       if (!getAgentAdapter(request.agent).supports.nonInteractive) {
+        if (this.interactiveSessionRunner !== undefined) {
+          const result = await this.interactiveSessionRunner({
+            agent: request.agent,
+            command: session.command,
+            cwd: this.projectRoot,
+            prompt,
+            timeoutMs: request.timeoutMs,
+            runId: request.runId,
+            taskId: request.taskId,
+            persona: request.persona,
+            outboxPath,
+            expectedOutboxPath: toProjectPath(this.projectRoot, outboxPath),
+            contextPath: bundle.context_path,
+            session
+          });
+          const setupRequired = classifyCliSetupRequired(result);
+          if (setupRequired !== undefined) {
+            await this.writeSetupRequiredOutbox({
+              request,
+              outboxPath,
+              reason: setupRequired.reason,
+              message: setupRequired.message,
+              result
+            });
+            await writeRunLogs(paths, result);
+            await this.writeTerminalState(session, result, "setup_required");
+            record = this.createRecord({
+              kind: "job",
+              session,
+              bundle,
+              paths,
+              result,
+              request,
+              status: "setup_required"
+            });
+            await writeJsonFileAtomic(paths.runnerMetadataPath, record);
+            return record;
+          }
+
+          const outboxStatus = await this.ensureOutbox(request, outboxPath, result);
+          const status =
+            outboxStatus.source === "generated_failure"
+              ? "failed"
+              : (outboxStatus.runStatus ?? statusFromResult(result));
+          const reviewLoop = await this.maybeStartReviewLoop(request);
+
+          await writeRunLogs(paths, result);
+          await this.writeTerminalState(session, result, terminalStatusFromRunStatus(status));
+          record = this.createRecord({
+            kind: "job",
+            session,
+            bundle,
+            paths,
+            result,
+            request,
+            reviewLoop,
+            status
+          });
+          await writeJsonFileAtomic(paths.runnerMetadataPath, record);
+          return record;
+        }
+
         await this.writeFailureOutbox({
           request,
           outboxPath,
@@ -550,8 +626,8 @@ export class CliSessionRunner {
       run_id: input.request?.runId,
       task_id: input.request?.taskId,
       persona: input.request?.persona,
-      command: input.invocation?.command ?? input.session.command,
-      args: input.invocation?.args ?? [],
+      command: input.invocation?.command ?? input.result?.command ?? input.session.command,
+      args: input.invocation?.args ?? input.result?.args ?? [],
       command_available: input.session.command_available,
       pid: input.result?.pid ?? null,
       exit_code: input.result?.exitCode ?? null,

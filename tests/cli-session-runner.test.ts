@@ -47,6 +47,32 @@ describe("CliSessionRunner", () => {
     });
   });
 
+  it("does not bootstrap Antigravity through a plain child process pipe", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const invocations: CliInvocation[] = [];
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) => {
+        invocations.push(invocation);
+        return commandResult(invocation);
+      }
+    });
+
+    const record = await runner.bootstrapAgentSession({
+      agent: "gemini",
+      date: "2026-05-25"
+    });
+
+    expect(invocations).toEqual([]);
+    expect(record).toMatchObject({
+      kind: "daily_bootstrap",
+      agent: "gemini",
+      command: "agy",
+      status: "setup_required"
+    });
+  });
+
   it("sends a Codex job prompt and preserves an agent-written outbox", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
@@ -317,6 +343,65 @@ describe("CliSessionRunner", () => {
           payload: { reason: "cli_pty_required" }
         }
       ]
+    });
+  });
+
+  it("runs Antigravity/Gemini through a configured interactive session runner", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const interactiveRuns: string[] = [];
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      interactiveSessionRunner: async (job) => {
+        interactiveRuns.push(job.command);
+        await writeJsonFileAtomic(job.outboxPath, {
+          schema_version: "0.1",
+          run_id: job.runId,
+          task_id: job.taskId,
+          agent: job.agent,
+          persona: job.persona,
+          status: "completed",
+          events: [
+            {
+              type: "message.created",
+              payload: { message_type: "antigravity.interactive.completed" }
+            }
+          ]
+        });
+        return commandResult(
+          {
+            command: job.command,
+            args: ["--prompt-interactive"],
+            cwd: job.cwd,
+            timeoutMs: job.timeoutMs
+          },
+          { stdout: "agy interactive ok\n" }
+        );
+      }
+    });
+
+    const record = await runner.runAgentJob({
+      agent: "gemini",
+      date: "2026-05-25",
+      runId: "RUN-0007",
+      taskId: "TASK-0007",
+      persona: "researcher",
+      capabilities: ["research", "large.context"],
+      tags: ["large_context"]
+    });
+
+    expect(interactiveRuns).toEqual(["agy"]);
+    expect(record).toMatchObject({
+      agent: "gemini",
+      command: "agy",
+      args: ["--prompt-interactive"],
+      status: "completed",
+      command_available: true
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runtime", "terminals", "TERM-gemini-20260525.json"))
+    ).resolves.toMatchObject({
+      status: "ready"
     });
   });
 });

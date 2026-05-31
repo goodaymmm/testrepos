@@ -164,6 +164,55 @@ describe("runAgentSmoke", () => {
       ]
     });
   });
+
+  it("runs Antigravity smoke through an interactive session runner", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const interactiveCommands: string[] = [];
+
+    const result = await runAgentSmoke(
+      root,
+      { agent: "gemini", date: "2026-05-26", timeoutMs: 30_000 },
+      {
+        commandAvailability: async () => true,
+        interactiveSessionRunner: async (job) => {
+          interactiveCommands.push(job.command);
+          await writeJsonFileAtomic(job.outboxPath, {
+            schema_version: "0.1",
+            run_id: job.runId,
+            task_id: job.taskId,
+            agent: job.agent,
+            persona: job.persona,
+            status: "completed",
+            events: [
+              {
+                type: "message.created",
+                payload: { message_type: "agent.smoke.completed" }
+              }
+            ]
+          });
+          return commandResult(
+            {
+              command: job.command,
+              args: ["--prompt-interactive"],
+              cwd: job.cwd,
+              timeoutMs: job.timeoutMs
+            },
+            { stdout: "agy smoke ok\n" }
+          );
+        }
+      }
+    );
+
+    expect(interactiveCommands).toEqual(["agy"]);
+    expect(result).toMatchObject({
+      agent: "gemini",
+      command: "agy",
+      args: ["--prompt-interactive"],
+      status: "completed",
+      command_available: true
+    });
+  });
 });
 
 function promptFromInvocation(invocation: CliInvocation): string {

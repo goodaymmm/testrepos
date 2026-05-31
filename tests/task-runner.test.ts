@@ -210,6 +210,48 @@ describe("TaskRunner", () => {
     });
   });
 
+  it("dispatches researcher tasks to Antigravity when an interactive runner is configured", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const interactiveCommands: string[] = [];
+    const runner = new TaskRunner(root, {
+      commandAvailability: async () => true,
+      interactiveSessionRunner: async (job) => {
+        interactiveCommands.push(job.command);
+        await writeTaskOutbox(root, {
+          outboxPath: job.expectedOutboxPath,
+          runId: job.runId,
+          taskId: job.taskId,
+          agent: job.agent,
+          persona: job.persona,
+          status: "completed"
+        });
+        return commandResult({
+          command: job.command,
+          args: ["--prompt-interactive"],
+          cwd: job.cwd,
+          timeoutMs: job.timeoutMs
+        });
+      }
+    });
+    const task = await runner.createTask({
+      title: "Research through Antigravity",
+      persona: "researcher",
+      capabilities: ["research"],
+      tags: ["large_context"]
+    });
+
+    const result = await runner.runTask({ taskId: task.task_id, date: "2026-05-26" });
+
+    expect(interactiveCommands).toEqual(["agy"]);
+    expect(result).toMatchObject({
+      status: "completed",
+      agent: "gemini",
+      persona: "researcher",
+      command: "agy"
+    });
+  });
+
   it("starts a review loop for code-producing tasks", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
