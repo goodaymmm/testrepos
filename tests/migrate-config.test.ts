@@ -44,7 +44,7 @@ describe("migrateConfigs", () => {
     });
   });
 
-  it("migrates legacy Gemini CLI config, writes a backup, and is idempotent", async () => {
+  it("migrates legacy Antigravity config aliases, writes a backup, and is idempotent", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
     await writeLegacyAgentsConfig(root);

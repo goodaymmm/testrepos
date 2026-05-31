@@ -295,7 +295,7 @@ describe("CliSessionRunner", () => {
     });
   });
 
-  it("reports Antigravity/Gemini as setup-required until a PTY adapter is configured", async () => {
+  it("reports Antigravity as setup-required until a PTY adapter is configured", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
     const invocations: CliInvocation[] = [];
@@ -346,7 +346,7 @@ describe("CliSessionRunner", () => {
     });
   });
 
-  it("runs Antigravity/Gemini through a configured interactive session runner", async () => {
+  it("runs Antigravity through a configured interactive session runner", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
     const interactiveRuns: string[] = [];

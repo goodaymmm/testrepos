@@ -113,7 +113,7 @@ function migrateGeminiToAntigravity(
     next: "antigravity_cli",
     file: "agents.json",
     path: "agents.gemini.adapter",
-    reason: "Gemini CLI was renamed to AntigravityCLI."
+    reason: "Legacy gemini_cli adapter is migrated to AntigravityCLI."
   }, changes);
 
   replaceValue({

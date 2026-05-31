@@ -96,7 +96,7 @@ const codePathPatterns = [
   /\.(c|cc|cpp|cs|go|java|js|jsx|kt|mjs|php|py|rb|rs|sh|sql|swift|ts|tsx|yaml|yml)$/
 ];
 
-const geminiReviewSignals = [
+const antigravityReviewSignals = [
   "google_ecosystem",
   "google",
   "gcp",
@@ -271,7 +271,7 @@ export function selectReviewers(
           ? ["codex", "claude"]
           : toAgentIds(policy.recommended_reviewers);
 
-  if (shouldIncludeGemini(request) && !reviewers.includes("gemini")) {
+  if (shouldIncludeAntigravity(request) && !reviewers.includes("gemini")) {
     reviewers.push("gemini");
   }
 
@@ -289,9 +289,9 @@ function selectReviewIntegration(
   return undefined;
 }
 
-function shouldIncludeGemini(request: ReviewLoopRequest): boolean {
+function shouldIncludeAntigravity(request: ReviewLoopRequest): boolean {
   return (request.tags ?? []).some((tag) =>
-    geminiReviewSignals.includes(tag.toLowerCase())
+    antigravityReviewSignals.includes(tag.toLowerCase())
   );
 }
 

@@ -41,7 +41,7 @@ describe("AgentDispatcher", () => {
     });
   });
 
-  it("falls back to Codex for automated QA while Gemini requires a PTY runner", async () => {
+  it("falls back to Codex for automated QA while Antigravity requires a PTY runner", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
 
@@ -59,7 +59,7 @@ describe("AgentDispatcher", () => {
     });
   });
 
-  it("selects Antigravity/Gemini for Google QA when interactive agents are allowed", async () => {
+  it("selects Antigravity for Google QA when interactive agents are allowed", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
 

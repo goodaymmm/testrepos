@@ -67,7 +67,7 @@ write migrated config
 validate config
 ```
 
-MVPでは、旧 Gemini CLI 設定を AntigravityCLI 設定へ移行する。
+MVPでは、旧 `agents.gemini` 設定を AntigravityCLI 設定へ移行する。
 
 ```text
 agents.gemini.adapter: gemini_cli -> antigravity_cli
@@ -115,6 +115,8 @@ kairon agent smoke --agent codex
 kairon agent smoke --agent claude
 kairon agent smoke --agent gemini
 ```
+
+Antigravity は互換性維持のため `--agent gemini` で指定する。実際に起動する command は `agy` である。
 
 任意option。
 

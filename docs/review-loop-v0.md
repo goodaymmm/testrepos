@@ -12,7 +12,7 @@ Kairon ではコード作成・コード変更を伴う run はレビュー必�
 - Merge / Deploy は review gate 通過後でも approval 必須。
 - 推奨 review pair は Claude + Codex。
 - Claude Code Opus が実装した場合、Codex は `codex-plugin-cc` 経由でレビューする。
-- Gemini は Google ecosystem、multimodal、large-context QA / research の強みがある task で review / QA に参加する。
+- Antigravity は Google ecosystem、multimodal、large-context QA / research の強みがある task で review / QA に参加する。内部 agent id は互換性のため `gemini` を使う。
 
 ## Review Loop
 
@@ -60,20 +60,20 @@ if task.tags contains google_ecosystem or multimodal:
 ```
 
 推奨設定は Claude + Codex の 2 review line。
-Gemini は常時 reviewer にするのではなく、適性が高い task で参加させる。
+Antigravity は常時 reviewer にするのではなく、適性が高い task で参加させる。
 
-## Gemini Role
+## Antigravity Role
 
-Gemini は次の task で優先する。
+Antigravity は次の task で優先する。
 
-| Trigger | Gemini の役割 |
+| Trigger | Antigravity の役割 |
 | --- | --- |
 | Google ecosystem | Firebase、GCP、Android、Chrome、Workspace、Google API 関連の調査 / QA |
 | Multimodal | screenshot、UI画像、PDF、動画、図表を含む review |
 | Large context QA | 長い log、広い test output、複数文書の横断確認 |
 | Research | 仕様比較、公式 docs 確認、互換性調査 |
 
-Gemini が code implementation を担当する場合も、review gate は必須とする。
+Antigravity が code implementation を担当する場合も、review gate は必須とする。
 
 ## Quality Gate
 

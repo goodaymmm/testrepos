@@ -77,7 +77,7 @@ Kairon Runtime Host
   ├─ Agent Session Host
   │   ├─ Codex Terminal Session
   │   ├─ Claude Terminal Session
-  │   └─ Antigravity/Gemini Terminal Session
+  │   └─ Antigravity Terminal Session
   ├─ Agent Runner
   ├─ Session Manager
   ├─ Context Builder
@@ -263,7 +263,7 @@ Kairon が守る境界は次である。
 | --- | --- | --- |
 | Codex | `codex` / `codex exec` の公式 CLI process | Terminal-backed session primary。resume は recovery 補助 |
 | Claude | `claude` / `claude -p` 等の公式 CLI process | Terminal-backed session primary。unattended は restricted |
-| Antigravity/Gemini | `agy` / `agy --print` 等の公式 CLI process | Terminal-backed session primary。QA / research を優先。Kairon 内部の agent id は互換性のため `gemini` を維持 |
+| Antigravity | `agy` / `agy --prompt-interactive` 等の公式 CLI process | Terminal-backed session primary。QA / research を優先。Kairon 内部の agent id は互換性のため `gemini` を維持 |
 
 Provider ごとの細部は `docs/agent-runtime-v0.md` と `docs/subscription-compliance-v0.md` に置く。
 

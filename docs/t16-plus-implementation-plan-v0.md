@@ -5,15 +5,15 @@
 - 1タスクを1ブランチ、1PRで進める。`T16-1` のような細分化ブランチは作らない。
 - ブランチ名は `codex/t16-...`、`codex/t17-...` の形式にする。
 - PR本文は日本語で作成し、`目的`、`変更内容`、`テスト`、`残課題` を必ず含める。
-- T16を最優先にする。Gemini CLIは運用対象から外し、Antigravity CLI (`agy`) を正式な実行対象にする。
-- 既存の内部 agent id `gemini` は互換性維持のため当面残す。ただし user-facing な説明では `Antigravity/Gemini互換ID` と表記する。
+- T16を最優先にする。Antigravity CLI (`agy`) を正式な実行対象にする。
+- 既存の内部 agent id `gemini` は互換性維持のため当面残す。ただし user-facing な説明では Antigravity を主語にし、必要な箇所だけ `gemini` 互換IDと明記する。
 
 ## T16: Antigravity interactive session runtime
 
 ブランチ: `codex/t16-pty-session-runtime`
 
 目的:
-Antigravity (`agy`) は `--print` の child process pipe では安定して outbox を返せないため、非対話 runner とは別に interactive session runner の接続点を追加する。これにより `agy` を Gemini CLI 置換後の正式 runtime として扱い、PTY実装を後続で差し込める状態にする。
+Antigravity (`agy`) は `--print` の child process pipe では安定して outbox を返せないため、非対話 runner とは別に interactive session runner の接続点を追加する。これにより `agy` を正式 runtime として扱い、PTY実装を後続で差し込める状態にする。
 
 実装手順:
 1. `src/agents/interactive-session-runner.ts` を追加し、interactive runner の入力契約を定義する。
@@ -22,7 +22,7 @@ Antigravity (`agy`) は `--print` の child process pipe では安定して outb
 4. daily bootstrap でも `agy --print` の plain pipe path に流さず、runner 未設定時は `setup_required` にする。
 5. interactive runner 実行後も、既存の outbox validation、stdout fallback、rate limit classification、terminal state 更新を通す。
 6. `runAgentSmoke` と `TaskRunner` に interactive runner option を伝播する。
-7. `AgentDispatcher` に `allowInteractiveAgents` を追加し、interactive runner が設定されている場合だけ Antigravity/Gemini互換IDを候補に含める。
+7. `AgentDispatcher` に `allowInteractiveAgents` を追加し、interactive runner が設定されている場合だけ Antigravity (`gemini` 互換ID) を候補に含める。
 8. Codex/Claude の既存非対話 runner の挙動を変えない。
 9. targeted tests を追加し、Antigravity が runner 未設定時は `setup_required`、runner 設定時は `completed` になることを確認する。
 
@@ -35,12 +35,12 @@ Antigravity (`agy`) は `--print` の child process pipe では安定して outb
 PR本文メモ:
 ```markdown
 ## 目的
-Antigravity (`agy`) を Gemini CLI 置換後の正式 runtime として扱うため、非対話 runner とは別に interactive session runner の接続点を追加しました。
+Antigravity (`agy`) を正式 runtime として扱うため、非対話 runner とは別に interactive session runner の接続点を追加しました。
 
 ## 変更内容
 - interactive session runner の契約を追加
 - `CliSessionRunner` / `TaskRunner` / `runAgentSmoke` へ runner option を伝播
-- dispatcher が runner 設定時だけ Antigravity/Gemini互換IDを候補に含めるよう変更
+- dispatcher が runner 設定時だけ Antigravity (`gemini` 互換ID) を候補に含めるよう変更
 - T16対象の単体テストを追加
 
 ## テスト
@@ -71,10 +71,10 @@ T16で追加した interactive runner 接続点に、Windows/Unix 両対応の�
 ブランチ: `codex/t18-antigravity-naming`
 
 目的:
-旧 Gemini CLI 表記を、互換IDを除いて Antigravity 中心に整理する。
+旧 CLI 表記を、互換IDを除いて Antigravity 中心に整理する。
 
 実装手順:
-1. CLI出力、doctor、docs、test名の `Gemini CLI` 表記を `Antigravity` に寄せる。
+1. CLI出力、doctor、docs、test名の旧CLI表記を `Antigravity` に寄せる。
 2. config migration は `gemini_cli/gemini` から `antigravity_cli/agy` への変換を維持する。
 3. internal `AgentId = "gemini"` は破壊的変更を避けるため残す。
 4. `agents.json` の user-facing explanation を更新する。

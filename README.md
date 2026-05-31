@@ -150,6 +150,8 @@ kairon agent smoke --agent claude
 kairon agent smoke --agent gemini
 ```
 
+Antigravity は互換性維持のため CLI 引数では `--agent gemini` を使います。実際に起動する公式 CLI は `agy` です。
+
 設定済みの公式CLIへ最小promptを送り、`.kairon/runs/RUN-xxxx/` に `stdin.md`、`stdout.log`、`stderr.log`、`runner.json`、`outbox.json` を記録します。CLIが見つからない場合は実行せず `setup_required` としてoutboxへ記録します。
 
 ### タスク作成と実行
