@@ -57,6 +57,13 @@ export type ConfigProposalApplyResult = {
 };
 
 const proposalTtlMs = 24 * 60 * 60 * 1000;
+const unorderedStringArrayPaths = new Set([
+  "frameworks",
+  "package_managers",
+  "paths.protected",
+  "paths.generated",
+  "paths.source"
+]);
 
 export async function createConfigProposal(options: {
   projectRoot: string;
@@ -65,18 +72,23 @@ export async function createConfigProposal(options: {
   const projectRoot = normalizeProjectRoot(options.projectRoot);
   const now = options.now ?? new Date();
   const analysis = await analyzeProjectDocking(projectRoot);
+  const currentProjectConfig = await readJsonFile<ProjectConfigProposal>(
+    getConfigPath(projectRoot, "project.json")
+  );
+  const projectConfig = preserveCurrentProjectPaths(
+    currentProjectConfig,
+    analysis.project_config
+  );
   const proposalId = `CFG-${formatTimestamp(now)}-${randomUUID().slice(0, 8)}`;
   const proposalPath = configProposalPath(projectRoot, proposalId);
   const artifact: ConfigProposalArtifact = {
     ...analysis,
+    project_config: projectConfig,
     proposal_id: proposalId,
     target_file: "project.json",
     created_at: now.toISOString(),
     expires_at: new Date(now.getTime() + proposalTtlMs).toISOString()
   };
-  const currentProjectConfig = await readJsonFile<ProjectConfigProposal>(
-    getConfigPath(projectRoot, "project.json")
-  );
   const changes = diffValues("", currentProjectConfig, artifact.project_config);
 
   await mkdir(path.dirname(proposalPath), { recursive: true });
@@ -221,7 +233,7 @@ function diffValues(
   current: unknown,
   next: unknown
 ): ConfigProposalChange[] {
-  if (stableStringify(current) === stableStringify(next)) {
+  if (valuesEquivalent(prefix, current, next)) {
     return [];
   }
 
@@ -246,6 +258,60 @@ function formatChanges(changes: ConfigProposalChange[]): string[] {
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function preserveCurrentProjectPaths(
+  current: ProjectConfigProposal,
+  analyzed: ProjectConfigProposal
+): ProjectConfigProposal {
+  return {
+    ...analyzed,
+    paths: {
+      protected: mergeStringArrays(analyzed.paths.protected, current.paths.protected),
+      generated: mergeStringArrays(analyzed.paths.generated, current.paths.generated),
+      source: mergeStringArrays(analyzed.paths.source, current.paths.source)
+    }
+  };
+}
+
+function mergeStringArrays(primary: string[], preserved: string[]): string[] {
+  return sortStringSet([...primary, ...preserved]);
+}
+
+function valuesEquivalent(prefix: string, current: unknown, next: unknown): boolean {
+  return stableStringify(normalizeComparable(prefix, current)) ===
+    stableStringify(normalizeComparable(prefix, next));
+}
+
+function normalizeComparable(prefix: string, value: unknown): unknown {
+  if (Array.isArray(value)) {
+    if (unorderedStringArrayPaths.has(prefix) && value.every(isString)) {
+      return sortStringSet(value);
+    }
+
+    return value.map((item) => normalizeComparable(prefix, item));
+  }
+
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.keys(value)
+        .sort()
+        .map((key) => [
+          key,
+          normalizeComparable(prefix ? `${prefix}.${key}` : key, value[key])
+        ])
+    );
+  }
+
+  return value;
+}
+
+function sortStringSet(values: string[]): string[] {
+  return [...new Set(values)].sort((left, right) => left.localeCompare(right));
+}
+
+function isString(value: unknown): value is string {
+  return typeof value === "string";
 }
 
 function stableStringify(value: unknown): string {
