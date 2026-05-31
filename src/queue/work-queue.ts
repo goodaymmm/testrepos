@@ -16,6 +16,12 @@ export type QueueStatus = "ready" | "claimed" | "completed" | "failed";
 
 export type ScheduleMode = "active_work" | "standby_work" | "maintenance";
 
+export type QueueTestScope = {
+  kind: "operation_test" | "manual_test";
+  tags: string[];
+  expires_at: string;
+};
+
 export type QueueItem = {
   id: string;
   type: QueueItemType;
@@ -24,6 +30,7 @@ export type QueueItem = {
   task_id?: string;
   payload?: Record<string, unknown>;
   schedule_mode?: ScheduleMode;
+  test_scope?: QueueTestScope;
   attempts: number;
   created_at: string;
   updated_at: string;
@@ -52,6 +59,7 @@ export type EnqueueInput = {
   task_id?: string;
   payload?: Record<string, unknown>;
   schedule_mode?: ScheduleMode;
+  test_scope?: QueueTestScope;
   created_at?: string;
 };
 
@@ -65,6 +73,7 @@ const defaultQueueState: QueueState = {
   schema_version: "0.1",
   items: []
 };
+const legacyTestQueueTtlMs = 24 * 60 * 60 * 1000;
 
 export class WorkQueue {
   constructor(private readonly projectRoot: string) {}
@@ -80,6 +89,7 @@ export class WorkQueue {
         task_id: input.task_id,
         payload: input.payload,
         schedule_mode: input.schedule_mode,
+        test_scope: input.test_scope,
         attempts: 0,
         created_at: now,
         updated_at: now
@@ -177,6 +187,35 @@ export class WorkQueue {
       .map((item) => ({ ...item }));
   }
 
+  async expireStaleTestItems(now = new Date()): Promise<QueueItem[]> {
+    return this.withQueueLock(async (state) => {
+      recoverExpiredClaims(state, now);
+
+      const expired: QueueItem[] = [];
+      const nowIso = now.toISOString();
+
+      for (const item of state.items) {
+        if (item.status !== "ready" || !isStaleTestItem(item, now)) {
+          continue;
+        }
+
+        item.status = "failed";
+        item.failed_at = nowIso;
+        item.updated_at = nowIso;
+        item.error = {
+          message: "Stale test queue item expired before runtime dispatch.",
+          code: "stale_test_queue_item"
+        };
+        delete item.claimed_by;
+        delete item.claimed_at;
+        delete item.claim_expires_at;
+        expired.push({ ...item });
+      }
+
+      return expired;
+    });
+  }
+
   private async updateItem(
     itemId: string,
     update: (item: QueueItem) => void
@@ -260,4 +299,20 @@ function recoverExpiredClaims(state: QueueState, now: Date): void {
       delete item.claim_expires_at;
     }
   }
+}
+
+function isStaleTestItem(item: QueueItem, now: Date): boolean {
+  if (item.test_scope !== undefined) {
+    const expiresAt = Date.parse(item.test_scope.expires_at);
+    return Number.isFinite(expiresAt) && expiresAt <= now.getTime();
+  }
+
+  return hasLegacyTestTag(item) &&
+    Date.parse(item.created_at) + legacyTestQueueTtlMs <= now.getTime();
+}
+
+function hasLegacyTestTag(item: QueueItem): boolean {
+  const tags = item.payload?.tags;
+  return Array.isArray(tags) &&
+    tags.some((tag) => tag === "operation-test" || tag === "manual-test");
 }
