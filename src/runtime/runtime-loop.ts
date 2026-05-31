@@ -8,6 +8,7 @@ import {
 } from "../queue/queue-worker.js";
 import { WorkQueue } from "../queue/work-queue.js";
 import { StateApplier } from "../state/state-applier.js";
+import { createAntigravityPtySessionRunner } from "../agents/pty-session-runner.js";
 import { TaskRunner } from "../tasks/task-runner.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
@@ -185,6 +186,7 @@ function defaultQueueHandlers(projectRoot: string, now: Date): QueueWorkerHandle
     items: {
       "agent.run": async (item) => {
         const result = await new TaskRunner(projectRoot, {
+          interactiveSessionRunner: createAntigravityPtySessionRunner(),
           now: () => now
         }).runQueuedAgentItem(item, { date: localDateKey(now) });
         return { ...result };

@@ -2,6 +2,7 @@ import {
   formatReviewLoopExecutionResult,
   ReviewLoopExecutor
 } from "../../review/review-loop-executor.js";
+import { createAntigravityPtySessionRunner } from "../../agents/pty-session-runner.js";
 
 export type ReviewRunCommandOptions = {
   timeoutMs?: string;
@@ -16,7 +17,9 @@ export async function runReviewLoopCommand(
     options.timeoutMs === undefined
       ? undefined
       : parsePositiveInteger(options.timeoutMs, "--timeout-ms");
-  const result = await new ReviewLoopExecutor(projectRoot).run({
+  const result = await new ReviewLoopExecutor(projectRoot, {
+    interactiveSessionRunner: createAntigravityPtySessionRunner()
+  }).run({
     loopId,
     timeoutMs
   });

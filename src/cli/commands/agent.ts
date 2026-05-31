@@ -2,6 +2,7 @@ import {
   formatAgentSmokeResult,
   runAgentSmoke
 } from "../../agents/smoke-runner.js";
+import { createAntigravityPtySessionRunner } from "../../agents/pty-session-runner.js";
 import { isAgentId } from "../../agents/types.js";
 
 export type AgentSmokeCommandOptions = {
@@ -21,10 +22,16 @@ export async function runAgentSmokeCommand(
     options.timeoutMs === undefined ? undefined : parsePositiveInteger(options.timeoutMs);
 
   return formatAgentSmokeResult(
-    await runAgentSmoke(projectRoot, {
-      agent: options.agent,
-      timeoutMs
-    })
+    await runAgentSmoke(
+      projectRoot,
+      {
+        agent: options.agent,
+        timeoutMs
+      },
+      {
+        interactiveSessionRunner: createAntigravityPtySessionRunner()
+      }
+    )
   );
 }
 

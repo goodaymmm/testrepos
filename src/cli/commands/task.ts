@@ -3,6 +3,7 @@ import {
   formatRunTaskResult,
   TaskRunner
 } from "../../tasks/task-runner.js";
+import { createAntigravityPtySessionRunner } from "../../agents/pty-session-runner.js";
 import type { ScheduleMode } from "../../queue/work-queue.js";
 
 export type CreateTaskCommandOptions = {
@@ -61,7 +62,9 @@ export async function runTaskCommand(
   taskId: string,
   options: RunTaskCommandOptions
 ): Promise<string> {
-  const result = await new TaskRunner(projectRoot).runTask({
+  const result = await new TaskRunner(projectRoot, {
+    interactiveSessionRunner: createAntigravityPtySessionRunner()
+  }).runTask({
     taskId,
     timeoutMs:
       options.timeoutMs === undefined
