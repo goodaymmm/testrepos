@@ -807,6 +807,16 @@ function classifyCliSetupRequired(
     };
   }
 
+  if (
+    output.includes("pty_spawn_failed") ||
+    output.includes("pty spawn failed")
+  ) {
+    return {
+      reason: "cli_pty_unavailable",
+      message: "Agent CLI requires a PTY adapter, but the PTY process could not be started."
+    };
+  }
+
   return undefined;
 }
 

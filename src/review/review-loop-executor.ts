@@ -5,6 +5,7 @@ import {
   type CliSessionRunRecord
 } from "../agents/cli-session-runner.js";
 import type { CommandRunner } from "../agents/command-runner.js";
+import type { InteractiveSessionRunner } from "../agents/interactive-session-runner.js";
 import type { CommandAvailabilityChecker } from "../agents/session-host.js";
 import type { AgentId } from "../agents/types.js";
 import { nextId } from "../core/ids/counter.js";
@@ -52,6 +53,7 @@ export class ReviewLoopExecutor {
     private readonly options: {
       commandAvailability?: CommandAvailabilityChecker;
       commandRunner?: CommandRunner;
+      interactiveSessionRunner?: InteractiveSessionRunner;
       now?: () => Date;
     } = {}
   ) {
@@ -112,6 +114,7 @@ export class ReviewLoopExecutor {
       const record = await new CliSessionRunner(this.projectRoot, {
         commandAvailability: this.options.commandAvailability,
         commandRunner: this.options.commandRunner,
+        interactiveSessionRunner: this.options.interactiveSessionRunner,
         now: this.options.now
       }).runAgentJob({
         agent: reviewer,

@@ -118,26 +118,25 @@ Claude reviewer が rate limit に到達した場合、review loop は `review_r
 AntigravityCLI は旧 Gemini CLI 系の Agent として扱い、Kairon 内部の agent id は互換性のため `gemini` を維持する。
 現行の `agy --print` は Terminal UI 寄りの挙動で、Node child process pipe からstdoutを安定取得できないため、自動runnerでは PTY adapter が必要である。
 T16では non-interactive runner とは別に `interactiveSessionRunner` の接続点を追加し、Antigravity を正式な interactive agent として実行できる runtime path を用意する。
-interactive runner が未設定の場合、Kairon は `setup_required` として扱い、automated task dispatch では non-interactive agent へfallbackする。
+T17では `node-pty` backed runner を追加し、CLI / runtime queue / review loop から `agy --prompt-interactive` をPTY上で起動する。
+interactive runner が未設定、またはPTY起動に失敗した場合、Kairon は `setup_required` として扱い、automated task dispatch では non-interactive agent へfallbackする。
 
 ```text
-agy --print --print-timeout 120s "<prompt>"  # PTY adapter required
+agy --prompt-interactive "<prompt>"  # PTY adapter path
 ```
 
 Antigravity/Gemini は QA、research、large context review を優先する。
 加えて、Google ecosystem と multimodal review で優先的に起用する。
 AntigravityCLI の背後 service に third-party client で直接アクセスしない。
 `agy` に native JSON output flag がない場合でも、Kairon は Agent に `outbox.json` を書かせる file-based contract を主経路にする。
-ただし plain pipe実行では出力・file writeを検出できないため、実PTY adapterはT17以降の対象にする。
+PTY runner は `outbox.json` が有効JSONとして生成されたことを検出した時点で graceful exit を要求し、timeoutまで生成されない場合は run failed として記録する。
 
 ```json
 {
   "agent": "gemini",
   "command": "agy",
   "args": [
-    "--print",
-    "--print-timeout",
-    "120s",
+    "--prompt-interactive",
     "Execute the Kairon run described in the prompt. Produce the required outbox."
   ],
   "stdin": ".kairon/runs/RUN-0003/context.md",

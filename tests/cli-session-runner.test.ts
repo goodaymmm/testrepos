@@ -404,6 +404,48 @@ describe("CliSessionRunner", () => {
       status: "ready"
     });
   });
+
+  it("classifies PTY spawn failures as setup-required", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      interactiveSessionRunner: async (job) =>
+        commandResult(
+          {
+            command: job.command,
+            args: ["--prompt-interactive", job.prompt],
+            cwd: job.cwd,
+            timeoutMs: job.timeoutMs
+          },
+          {
+            exitCode: 1,
+            stderr: "KAIRON_SETUP_REQUIRED pty_spawn_failed: native binding missing\n"
+          }
+        )
+    });
+
+    const record = await runner.runAgentJob({
+      agent: "gemini",
+      date: "2026-05-25",
+      runId: "RUN-0008",
+      taskId: "TASK-0008",
+      persona: "researcher"
+    });
+
+    expect(record.status).toBe("setup_required");
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runs", "RUN-0008", "outbox.json"))
+    ).resolves.toMatchObject({
+      status: "setup_required",
+      events: [
+        {
+          type: "message.created",
+          payload: { reason: "cli_pty_unavailable" }
+        }
+      ]
+    });
+  });
 });
 
 function commandResult(
