@@ -59,6 +59,25 @@ describe("AgentDispatcher", () => {
     });
   });
 
+  it("selects Antigravity/Gemini for Google QA when interactive agents are allowed", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+
+    await expect(
+      new AgentDispatcher(root).decide({
+        persona: "qa",
+        tags: ["google_ecosystem", "multimodal"],
+        allowInteractiveAgents: true,
+        availableSessions: [
+          { agent: "codex", status: "ready" },
+          { agent: "gemini", status: "ready" }
+        ]
+      })
+    ).resolves.toMatchObject({
+      agent: "gemini"
+    });
+  });
+
   it("honors policy, capability, and non-interactive runner constraints", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
