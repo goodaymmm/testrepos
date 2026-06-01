@@ -148,21 +148,27 @@ export class ApprovalQueue {
 }
 
 export class ApprovalNotFoundError extends Error {
-  constructor(approvalId: string) {
+  constructor(readonly approvalId: string) {
     super(`Approval not found: ${approvalId}`);
     this.name = "ApprovalNotFoundError";
   }
 }
 
 export class ApprovalNotPendingError extends Error {
-  constructor(approvalId: string, status: string) {
+  constructor(
+    readonly approvalId: string,
+    readonly status: string
+  ) {
     super(`Approval ${approvalId} is not pending or snoozed. Current status: ${status}`);
     this.name = "ApprovalNotPendingError";
   }
 }
 
 export class ApprovalActionNotAllowedError extends Error {
-  constructor(approvalId: string, action: ApprovalAction) {
+  constructor(
+    readonly approvalId: string,
+    readonly action: ApprovalAction
+  ) {
     super(`Approval ${approvalId} does not allow action: ${action}`);
     this.name = "ApprovalActionNotAllowedError";
   }

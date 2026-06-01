@@ -2,6 +2,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ApprovalQueue, ApprovalNotPendingError } from "../src/approvals/approval-queue.js";
 import {
+  APPROVAL_COMMAND_ERROR_EXIT_CODE,
   decideApprovalCommand,
   listApprovalsCommand,
   showApprovalCommand
@@ -92,6 +93,46 @@ describe("ApprovalQueue", () => {
         action: "reject"
       })
     ).rejects.toThrow(ApprovalNotPendingError);
+  });
+
+  it("formats duplicate decisions for CLI output without throwing a stack trace", async () => {
+    const root = await createTempProject();
+    const previousExitCode = process.exitCode;
+
+    try {
+      process.exitCode = undefined;
+      await initializeProject({ projectRoot: root });
+      await writeApproval(root, {
+        id: "APR-0001",
+        status: "pending",
+        actions: ["approve", "reject", "request_changes"]
+      });
+
+      await expect(
+        decideApprovalCommand(root, "APR-0001", {
+          action: "approve",
+          reason: "first decision"
+        })
+      ).resolves.toContain("status=decided");
+
+      await expect(
+        decideApprovalCommand(root, "APR-0001", {
+          action: "approve",
+          reason: "duplicate"
+        })
+      ).resolves.toBe(
+        [
+          "Kairon approval decision rejected.",
+          "approval_id=APR-0001",
+          "reason=not_pending",
+          "status=decided",
+          "message=Approval APR-0001 is not pending or snoozed. Current status: decided"
+        ].join("\n")
+      );
+      expect(process.exitCode).toBe(APPROVAL_COMMAND_ERROR_EXIT_CODE);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
   });
 
   it("snoozes approvals and allows a later final decision", async () => {
