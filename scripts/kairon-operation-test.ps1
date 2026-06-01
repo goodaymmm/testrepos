@@ -58,9 +58,9 @@ function Write-KaironJsonNoBom {
 }
 
 function Invoke-Captured {
-  param([Parameter(Mandatory = $true)][scriptblock]$Script)
+  param([Parameter(Mandatory = $true)][Alias("Script")][scriptblock]$CommandBlock)
 
-  $output = & $Script 2>&1 | ForEach-Object { $_.ToString() }
+  $output = & $CommandBlock 2>&1 | ForEach-Object { $_.ToString() }
   $exitCode = if ($null -eq $global:LASTEXITCODE) { 0 } else { $global:LASTEXITCODE }
 
   [PSCustomObject]@{
@@ -72,12 +72,12 @@ function Invoke-Captured {
 function Invoke-InDirectory {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
-    [Parameter(Mandatory = $true)][scriptblock]$Script
+    [Parameter(Mandatory = $true)][Alias("Script")][scriptblock]$CommandBlock
   )
 
   Push-Location $Path
   try {
-    & $Script
+    & $CommandBlock
   } finally {
     Pop-Location
   }
@@ -86,12 +86,13 @@ function Invoke-InDirectory {
 function Invoke-External {
   param(
     [Parameter(Mandatory = $true)][string]$WorkingDirectory,
-    [Parameter(Mandatory = $true)][scriptblock]$Script
+    [Parameter(Mandatory = $true)][Alias("Script")][scriptblock]$CommandBlock
   )
 
   $global:LASTEXITCODE = 0
+  $externalCommand = $CommandBlock
   $result = Invoke-Captured {
-    Invoke-InDirectory -Path $WorkingDirectory -Script $Script
+    Invoke-InDirectory -Path $WorkingDirectory -CommandBlock $externalCommand
   }
 
   if ($result.ExitCode -ne 0) {
