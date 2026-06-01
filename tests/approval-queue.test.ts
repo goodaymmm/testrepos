@@ -5,6 +5,7 @@ import {
   APPROVAL_COMMAND_ERROR_EXIT_CODE,
   decideApprovalCommand,
   listApprovalsCommand,
+  seedApprovalCommand,
   showApprovalCommand
 } from "../src/cli/commands/approval.js";
 import { initializeProject } from "../src/cli/commands/init.js";
@@ -127,6 +128,88 @@ describe("ApprovalQueue", () => {
           "reason=not_pending",
           "status=decided",
           "message=Approval APR-0001 is not pending or snoozed. Current status: decided"
+        ].join("\n")
+      );
+      expect(process.exitCode).toBe(APPROVAL_COMMAND_ERROR_EXIT_CODE);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("seeds manual approvals without passing JSON through shell arguments", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+
+    const text = await seedApprovalCommand(root, "APR-MANUAL-0001", {
+      actions: "approve,reject",
+      title: "Manual approval seed",
+      redactionFixture: true
+    });
+
+    expect(text).toContain("Kairon approval seeded.");
+    expect(text).toContain("approval_id=APR-MANUAL-0001");
+    expect(text).toContain("actions=approve,reject");
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "approvals", "APR-MANUAL-0001.json"))
+    ).resolves.toMatchObject({
+      id: "APR-MANUAL-0001",
+      status: "pending",
+      title: "Manual approval seed",
+      actions: ["approve", "reject"],
+      diff: "SHOULD_BE_OMITTED",
+      stdout: "SHOULD_BE_OMITTED",
+      api_token: "SHOULD_BE_REDACTED"
+    });
+  });
+
+  it("formats action-not-allowed decisions for CLI output", async () => {
+    const root = await createTempProject();
+    const previousExitCode = process.exitCode;
+
+    try {
+      process.exitCode = undefined;
+      await initializeProject({ projectRoot: root });
+      await seedApprovalCommand(root, "APR-LIMITED-0001", {
+        actions: "approve,reject"
+      });
+
+      await expect(
+        decideApprovalCommand(root, "APR-LIMITED-0001", {
+          action: "snooze"
+        })
+      ).resolves.toBe(
+        [
+          "Kairon approval decision rejected.",
+          "approval_id=APR-LIMITED-0001",
+          "reason=action_not_allowed",
+          "action=snooze",
+          "message=Approval APR-LIMITED-0001 does not allow action: snooze"
+        ].join("\n")
+      );
+      expect(process.exitCode).toBe(APPROVAL_COMMAND_ERROR_EXIT_CODE);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("formats missing approvals for CLI output", async () => {
+    const root = await createTempProject();
+    const previousExitCode = process.exitCode;
+
+    try {
+      process.exitCode = undefined;
+      await initializeProject({ projectRoot: root });
+
+      await expect(
+        decideApprovalCommand(root, "APR-MISSING-0001", {
+          action: "approve"
+        })
+      ).resolves.toBe(
+        [
+          "Kairon approval decision rejected.",
+          "approval_id=APR-MISSING-0001",
+          "reason=not_found",
+          "message=Approval not found: APR-MISSING-0001"
         ].join("\n")
       );
       expect(process.exitCode).toBe(APPROVAL_COMMAND_ERROR_EXIT_CODE);

@@ -14,6 +14,7 @@ kairon agent smoke --agent codex|claude|gemini
 kairon approval list
 kairon approval show APR-0001
 kairon approval decide APR-0001 --action approve|reject|request_changes|snooze
+kairon approval seed APR-MANUAL-0001 --actions approve,reject
 kairon config propose
 kairon config apply <proposal-id> [--dry-run]
 kairon docking analyze
@@ -197,6 +198,37 @@ materialize approval state
 ```
 
 `snooze` で `--until` を省略した場合は、実行時刻から1時間後を既定にする。
+
+## kairon approval seed
+
+運用テスト用の手動approvalを作成する。PowerShellからJSON配列をNode引数として渡すと引用符が壊れやすいため、このcommandはCSV形式の `--actions` を受け取り、内部で `approval.requested` eventとしてmaterializeする。
+
+```text
+kairon approval seed APR-MANUAL-0001
+kairon approval seed APR-MANUAL-0002 --actions approve,reject
+kairon approval seed APR-MANUAL-0003 --actions approve,reject,request_changes,snooze --redaction-fixture
+```
+
+主なoption。
+
+```text
+--type <type>              既定は manual_test
+--title <title>            既定は Manual approval <approvalId>
+--actions <csv>            既定は approve,reject,request_changes,snooze
+--task-id <taskId>         eventへtask_idを付与
+--run-id <runId>           eventへrun_idを付与
+--redaction-fixture        show表示確認用のdiff/stdout/api_tokenを含める
+```
+
+出力例。
+
+```text
+Kairon approval seeded.
+approval_id=APR-MANUAL-0001
+status=pending
+actions=approve,reject
+event_id=EVT-000001
+```
 
 ## kairon config propose
 
@@ -485,7 +517,7 @@ Discord からは `/kairon leave` を同じ command として扱う。
 | 1 | general failure |
 | 2 | config invalid |
 | 3 | runtime lock exists |
-| 4 | CLI unavailable |
+| 4 | expected CLI operation rejection |
 | 5 | policy blocked |
 | 6 | approval required |
 | 7 | active work closed |

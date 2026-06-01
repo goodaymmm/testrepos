@@ -9,6 +9,7 @@ import { runAgentSmokeCommand } from "./commands/agent.js";
 import {
   decideApprovalCommand,
   listApprovalsCommand,
+  seedApprovalCommand,
   showApprovalCommand
 } from "./commands/approval.js";
 import { applyConfig, proposeConfig } from "./commands/config.js";
@@ -127,6 +128,20 @@ export function createProgram(): Command {
     .option("--until <iso-date>", "Snooze until this ISO timestamp. Defaults to one hour.")
     .action(async (approvalId: string, options) => {
       console.log(await decideApprovalCommand(process.cwd(), approvalId, options));
+    });
+
+  approval
+    .command("seed")
+    .description("Create a manual approval for operation tests.")
+    .argument("<approvalId>", "Approval id, for example APR-MANUAL-0001")
+    .option("--type <type>", "Approval type. Defaults to manual_test.")
+    .option("--title <title>", "Approval title.")
+    .option("--actions <actions>", "Comma-separated actions. Defaults to all approval actions.")
+    .option("--task-id <taskId>", "Optional task id to attach to the event.")
+    .option("--run-id <runId>", "Optional run id to attach to the event.")
+    .option("--redaction-fixture", "Include omitted/redacted fields for display tests.")
+    .action(async (approvalId: string, options) => {
+      console.log(await seedApprovalCommand(process.cwd(), approvalId, options));
     });
 
   program
