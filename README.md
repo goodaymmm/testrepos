@@ -292,6 +292,34 @@ CLI が見つからない場合、Kairon は該当 Agent を `setup_required` �
 7. cleanup proposal が直接削除・直接移動をしていないことを確認する。
 8. merge / deploy / protected branch push が approval required のままになっていることを確認する。
 
+運用テストを再実行する場合は、harnessを使えます。
+
+```powershell
+cd C:\Users\hikar\Documents\AutoRunner
+
+.\scripts\kairon-operation-test.ps1 `
+  -KaironRoot "C:\Users\hikar\Documents\AutoRunner" `
+  -TargetRoot "M:\EnglishApp"
+```
+
+実行結果は `operation-test-results/<run-id>/summary.json` と `summary.md` に出力されます。対象projectの `.kairon` stateは実行前にbackupされ、既定では終了時にrestoreされます。詳細は [docs/operation-test-harness-v0.md](docs/operation-test-harness-v0.md) を参照してください。
+
+## PR / Release Checklist
+
+PR作成時は [.github/pull_request_template.md](.github/pull_request_template.md) を使い、目的、変更内容、テスト、manual / operation test、README更新要否、エビデンス、残課題を記録します。
+
+manual / operation test結果は、まずPR本文に概要を書きます。repo履歴として残す必要がある結果だけ [docs/manual-test-results-v0.md](docs/manual-test-results-v0.md) に追記します。generated summary artifactは原則commitしません。
+
+README更新が必要な代表条件:
+
+- user-facing CLI commandや出力を変更した
+- setup、前提tool、認証、インストール手順を変更した
+- `.kairon/` の主要artifactやconfig schemaを変更した
+- operation testやmanual testの標準手順を変更した
+- safety policy、approval、merge/deploy制御に関わる挙動を変更した
+
+詳細は [docs/pr-release-checklist-v0.md](docs/pr-release-checklist-v0.md) を参照してください。
+
 ### T11-T15 運用テスト対象
 
 T11からT15では、初期ドッキング後の運用に必要なCLI経路を追加しています。運用テストでは、次の単位で確認します。
