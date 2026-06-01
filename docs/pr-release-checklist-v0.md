@@ -12,6 +12,7 @@ KaironのPR作成、manual test結果更新、README更新の抜けを減らす�
 
 ## PR本文
 
+<!-- kairon:pr-body-policy -->
 `.github/pull_request_template.md` を使い、少なくとも次を埋める。
 
 - [ ] 目的
@@ -30,10 +31,12 @@ Manual / operation testを実施した場合は、次の優先順で記録する
 2. `scripts/kairon-operation-test.ps1` を使った場合は、生成された `summary.json` / `summary.md` のpathまたは要約をPR本文に書く。
 3. repo履歴として残す必要がある場合だけ、`docs/manual-test-results-v0.md` に追記する。
 
+<!-- kairon:generated-artifact-policy -->
 生成された `operation-test-results/<run-id>/summary.*` は原則commitしない。
 
 ## README更新が必要な条件
 
+<!-- kairon:readme-update -->
 次のいずれかに該当する場合は、README更新の要否を必ず判断する。
 
 - [ ] user-facing CLI commandを追加、削除、または出力変更した。
@@ -44,6 +47,16 @@ Manual / operation testを実施した場合は、次の優先順で記録する
 - [ ] READMEに記載済みの「実装済み/未完成」範囲が変わった。
 
 README更新が不要な場合も、PR本文の `README / Docs` で理由を書く。
+
+## 機械判定用anchor
+
+T24系の運用テストでは、日本語文字列の文字化けに左右されないようにHTML comment anchorを判定する。PowerShellで確認する場合は、次のようにUTF-8を明示する。
+
+```powershell
+Get-Content .github\pull_request_template.md -Raw -Encoding UTF8
+Get-Content docs\manual-test-results-v0.md -Raw -Encoding UTF8
+Get-Content docs\pr-release-checklist-v0.md -Raw -Encoding UTF8
+```
 
 ## Release前
 
