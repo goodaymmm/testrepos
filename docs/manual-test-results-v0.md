@@ -5,8 +5,10 @@
 ## 記録方針
 
 - すべてのPRでmanual testが必要なわけではない。
+<!-- kairon:pr-body-policy -->
 - manual / operation testを実施した場合は、PR本文の `Manual / Operation Test` に結果概要を書く。
 - repo履歴として残す必要がある結果だけ、このファイルへ追記する。
+<!-- kairon:generated-artifact-policy -->
 - `scripts/kairon-operation-test.ps1` の生成物は原則commitしない。必要な場合は `summary.json` / `summary.md` の重要部分だけをこのファイルへ転記する。
 
 ## 記録テンプレート
