@@ -8,6 +8,7 @@ import {
   formatApprovalList,
   type ApprovalAction
 } from "../../approvals/approval-queue.js";
+import { StateApplier } from "../../state/state-applier.js";
 
 export const APPROVAL_COMMAND_ERROR_EXIT_CODE = 4;
 
@@ -19,6 +20,15 @@ export type ApprovalDecideCommandOptions = {
   action?: string;
   reason?: string;
   until?: string;
+};
+
+export type ApprovalSeedCommandOptions = {
+  type?: string;
+  title?: string;
+  actions?: string;
+  taskId?: string;
+  runId?: string;
+  redactionFixture?: boolean;
 };
 
 const approvalActions: ApprovalAction[] = [
@@ -74,6 +84,42 @@ export async function decideApprovalCommand(
   return formatApprovalDecision(result);
 }
 
+export async function seedApprovalCommand(
+  projectRoot: string,
+  approvalId: string,
+  options: ApprovalSeedCommandOptions = {}
+): Promise<string> {
+  const actions = parseApprovalActions(options.actions);
+  const approval: Record<string, unknown> = {
+    id: approvalId,
+    type: options.type ?? "manual_test",
+    title: options.title ?? `Manual approval ${approvalId}`,
+    actions
+  };
+
+  if (options.redactionFixture === true) {
+    approval.diff = "SHOULD_BE_OMITTED";
+    approval.stdout = "SHOULD_BE_OMITTED";
+    approval.api_token = "SHOULD_BE_REDACTED";
+  }
+
+  const event = await new StateApplier(projectRoot).appendEvent({
+    type: "approval.requested",
+    task_id: options.taskId,
+    run_id: options.runId,
+    actor: "local-cli",
+    payload: { approval }
+  });
+
+  return [
+    "Kairon approval seeded.",
+    `approval_id=${approvalId}`,
+    "status=pending",
+    `actions=${actions.join(",")}`,
+    `event_id=${event.event_id}`
+  ].join("\n");
+}
+
 function formatApprovalCommandError(error: unknown): string | null {
   if (error instanceof ApprovalNotPendingError) {
     return [
@@ -119,4 +165,32 @@ function parseApprovalAction(value: string | undefined): ApprovalAction {
   throw new Error(
     `Invalid approval action: ${value}. Expected one of: ${approvalActions.join(", ")}.`
   );
+}
+
+function parseApprovalActions(value: string | undefined): ApprovalAction[] {
+  if (value === undefined || value.trim() === "") {
+    return approvalActions;
+  }
+
+  const parsed = value
+    .split(",")
+    .map((action) => action.trim())
+    .filter((action) => action.length > 0);
+
+  if (parsed.length === 0) {
+    throw new Error(
+      `Invalid approval actions: ${value}. Expected comma-separated actions.`
+    );
+  }
+
+  const unique = [...new Set(parsed)];
+  for (const action of unique) {
+    if (!approvalActions.includes(action as ApprovalAction)) {
+      throw new Error(
+        `Invalid approval action: ${action}. Expected one of: ${approvalActions.join(", ")}.`
+      );
+    }
+  }
+
+  return unique as ApprovalAction[];
 }
