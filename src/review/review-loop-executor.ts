@@ -14,7 +14,6 @@ import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js"
 import {
   parseReviewResult,
   type QualityGateDecision,
-  type ReviewFinding,
   type ReviewResult
 } from "./quality-gate.js";
 import {
@@ -42,8 +41,21 @@ export type ReviewLoopExecutionResult = {
 };
 
 type ReviewOutbox = {
+  status?: unknown;
   review_result?: unknown;
+  events?: unknown;
 };
+
+type ReviewResultReadOutcome =
+  | {
+      kind: "review_result";
+      result: ReviewResult;
+    }
+  | {
+      kind: "setup_required";
+      reviewer: AgentId;
+      reason: string;
+    };
 
 export class ReviewLoopExecutor {
   private readonly manager: ReviewLoopManager;
@@ -136,15 +148,21 @@ export class ReviewLoopExecutor {
         continue;
       }
 
-      const result = await this.readOrSynthesizeReviewResult(state, {
+      const outcome = await this.readReviewResult(state, {
         reviewer,
         reviewId,
         runId,
         record
       });
 
-      await this.manager.saveReviewResult(result);
-      reviewResults.push(result);
+      if (outcome.kind === "setup_required") {
+        setupRequiredReviewers.push(outcome.reviewer);
+        setupRequiredReasons.push(outcome.reason);
+        continue;
+      }
+
+      await this.manager.saveReviewResult(outcome.result);
+      reviewResults.push(outcome.result);
     }
 
     if (setupRequiredReviewers.length > 0) {
@@ -215,7 +233,7 @@ export class ReviewLoopExecutor {
     };
   }
 
-  private async readOrSynthesizeReviewResult(
+  private async readReviewResult(
     state: ReviewLoopState,
     input: {
       reviewer: AgentId;
@@ -223,23 +241,20 @@ export class ReviewLoopExecutor {
       runId: string;
       record: CliSessionRunRecord;
     }
-  ): Promise<ReviewResult> {
+  ): Promise<ReviewResultReadOutcome> {
     if (input.record.outbox_path === undefined) {
-      return synthesizeReviewResult(
-        state,
-        input,
-        {
-          severity: "high",
-          body: "Review runner did not produce an outbox path."
-        },
-        this.now()
-      );
+      return setupRequired(input, "review runner did not produce an outbox path");
     }
 
     try {
       const outbox = await readJsonFile<ReviewOutbox>(
         resolveInside(this.projectRoot, input.record.outbox_path)
       );
+      const outboxSetupReason = setupRequiredReasonFromOutbox(outbox);
+      if (outboxSetupReason !== undefined) {
+        return setupRequired(input, outboxSetupReason);
+      }
+
       const raw =
         outbox.review_result !== null &&
         typeof outbox.review_result === "object" &&
@@ -248,37 +263,34 @@ export class ReviewLoopExecutor {
           : undefined;
 
       if (raw === undefined) {
-        return synthesizeReviewResult(
-          state,
-          input,
-          {
-            severity: "high",
-            body: "Review outbox is missing review_result."
-          },
-          this.now()
-        );
+        return setupRequired(input, "review outbox is missing review_result");
       }
 
-      return parseReviewResult({
-        schema_version: "0.1",
-        target: {},
-        findings: [],
-        ...raw,
-        review_id: input.reviewId,
-        task_id: state.task_id,
-        run_id: input.runId,
-        reviewer: input.reviewer,
-        created_at: this.now().toISOString()
-      });
+      try {
+        return {
+          kind: "review_result",
+          result: parseReviewResult({
+            schema_version: "0.1",
+            target: {},
+            findings: [],
+            ...raw,
+            review_id: input.reviewId,
+            task_id: state.task_id,
+            run_id: input.runId,
+            reviewer: input.reviewer,
+            created_at: this.now().toISOString()
+          })
+        };
+      } catch (error) {
+        return setupRequired(
+          input,
+          `review_result failed schema validation: ${String(error)}`
+        );
+      }
     } catch (error) {
-      return synthesizeReviewResult(
-        state,
+      return setupRequired(
         input,
-        {
-          severity: "high",
-          body: `Review result could not be parsed: ${String(error)}`
-        },
-        this.now()
+        `review outbox could not be read: ${String(error)}`
       );
     }
   }
@@ -423,31 +435,53 @@ function updateLoopState(
   };
 }
 
-function synthesizeReviewResult(
-  state: ReviewLoopState,
+function setupRequired(
   input: {
     reviewer: AgentId;
     reviewId: string;
     runId: string;
   },
-  finding: ReviewFinding,
-  now: Date
-): ReviewResult {
+  reason: string
+): ReviewResultReadOutcome {
   return {
-    schema_version: "0.1",
-    review_id: input.reviewId,
-    task_id: state.task_id,
-    run_id: input.runId,
+    kind: "setup_required",
     reviewer: input.reviewer,
-    target: {},
-    status: "changes_requested",
-    score: { overall: 0 },
-    findings: [finding],
-    required_changes: [finding.body],
-    tests_passed: false,
-    secret_scan_passed: false,
-    created_at: now.toISOString()
+    reason: `${input.reviewer}: ${reason}`
   };
+}
+
+function setupRequiredReasonFromOutbox(outbox: ReviewOutbox): string | undefined {
+  if (outbox.status === "setup_required") {
+    return "reviewer CLI setup is required";
+  }
+
+  return findSetupRequiredReason(outbox.events);
+}
+
+function findSetupRequiredReason(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const reason = findSetupRequiredReason(item);
+      if (reason !== undefined) {
+        return reason;
+      }
+    }
+    return undefined;
+  }
+
+  if (value === null || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (
+    record.message_type === "agent.run.setup_required" &&
+    typeof record.reason === "string"
+  ) {
+    return `reviewer CLI setup is required: ${record.reason}`;
+  }
+
+  return findSetupRequiredReason(Object.values(record));
 }
 
 async function nextUniqueRunId(

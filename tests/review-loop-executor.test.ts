@@ -193,6 +193,119 @@ describe("ReviewLoopExecutor", () => {
     });
   });
 
+  it("pauses review loops when reviewer outbox is missing review_result", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: reviewOutboxRunner(root, {
+        status: "completed",
+        events: [
+          {
+            type: "message.created",
+            payload: { message_type: "reviewer.note" }
+          }
+        ]
+      })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "setup_required",
+      decision: { status: "failed" },
+      next_action: {
+        action: "setup_required",
+        reviewers: ["claude"]
+      },
+      review_result_ids: []
+    });
+    expect(result.decision.reasons.join("\n")).toContain(
+      "claude: review outbox is missing review_result"
+    );
+    await expect(new WorkQueue(root).list("ready")).resolves.toEqual([]);
+  });
+
+  it("pauses review loops when review_result fails schema validation", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: reviewCommandRunner(root, {
+        status: "approved",
+        score: { overall: "not-a-number" },
+        findings: [],
+        tests_passed: true,
+        secret_scan_passed: true
+      })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "setup_required",
+      next_action: {
+        action: "setup_required",
+        reviewers: ["claude"]
+      },
+      review_result_ids: []
+    });
+    expect(result.decision.reasons.join("\n")).toContain(
+      "claude: review_result failed schema validation"
+    );
+    await expect(new WorkQueue(root).list("ready")).resolves.toEqual([]);
+  });
+
+  it("keeps valid review_result gate failures as changes_requested", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: reviewCommandRunner(root, {
+        status: "approved",
+        score: { overall: 0.95 },
+        findings: []
+      })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "changes_requested",
+      decision: { status: "failed" },
+      next_action: { action: "request_fix" },
+      review_result_ids: ["REV-0002"]
+    });
+    expect(result.decision.reasons.join("\n")).toContain(
+      "REV-0002: tests_passed is required"
+    );
+    expect(result.decision.reasons.join("\n")).toContain(
+      "REV-0002: secret_scan_passed is required"
+    );
+    await expect(new WorkQueue(root).list("ready")).resolves.toMatchObject([
+      {
+        type: "agent.run",
+        task_id: "TASK-0001",
+        payload: { purpose: "review_fix" }
+      }
+    ]);
+  });
+
   it("routes Claude Opus implementation review through Codex", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
@@ -255,6 +368,33 @@ function reviewCommandRunner(
         target: {},
         ...reviewResult
       }
+    });
+
+    return commandResult(invocation);
+  };
+}
+
+function reviewOutboxRunner(
+  root: string,
+  outbox: Record<string, unknown>
+): (invocation: CliInvocation) => Promise<CommandRunResult> {
+  return async (invocation) => {
+    const prompt = invocation.stdin ?? invocation.args.join("\n");
+    const outboxPath = /Expected outbox: (.+)/.exec(prompt)?.[1];
+    const runId = /KAIRON_JOB_START (RUN-\d+)/.exec(prompt)?.[1];
+    const taskId = /Task: (TASK-\d+)/.exec(prompt)?.[1];
+
+    if (outboxPath === undefined || runId === undefined || taskId === undefined) {
+      throw new Error("Review prompt is missing run, task, or outbox path.");
+    }
+
+    await writeJsonFileAtomic(path.join(root, outboxPath), {
+      schema_version: "0.1",
+      run_id: runId,
+      task_id: taskId,
+      agent: invocation.command === "codex" ? "codex" : "claude",
+      persona: "reviewer",
+      ...outbox
     });
 
     return commandResult(invocation);
