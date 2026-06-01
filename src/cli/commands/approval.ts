@@ -1,10 +1,15 @@
 import {
+  ApprovalActionNotAllowedError,
+  ApprovalNotFoundError,
+  ApprovalNotPendingError,
   ApprovalQueue,
   formatApprovalDecision,
   formatApprovalDetail,
   formatApprovalList,
   type ApprovalAction
 } from "../../approvals/approval-queue.js";
+
+export const APPROVAL_COMMAND_ERROR_EXIT_CODE = 4;
 
 export type ApprovalListCommandOptions = {
   status?: string;
@@ -47,14 +52,59 @@ export async function decideApprovalCommand(
   options: ApprovalDecideCommandOptions
 ): Promise<string> {
   const action = parseApprovalAction(options.action);
-  const result = await new ApprovalQueue(projectRoot).decide({
-    approvalId,
-    action,
-    reason: options.reason,
-    until: options.until
-  });
+  let result;
+
+  try {
+    result = await new ApprovalQueue(projectRoot).decide({
+      approvalId,
+      action,
+      reason: options.reason,
+      until: options.until
+    });
+  } catch (error) {
+    const formatted = formatApprovalCommandError(error);
+    if (formatted !== null) {
+      process.exitCode = APPROVAL_COMMAND_ERROR_EXIT_CODE;
+      return formatted;
+    }
+
+    throw error;
+  }
 
   return formatApprovalDecision(result);
+}
+
+function formatApprovalCommandError(error: unknown): string | null {
+  if (error instanceof ApprovalNotPendingError) {
+    return [
+      "Kairon approval decision rejected.",
+      `approval_id=${error.approvalId}`,
+      "reason=not_pending",
+      `status=${error.status}`,
+      `message=${error.message}`
+    ].join("\n");
+  }
+
+  if (error instanceof ApprovalActionNotAllowedError) {
+    return [
+      "Kairon approval decision rejected.",
+      `approval_id=${error.approvalId}`,
+      "reason=action_not_allowed",
+      `action=${error.action}`,
+      `message=${error.message}`
+    ].join("\n");
+  }
+
+  if (error instanceof ApprovalNotFoundError) {
+    return [
+      "Kairon approval decision rejected.",
+      `approval_id=${error.approvalId}`,
+      "reason=not_found",
+      `message=${error.message}`
+    ].join("\n");
+  }
+
+  return null;
 }
 
 function parseApprovalAction(value: string | undefined): ApprovalAction {
