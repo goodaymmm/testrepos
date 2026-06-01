@@ -37,7 +37,7 @@ operation-test-results/<yyyyMMdd-HHmmss>/backup/kairon-state/
 | `AgentSmoke` | `codex` / `claude` / `gemini`互換agent smoke |
 | `TaskRun` | operation-test tag付きtask create / run |
 | `ReviewLoop` | review loop create / run |
-| `RuntimeActive` | Active Work scheduleでruntime tick確認 |
+| `RuntimeActive` | Active Work scheduleでruntime tick確認。実行前にready状態のoperation/manual test queue itemを隔離し、harnessが投入した `maintenance.run` の `item_id` が処理されたことまで確認 |
 
 一部だけ実行する場合:
 
@@ -72,3 +72,4 @@ operation-test-results/<yyyyMMdd-HHmmss>/backup/kairon-state/
 - `claude` smokeは provider quota / rate limit を考慮し、`completed` または `setup_required` をPASS条件にする。
 - `gemini`互換agentはAntigravity (`agy`) のPTY adapter状態に依存するため、`completed` または `setup_required` をPASS条件にする。
 - review loopは `approved` / `changes_requested` / `setup_required` を許容するが、CLI引数エラーや `review_result`欠落・schema validation失敗を evidenceに含む場合はFAILにする。
+- RuntimeActiveは `base_mode=active_work`、`active_work_closed=False`、`action=processed-item` に加え、`tick.item_type=maintenance.run` と `expected_item_id == tick.item_id` をPASS条件にする。
