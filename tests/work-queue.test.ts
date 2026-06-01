@@ -110,6 +110,54 @@ describe("WorkQueue", () => {
     ]);
   });
 
+  it("isolates ready operation/manual test items without touching normal work", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const queue = new WorkQueue(root);
+    const operation = await queue.enqueue({
+      type: "agent.run",
+      priority: 100,
+      test_scope: {
+        kind: "operation_test",
+        tags: ["operation-test", "runtime-active"],
+        expires_at: "2026-05-25T03:00:00.000Z"
+      }
+    });
+    const manual = await queue.enqueue({
+      type: "review.run",
+      payload: { tags: ["manual-test"] },
+      priority: 90
+    });
+    const normal = await queue.enqueue({
+      type: "maintenance.run",
+      priority: 10
+    });
+
+    await expect(
+      queue.expireReadyTestItems({
+        now: new Date("2026-05-25T02:00:00.000Z"),
+        kinds: ["operation_test", "manual_test"],
+        tags: ["operation-test", "manual-test"],
+        message: "isolated for runtime active harness",
+        code: "runtime_active_test_isolation"
+      })
+    ).resolves.toMatchObject([
+      {
+        id: operation.id,
+        status: "failed",
+        error: { code: "runtime_active_test_isolation" }
+      },
+      {
+        id: manual.id,
+        status: "failed",
+        error: { code: "runtime_active_test_isolation" }
+      }
+    ]);
+    await expect(queue.list("ready")).resolves.toMatchObject([
+      { id: normal.id, status: "ready" }
+    ]);
+  });
+
   it("completes and fails claimed items", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

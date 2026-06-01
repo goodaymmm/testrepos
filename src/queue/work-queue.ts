@@ -69,6 +69,16 @@ export type ClaimOptions = {
   blocked?: (item: QueueItem) => boolean;
 };
 
+export type ExpireReadyTestItemsOptions = {
+  now?: Date;
+  kinds?: QueueTestScope["kind"][];
+  tags?: string[];
+  excludeIds?: string[];
+  includeLegacy?: boolean;
+  message?: string;
+  code?: string;
+};
+
 const defaultQueueState: QueueState = {
   schema_version: "0.1",
   items: []
@@ -199,16 +209,43 @@ export class WorkQueue {
           continue;
         }
 
-        item.status = "failed";
-        item.failed_at = nowIso;
-        item.updated_at = nowIso;
-        item.error = {
+        failReadyItem(item, nowIso, {
           message: "Stale test queue item expired before runtime dispatch.",
           code: "stale_test_queue_item"
-        };
-        delete item.claimed_by;
-        delete item.claimed_at;
-        delete item.claim_expires_at;
+        });
+        expired.push({ ...item });
+      }
+
+      return expired;
+    });
+  }
+
+  async expireReadyTestItems(
+    options: ExpireReadyTestItemsOptions = {}
+  ): Promise<QueueItem[]> {
+    return this.withQueueLock(async (state) => {
+      const now = options.now ?? new Date();
+      recoverExpiredClaims(state, now);
+
+      const expired: QueueItem[] = [];
+      const nowIso = now.toISOString();
+      const excludeIds = new Set(options.excludeIds ?? []);
+
+      for (const item of state.items) {
+        if (
+          item.status !== "ready" ||
+          excludeIds.has(item.id) ||
+          !matchesReadyTestItem(item, options)
+        ) {
+          continue;
+        }
+
+        failReadyItem(item, nowIso, {
+          message:
+            options.message ??
+            "Ready test queue item isolated before operation test dispatch.",
+          code: options.code ?? "isolated_test_queue_item"
+        });
         expired.push({ ...item });
       }
 
@@ -315,4 +352,68 @@ function hasLegacyTestTag(item: QueueItem): boolean {
   const tags = item.payload?.tags;
   return Array.isArray(tags) &&
     tags.some((tag) => tag === "operation-test" || tag === "manual-test");
+}
+
+function matchesReadyTestItem(
+  item: QueueItem,
+  options: ExpireReadyTestItemsOptions
+): boolean {
+  if (item.test_scope !== undefined) {
+    return (
+      matchesKind(item.test_scope.kind, options.kinds) &&
+      matchesTags(item.test_scope.tags, options.tags)
+    );
+  }
+
+  if (options.includeLegacy === false) {
+    return false;
+  }
+
+  const legacyTags = readLegacyTestTags(item);
+  if (legacyTags.length === 0) {
+    return false;
+  }
+
+  return (
+    matchesKind(inferLegacyTestKind(legacyTags), options.kinds) &&
+    matchesTags(legacyTags, options.tags)
+  );
+}
+
+function matchesKind(
+  kind: QueueTestScope["kind"],
+  allowed: QueueTestScope["kind"][] | undefined
+): boolean {
+  return allowed === undefined || allowed.includes(kind);
+}
+
+function matchesTags(itemTags: string[], required: string[] | undefined): boolean {
+  return (
+    required === undefined ||
+    required.length === 0 ||
+    required.some((tag) => itemTags.includes(tag))
+  );
+}
+
+function readLegacyTestTags(item: QueueItem): string[] {
+  const tags = item.payload?.tags;
+  return Array.isArray(tags)
+    ? tags.filter(
+        (tag): tag is string => tag === "operation-test" || tag === "manual-test"
+      )
+    : [];
+}
+
+function inferLegacyTestKind(tags: string[]): QueueTestScope["kind"] {
+  return tags.includes("manual-test") ? "manual_test" : "operation_test";
+}
+
+function failReadyItem(item: QueueItem, nowIso: string, error: QueueError): void {
+  item.status = "failed";
+  item.failed_at = nowIso;
+  item.updated_at = nowIso;
+  item.error = error;
+  delete item.claimed_by;
+  delete item.claimed_at;
+  delete item.claim_expires_at;
 }
