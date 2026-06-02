@@ -66,11 +66,13 @@ export type RunTaskRequest = {
   timeoutMs?: number;
   workerId?: string;
   date?: string;
+  allowInteractiveAgents?: boolean;
 };
 
 export type RunQueuedTaskRequest = {
   timeoutMs?: number;
   date?: string;
+  allowInteractiveAgents?: boolean;
 };
 
 export type RunTaskResult = {
@@ -156,6 +158,7 @@ export class TaskRunner {
         persona: task.persona,
         capabilities: task.capabilities,
         tags: task.tags,
+        allow_interactive_agents: request.allowInteractiveAgents,
         code_producing: task.code_producing,
         commit_requested: task.commit_requested,
         approval_required: task.approval_required,
@@ -203,7 +206,8 @@ export class TaskRunner {
     return this.processAgentRun(item, task, {
       taskId: item.task_id,
       timeoutMs: request.timeoutMs,
-      date: request.date
+      date: request.date,
+      allowInteractiveAgents: request.allowInteractiveAgents
     });
   }
 
@@ -220,13 +224,17 @@ export class TaskRunner {
       readBoolean(payload.code_producing) ?? task.code_producing;
     const commitRequested =
       readBoolean(payload.commit_requested) ?? task.commit_requested;
+    const allowInteractiveAgents =
+      readBoolean(payload.allow_interactive_agents) ??
+      request.allowInteractiveAgents ??
+      this.options.interactiveSessionRunner !== undefined;
     const timeoutMs = request.timeoutMs ?? readNumber(payload.timeout_ms);
     const decision = await new AgentDispatcher(this.projectRoot).decide({
       taskId: task.id,
       persona,
       requiredCapabilities: capabilities,
       tags,
-      allowInteractiveAgents: this.options.interactiveSessionRunner !== undefined
+      allowInteractiveAgents
     });
     const runId = await nextId(this.projectRoot, "run");
     const record = await new CliSessionRunner(this.projectRoot, {

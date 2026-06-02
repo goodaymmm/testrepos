@@ -410,6 +410,15 @@ persona=implementer
 ```text
 kairon task run TASK-0001
 kairon task run TASK-0001 --timeout-ms 120000
+kairon task run TASK-0001 --no-interactive-agents
+```
+
+主なoption。
+
+```text
+--timeout-ms <ms>           CLI実行timeoutを指定する。
+--worker-id <id>            queue claimに記録するworker idを指定する。
+--no-interactive-agents     Antigravityのようなinteractive-only agentをdispatch候補から外す。
 ```
 
 処理。
