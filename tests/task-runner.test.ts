@@ -11,6 +11,7 @@ import {
 import { readJsonFile } from "../src/core/fs/json-file.js";
 import { readJsonLines } from "../src/core/fs/jsonl-file.js";
 import { WorkQueue } from "../src/queue/work-queue.js";
+import { ReviewLoopManager } from "../src/review/review-loop-manager.js";
 import { TaskRunner } from "../src/tasks/task-runner.js";
 import { createTempProject } from "./test-utils.js";
 
@@ -394,6 +395,101 @@ describe("TaskRunner", () => {
       status: "running",
       code_producing: true
     });
+  });
+
+  it("records review fix runs and queues the next review", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const invocations: CliInvocation[] = [];
+    const runner = new TaskRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) => {
+        invocations.push(invocation);
+        const prompt = promptFromInvocation(invocation);
+        const runId = /KAIRON_JOB_START (RUN-\d+)/.exec(prompt)?.[1] ?? "";
+        const taskId = /Task: (TASK-\d+)/.exec(prompt)?.[1] ?? "";
+        const outboxPath = /Expected outbox: (.+)/.exec(prompt)?.[1] ?? "";
+        await writeTaskOutbox(root, {
+          outboxPath,
+          runId,
+          taskId,
+          agent: "codex",
+          persona: "implementer",
+          status: "completed"
+        });
+        return commandResult(invocation);
+      }
+    });
+    const task = await runner.createTask({
+      title: "Fix reviewed source",
+      persona: "implementer",
+      capabilities: ["coding"],
+      codeProducing: true,
+      commitRequested: true
+    });
+    const manager = new ReviewLoopManager(root);
+    const loop = await manager.start({
+      taskId: task.task_id,
+      runId: "RUN-IMPLEMENTATION",
+      implementer: "codex",
+      codeProducing: true
+    });
+    await manager.saveLoopState({
+      ...loop,
+      status: "changes_requested",
+      iteration: 2
+    });
+    const queue = new WorkQueue(root);
+    const fixItem = await queue.enqueue({
+      type: "agent.run",
+      task_id: task.task_id,
+      priority: 80,
+      payload: {
+        purpose: "review_fix",
+        review_loop_id: loop.loop_id,
+        iteration: 2,
+        reasons: ["Resolve this finding."]
+      }
+    });
+    const claimed = await queue.claimById(fixItem.id, "test-worker");
+    if (claimed === null) {
+      throw new Error("Expected queued review fix item to be claimable.");
+    }
+
+    const result = await runner.runQueuedAgentItem(claimed, {
+      date: "2026-05-26"
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      agent: "codex",
+      review_loop: {
+        loop_id: loop.loop_id,
+        status: "running",
+        reviewers: ["claude"],
+        next_review_queue_item_id: "JOB-0002"
+      }
+    });
+    expect(promptFromInvocation(invocations[0])).toContain("Resolve this finding.");
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "reviews", "loops", `${loop.loop_id}.json`))
+    ).resolves.toMatchObject({
+      status: "running",
+      history: expect.arrayContaining([{ run_id: result.run_id, type: "fix" }])
+    });
+    await expect(queue.list("ready")).resolves.toMatchObject([
+      {
+        id: "JOB-0002",
+        type: "review.run",
+        task_id: task.task_id,
+        payload: {
+          loop_id: loop.loop_id,
+          purpose: "post_fix_review",
+          fix_run_id: result.run_id,
+          iteration: 2
+        }
+      }
+    ]);
   });
 
   it("formats create command output", async () => {

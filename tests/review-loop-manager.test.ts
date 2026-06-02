@@ -86,6 +86,51 @@ describe("ReviewLoopManager", () => {
     await expect(new WorkQueue(root).list("ready")).resolves.toHaveLength(1);
   });
 
+  it("records completed fix runs and queues the next review", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const manager = new ReviewLoopManager(root);
+    const state = await manager.start({
+      taskId: "TASK-0001",
+      runId: "RUN-IMPLEMENTATION",
+      implementer: "codex",
+      commitRequested: true
+    });
+    await manager.saveLoopState({
+      ...state,
+      status: "changes_requested",
+      iteration: 2
+    });
+
+    const update = await manager.recordFixRun({
+      loopId: state.loop_id,
+      runId: "RUN-0001",
+      status: "completed"
+    });
+
+    expect(update).toMatchObject({
+      state: {
+        loop_id: state.loop_id,
+        status: "running",
+        history: expect.arrayContaining([{ run_id: "RUN-0001", type: "fix" }])
+      },
+      next_review_queue_item_id: "JOB-0001"
+    });
+    await expect(new WorkQueue(root).list("ready")).resolves.toMatchObject([
+      {
+        id: "JOB-0001",
+        type: "review.run",
+        task_id: "TASK-0001",
+        payload: {
+          loop_id: state.loop_id,
+          purpose: "post_fix_review",
+          fix_run_id: "RUN-0001",
+          iteration: 2
+        }
+      }
+    ]);
+  });
+
   it("creates an escalated approval when max iterations are exceeded", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
