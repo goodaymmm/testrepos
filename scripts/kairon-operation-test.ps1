@@ -405,7 +405,7 @@ try {
       }
       $taskId = [regex]::Match($taskText, "task_id=(TASK-\d+)").Groups[1].Value
       $runText = Invoke-External -WorkingDirectory $script:TargetRoot -Script {
-        kairon task run $taskId --timeout-ms $TimeoutMs
+        kairon task run $taskId --timeout-ms $TimeoutMs --no-interactive-agents
       }
       @(
         "run_status=$(Get-KaironStatusValue -Text $runText -Key 'status')",

@@ -8,6 +8,17 @@ const powershell = findPowerShell();
 const runIfPowerShell = powershell ? it : it.skip;
 
 describe("kairon-operation-test.ps1", () => {
+  it("runs TaskRun with interactive-only agents disabled", async () => {
+    const script = await readFile(
+      path.resolve("scripts", "kairon-operation-test.ps1"),
+      "utf8"
+    );
+
+    expect(script).toContain(
+      "kairon task run $taskId --timeout-ms $TimeoutMs --no-interactive-agents"
+    );
+  });
+
   runIfPowerShell("runs external commands without recursive scriptblock capture", async () => {
     const root = await createTempProject();
     const kaironRoot = path.join(root, "kairon");

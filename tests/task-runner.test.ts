@@ -295,6 +295,65 @@ describe("TaskRunner", () => {
     });
   });
 
+  it("can suppress interactive agents for deterministic operation task runs", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const invocations: CliInvocation[] = [];
+    const interactiveCommands: string[] = [];
+    const runner = new TaskRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) => {
+        invocations.push(invocation);
+        const prompt = promptFromInvocation(invocation);
+        const runId = /KAIRON_JOB_START (RUN-\d+)/.exec(prompt)?.[1] ?? "";
+        const taskId = /Task: (TASK-\d+)/.exec(prompt)?.[1] ?? "";
+        const outboxPath = /Expected outbox: (.+)/.exec(prompt)?.[1] ?? "";
+        await writeTaskOutbox(root, {
+          outboxPath,
+          runId,
+          taskId,
+          agent: "codex",
+          persona: "researcher",
+          status: "completed"
+        });
+        return commandResult(invocation);
+      },
+      interactiveSessionRunner: async (job) => {
+        interactiveCommands.push(job.command);
+        return commandResult({
+          command: job.command,
+          args: ["--prompt-interactive"],
+          cwd: job.cwd,
+          timeoutMs: job.timeoutMs
+        });
+      }
+    });
+    const task = await runner.createTask({
+      title: "Deterministic operation research",
+      persona: "researcher",
+      capabilities: ["research"],
+      tags: ["operation-test", "large_context"]
+    });
+
+    const result = await runner.runTask({
+      taskId: task.task_id,
+      date: "2026-05-26",
+      allowInteractiveAgents: false
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      agent: "codex",
+      persona: "researcher",
+      command: "codex"
+    });
+    expect(interactiveCommands).toEqual([]);
+    expect(invocations[0]).toMatchObject({
+      command: "codex",
+      args: ["exec", "--json", "-"]
+    });
+  });
+
   it("starts a review loop for code-producing tasks", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

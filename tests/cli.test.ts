@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { createProgram, isCliEntrypoint } from "../src/cli/main.js";
+import { resolveAllowInteractiveAgents } from "../src/cli/commands/task.js";
 
 describe("createProgram", () => {
   it("registers the documented top-level commands", () => {
@@ -47,5 +48,15 @@ describe("createProgram", () => {
         realpath
       )
     ).toBe(true);
+  });
+
+  it("maps Commander --no-interactive-agents to task run dispatch options", () => {
+    expect(
+      resolveAllowInteractiveAgents({ interactiveAgents: false })
+    ).toBe(false);
+    expect(
+      resolveAllowInteractiveAgents({ noInteractiveAgents: true })
+    ).toBe(false);
+    expect(resolveAllowInteractiveAgents({})).toBeUndefined();
   });
 });

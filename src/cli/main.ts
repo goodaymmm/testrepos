@@ -190,6 +190,7 @@ export function createProgram(): Command {
     .argument("<taskId>", "Task id, for example TASK-0001")
     .option("--timeout-ms <ms>", "CLI execution timeout in milliseconds.")
     .option("--worker-id <id>", "Worker id recorded on the queue claim.")
+    .option("--no-interactive-agents", "Do not dispatch to interactive-only agents such as Antigravity.")
     .action(async (taskId: string, options) => {
       console.log(await runTaskCommand(process.cwd(), taskId, options));
     });

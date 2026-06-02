@@ -22,6 +22,8 @@ export type CreateTaskCommandOptions = {
 export type RunTaskCommandOptions = {
   timeoutMs?: string;
   workerId?: string;
+  interactiveAgents?: boolean;
+  noInteractiveAgents?: boolean;
 };
 
 export async function createTaskCommand(
@@ -70,7 +72,8 @@ export async function runTaskCommand(
       options.timeoutMs === undefined
         ? undefined
         : parsePositiveInteger(options.timeoutMs, "--timeout-ms"),
-    workerId: options.workerId
+    workerId: options.workerId,
+    allowInteractiveAgents: resolveAllowInteractiveAgents(options)
   });
 
   return formatRunTaskResult(result);
@@ -78,6 +81,19 @@ export async function runTaskCommand(
 
 export function collectOption(value: string, previous: string[] = []): string[] {
   return [...previous, value];
+}
+
+export function resolveAllowInteractiveAgents(
+  options: Pick<
+    RunTaskCommandOptions,
+    "interactiveAgents" | "noInteractiveAgents"
+  >
+): boolean | undefined {
+  if (options.interactiveAgents === false || options.noInteractiveAgents === true) {
+    return false;
+  }
+
+  return undefined;
 }
 
 function parsePositiveInteger(value: string, name: string): number {
