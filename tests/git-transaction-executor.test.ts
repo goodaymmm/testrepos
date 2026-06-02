@@ -113,7 +113,61 @@ describe("GitTransactionExecutor", () => {
     ).resolves.toMatchObject({
       type: "git_push",
       status: "pending",
-      transaction_id: "GTX-0001"
+      transaction_id: "GTX-0001",
+      task_id: "TASK-0001",
+      run_id: "RUN-0001",
+      review_loop_id: "REV-0001",
+      expected_head_sha: "commit-sha"
+    });
+  });
+
+  it("resumes approved push transactions", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await createReviewedDiff(root, "approved");
+    const invocations: CliInvocation[] = [];
+    const executor = new GitTransactionExecutor(root, {
+      commandRunner: gitRunner(invocations)
+    });
+    const pending = await executor.executeCommit({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      reviewLoopId: "REV-0001",
+      agent: "codex",
+      writePaths: ["src/**"],
+      pushRequested: true
+    });
+
+    const pushed = await executor.resumeApprovedPush({
+      transactionId: pending.transaction_id,
+      approvalId: "APR-0001",
+      expectedHeadSha: pending.commit_sha
+    });
+
+    expect(pushed).toMatchObject({
+      status: "pushed",
+      push: {
+        requested: true,
+        allowed: true,
+        remote: "origin",
+        remote_ref: "auto/TASK-0001/codex",
+        pushed: true
+      },
+      rollback: {
+        strategy: "revert_commit",
+        parent_sha: "parent-sha"
+      }
+    });
+    expect(invocations.map((invocation) => invocation.args)).toContainEqual([
+      "push",
+      "origin",
+      "auto/TASK-0001/codex:auto/TASK-0001/codex"
+    ]);
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "git", "transactions", "GTX-0001.json"))
+    ).resolves.toMatchObject({
+      status: "pushed",
+      push: { pushed: true }
     });
   });
 

@@ -337,6 +337,109 @@ describe("RuntimeLoop", () => {
     ]);
   });
 
+  it("processes git.transaction resume_push items with the default runtime handler", async () => {
+    const root = await createInitializedProject();
+    const queue = new WorkQueue(root);
+    const item = await queue.enqueue({
+      type: "git.transaction",
+      schedule_mode: "active_work",
+      payload: {
+        action: "resume_push",
+        transaction_id: "GTX-0001",
+        approval_id: "APR-0001",
+        expected_head_sha: "commit-sha",
+        remote: "origin",
+        remote_ref: "auto/TASK-0001/codex"
+      }
+    });
+    let capturedRequest: unknown;
+
+    const result = await new RuntimeLoop(root, {
+      now: () => new Date("2026-05-25T08:00:00.000Z"),
+      gitTransactionRunner: async (request) => {
+        capturedRequest = request;
+        return {
+          schema_version: "0.1",
+          transaction_id:
+            "action" in request && request.action === "resume_push"
+              ? request.transactionId
+              : "GTX-UNKNOWN",
+          task_id: "TASK-0001",
+          run_id: "RUN-0001",
+          review_loop_id: "REV-0001",
+          branch: "auto/TASK-0001/codex",
+          worktree_path: ".kairon/worktrees/TASK-0001-codex",
+          status: "pushed",
+          base_branch: "main",
+          base_sha: "base-sha",
+          parent_sha: "parent-sha",
+          commit_sha: "commit-sha",
+          diff_sha256: "diff-sha",
+          checks: [{ name: "push_head", status: "passed" }],
+          push: {
+            requested: true,
+            allowed: true,
+            remote: "origin",
+            remote_ref: "auto/TASK-0001/codex",
+            pushed: true
+          },
+          rollback: {
+            strategy: "revert_commit",
+            parent_sha: "parent-sha",
+            command_hint: "git revert parent-sha..HEAD"
+          },
+          workspace: {
+            schema_version: "0.1",
+            task_id: "TASK-0001",
+            branch: "auto/TASK-0001/codex",
+            agent: "codex",
+            base_branch: "main",
+            base_sha: "base-sha",
+            worktree_path: ".kairon/worktrees/TASK-0001-codex",
+            status: "active",
+            writer_lock: ".kairon/git/locks/branch-auto-TASK-0001-codex.json",
+            path_lock: ".kairon/git/locks/path-TASK-0001.json",
+            write_paths: ["src/**"],
+            created_at: "2026-05-25T08:00:00.000Z"
+          },
+          transaction_path: ".kairon/git/transactions/GTX-0001.json",
+          created_at: "2026-05-25T08:00:00.000Z",
+          updated_at: "2026-05-25T08:00:00.000Z"
+        };
+      }
+    }).runTick();
+
+    expect(capturedRequest).toEqual({
+      action: "resume_push",
+      transactionId: "GTX-0001",
+      approvalId: "APR-0001",
+      expectedHeadSha: "commit-sha",
+      remote: "origin",
+      remoteRef: "auto/TASK-0001/codex"
+    });
+    expect(result).toMatchObject({
+      mode: "active_work",
+      action: "processed-item",
+      queue_result: {
+        status: "processed-item",
+        item_id: item.id,
+        item_type: "git.transaction"
+      }
+    });
+    await expect(queue.list("completed")).resolves.toMatchObject([
+      {
+        id: item.id,
+        result: {
+          transaction_id: "GTX-0001",
+          status: "pushed",
+          push: {
+            pushed: true
+          }
+        }
+      }
+    ]);
+  });
+
   it("allows approved work during standby", async () => {
     const root = await createInitializedProject();
     const queue = new WorkQueue(root);

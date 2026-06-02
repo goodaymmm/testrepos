@@ -16,7 +16,8 @@ import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
 import {
   GitTransactionExecutor,
   type ExecuteGitTransactionRequest,
-  type GitTransactionRecord
+  type GitTransactionRecord,
+  type ResumeGitTransactionPushRequest
 } from "../git/transaction-executor.js";
 import {
   ReviewLoopExecutor,
@@ -66,9 +67,13 @@ export type RuntimeLoopOptions = {
     request: ReviewLoopExecutionRequest
   ) => Promise<ReviewLoopExecutionResult>;
   gitTransactionRunner?: (
-    request: ExecuteGitTransactionRequest
+    request: RuntimeGitTransactionRequest
   ) => Promise<GitTransactionRecord>;
 };
+
+export type RuntimeGitTransactionRequest =
+  | ExecuteGitTransactionRequest
+  | ({ action: "resume_push" } & ResumeGitTransactionPushRequest);
 
 export class RuntimeLoop {
   constructor(
@@ -237,10 +242,14 @@ function defaultQueueHandlers(
         const request = readGitTransactionRequest(item.task_id, item.payload);
         const runner =
           options.gitTransactionRunner ??
-          ((input: ExecuteGitTransactionRequest) =>
-            new GitTransactionExecutor(projectRoot, {
+          ((input: RuntimeGitTransactionRequest) => {
+            const executor = new GitTransactionExecutor(projectRoot, {
               now: () => now
-            }).executeCommit(input));
+            });
+            return isResumeGitTransactionPushRequest(input)
+              ? executor.resumeApprovedPush(input)
+              : executor.executeCommit(input);
+          });
         const result = await runner(request);
         return summarizeGitTransaction(result);
       },
@@ -398,8 +407,30 @@ function readReviewRunRequest(
 function readGitTransactionRequest(
   itemTaskId: string | undefined,
   payload: Record<string, unknown> | undefined
-): ExecuteGitTransactionRequest {
+): RuntimeGitTransactionRequest {
   const action = readPayloadString(payload, ["action"]) ?? "commit";
+  if (["resume_push", "push"].includes(action)) {
+    const transactionId = readPayloadString(payload, [
+      "transaction_id",
+      "transactionId"
+    ]);
+    if (transactionId === undefined) {
+      throw new Error("git.transaction resume_push payload is missing transaction_id.");
+    }
+
+    return {
+      action: "resume_push",
+      transactionId,
+      approvalId: readPayloadString(payload, ["approval_id", "approvalId"]),
+      expectedHeadSha: readPayloadString(payload, [
+        "expected_head_sha",
+        "expectedHeadSha"
+      ]),
+      remote: readPayloadString(payload, ["remote"]),
+      remoteRef: readPayloadString(payload, ["remote_ref", "remoteRef"])
+    };
+  }
+
   if (!["commit", "execute_commit"].includes(action)) {
     throw new Error(`Unsupported git.transaction action: ${action}`);
   }
@@ -445,6 +476,12 @@ function readGitTransactionRequest(
       "pushTargetBranch"
     ])
   };
+}
+
+function isResumeGitTransactionPushRequest(
+  request: RuntimeGitTransactionRequest
+): request is { action: "resume_push" } & ResumeGitTransactionPushRequest {
+  return "action" in request && request.action === "resume_push";
 }
 
 function summarizeReviewRun(

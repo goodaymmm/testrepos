@@ -4,6 +4,7 @@ import { appendJsonLine } from "../core/fs/jsonl-file.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside } from "../core/fs/paths.js";
 import type { KaironEvent } from "../core/events/event-types.js";
+import { handleGitPushApprovalDecision } from "../git/transaction-approval.js";
 
 export async function materializeEvent(
   projectRoot: string,
@@ -134,7 +135,7 @@ async function materializeApprovalDecided(
     // A missing file is materialized as a minimal decided approval for recovery.
   }
 
-  await writeJsonFileAtomic(approvalPath, {
+  const updated = {
     ...current,
     status: "decided",
     decision: event.payload?.decision,
@@ -142,7 +143,19 @@ async function materializeApprovalDecided(
     decided_by: event.payload?.actor,
     decided_at: event.created_at,
     updated_at: event.created_at
-  });
+  };
+  await writeJsonFileAtomic(approvalPath, updated);
+
+  if (
+    event.payload?.decision === "approve" ||
+    event.payload?.decision === "reject" ||
+    event.payload?.decision === "request_changes"
+  ) {
+    await handleGitPushApprovalDecision(projectRoot, updated, {
+      decision: event.payload.decision,
+      decidedAt: event.created_at
+    });
+  }
 }
 
 async function materializeApprovalSnoozed(
