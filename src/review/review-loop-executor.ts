@@ -332,6 +332,7 @@ export class ReviewLoopExecutor {
       "- tests_passed: boolean",
       "- secret_scan_passed: boolean",
       "",
+      "Keep the review bounded by the provided timeout. If full validation cannot finish, still write a valid `review_result`; use `status=commented` or `status=changes_requested`, and set `tests_passed=false` when tests were not completed.",
       "Do not modify source files during review execution.",
       ""
     ].join("\n");
@@ -455,7 +456,41 @@ function setupRequiredReasonFromOutbox(outbox: ReviewOutbox): string | undefined
     return "reviewer CLI setup is required";
   }
 
+  if (outbox.status === "failed") {
+    const failure = findFailureReason(outbox.events);
+    if (failure !== undefined) {
+      return `reviewer CLI did not produce a usable outbox: ${failure}`;
+    }
+  }
+
   return findSetupRequiredReason(outbox.events);
+}
+
+function findFailureReason(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const reason = findFailureReason(item);
+      if (reason !== undefined) {
+        return reason;
+      }
+    }
+    return undefined;
+  }
+
+  if (value === null || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (
+    record.message_type === "agent.run.failure" &&
+    typeof record.reason === "string"
+  ) {
+    const timedOut = record.timed_out === true ? ", timed_out=true" : "";
+    return `${record.reason}${timedOut}`;
+  }
+
+  return findFailureReason(Object.values(record));
 }
 
 function findSetupRequiredReason(value: unknown): string | undefined {
