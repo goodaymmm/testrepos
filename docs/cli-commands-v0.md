@@ -201,7 +201,7 @@ materialize approval state
 
 ## kairon approval seed
 
-運用テスト用の手動approvalを作成する。PowerShellからJSON配列をNode引数として渡すと引用符が壊れやすいため、このcommandはCSV形式の `--actions` を受け取り、内部で `approval.requested` eventとしてmaterializeする。
+運用テスト用の手動approvalを作成する。PowerShellからJSON配列をNode引数として渡すと引用符が壊れやすいため、このcommandはカンマ区切りまたは空白区切りの `--actions` を受け取り、内部で `approval.requested` eventとしてmaterializeする。
 
 ```text
 kairon approval seed APR-MANUAL-0001
@@ -214,7 +214,7 @@ kairon approval seed APR-MANUAL-0003 --actions approve,reject,request_changes,sn
 ```text
 --type <type>              既定は manual_test
 --title <title>            既定は Manual approval <approvalId>
---actions <csv>            既定は approve,reject,request_changes,snooze
+--actions <actions>        カンマ区切りまたは空白区切り。既定は approve,reject,request_changes,snooze
 --task-id <taskId>         eventへtask_idを付与
 --run-id <runId>           eventへrun_idを付与
 --redaction-fixture        show表示確認用のdiff/stdout/api_tokenを含める

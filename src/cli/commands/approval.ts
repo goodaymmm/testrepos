@@ -89,7 +89,25 @@ export async function seedApprovalCommand(
   approvalId: string,
   options: ApprovalSeedCommandOptions = {}
 ): Promise<string> {
-  const actions = parseApprovalActions(options.actions);
+  let actions: ApprovalAction[];
+
+  try {
+    actions = parseApprovalActions(options.actions);
+  } catch (error) {
+    if (error instanceof ApprovalInvalidActionError) {
+      process.exitCode = APPROVAL_COMMAND_ERROR_EXIT_CODE;
+      return [
+        "Kairon approval seed rejected.",
+        `approval_id=${approvalId}`,
+        "reason=invalid_action",
+        `action=${error.action}`,
+        `message=${error.message}`
+      ].join("\n");
+    }
+
+    throw error;
+  }
+
   const approval: Record<string, unknown> = {
     id: approvalId,
     type: options.type ?? "manual_test",
@@ -173,24 +191,32 @@ function parseApprovalActions(value: string | undefined): ApprovalAction[] {
   }
 
   const parsed = value
-    .split(",")
+    .split(/[,\s]+/u)
     .map((action) => action.trim())
     .filter((action) => action.length > 0);
 
   if (parsed.length === 0) {
-    throw new Error(
-      `Invalid approval actions: ${value}. Expected comma-separated actions.`
-    );
+    throw new ApprovalInvalidActionError(value);
   }
 
   const unique = [...new Set(parsed)];
   for (const action of unique) {
     if (!approvalActions.includes(action as ApprovalAction)) {
-      throw new Error(
-        `Invalid approval action: ${action}. Expected one of: ${approvalActions.join(", ")}.`
-      );
+      throw new ApprovalInvalidActionError(action);
     }
   }
 
   return unique as ApprovalAction[];
+}
+
+class ApprovalInvalidActionError extends Error {
+  readonly action: string;
+
+  constructor(action: string) {
+    super(
+      `Invalid approval action: ${action}. Expected one of: ${approvalActions.join(", ")}.`
+    );
+    this.name = "ApprovalInvalidActionError";
+    this.action = action;
+  }
 }

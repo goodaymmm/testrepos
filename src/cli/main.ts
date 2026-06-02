@@ -136,7 +136,7 @@ export function createProgram(): Command {
     .argument("<approvalId>", "Approval id, for example APR-MANUAL-0001")
     .option("--type <type>", "Approval type. Defaults to manual_test.")
     .option("--title <title>", "Approval title.")
-    .option("--actions <actions>", "Comma-separated actions. Defaults to all approval actions.")
+    .option("--actions <actions>", "Comma- or whitespace-separated actions. Defaults to all approval actions.")
     .option("--task-id <taskId>", "Optional task id to attach to the event.")
     .option("--run-id <runId>", "Optional run id to attach to the event.")
     .option("--redaction-fixture", "Include omitted/redacted fields for display tests.")
