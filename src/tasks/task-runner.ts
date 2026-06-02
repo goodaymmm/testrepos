@@ -1,4 +1,5 @@
 import path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
 import {
   CliSessionRunner,
   type CliSessionRunRecord
@@ -18,6 +19,10 @@ import {
   type ScheduleMode
 } from "../queue/work-queue.js";
 import { StateApplier } from "../state/state-applier.js";
+import {
+  ReviewLoopManager,
+  type ReviewLoopState
+} from "../review/review-loop-manager.js";
 
 export type CreateTaskRequest = {
   title: string;
@@ -87,9 +92,18 @@ export type RunTaskResult = {
   runner_metadata_path: string;
   outbox_path: string;
   applied_event_ids: string[];
-  review_loop?: CliSessionRunRecord["review_loop"];
+  review_loop?: TaskReviewLoopSummary;
   command: string;
   command_available: boolean;
+};
+
+export type TaskReviewLoopSummary = NonNullable<CliSessionRunRecord["review_loop"]> & {
+  next_review_queue_item_id?: string;
+};
+
+type ReviewFixContext = {
+  loop: ReviewLoopState;
+  instruction_path: string;
 };
 
 export class TaskRunner {
@@ -217,6 +231,7 @@ export class TaskRunner {
     request: RunTaskRequest
   ): Promise<RunTaskResult> {
     const payload = item.payload ?? {};
+    const reviewFix = await this.loadReviewFixContext(item, payload);
     const persona = readString(payload.persona) ?? task.persona;
     const capabilities = readStringArray(payload.capabilities) ?? task.capabilities;
     const tags = readStringArray(payload.tags) ?? task.tags;
@@ -234,7 +249,11 @@ export class TaskRunner {
       persona,
       requiredCapabilities: capabilities,
       tags,
-      allowInteractiveAgents
+      allowInteractiveAgents,
+      policy:
+        reviewFix === undefined
+          ? undefined
+          : { allowedAgents: [reviewFix.loop.implementer] }
     });
     const runId = await nextId(this.projectRoot, "run");
     const record = await new CliSessionRunner(this.projectRoot, {
@@ -250,9 +269,11 @@ export class TaskRunner {
       persona,
       timeoutMs,
       capabilities,
+      extraSources:
+        reviewFix === undefined ? undefined : [reviewFix.instruction_path],
       tags,
-      codeProducing,
-      commitRequested
+      codeProducing: reviewFix === undefined ? codeProducing : false,
+      commitRequested: reviewFix === undefined ? commitRequested : false
     });
     const outboxPath = record.outbox_path ?? toProjectPath(this.projectRoot, runOutboxPath(this.projectRoot, runId));
     const applied =
@@ -261,6 +282,8 @@ export class TaskRunner {
         : await new StateApplier(this.projectRoot).applyOutbox(
             resolveInside(this.projectRoot, record.outbox_path)
           );
+
+    const reviewLoop = await this.completeReviewFix(reviewFix, record);
 
     return {
       schema_version: "0.1",
@@ -274,9 +297,92 @@ export class TaskRunner {
       runner_metadata_path: record.runner_metadata_path,
       outbox_path: outboxPath,
       applied_event_ids: applied.appliedEventIds,
-      review_loop: record.review_loop,
+      review_loop: reviewLoop ?? record.review_loop,
       command: record.command,
       command_available: record.command_available
+    };
+  }
+
+  private async loadReviewFixContext(
+    item: QueueItem,
+    payload: Record<string, unknown>
+  ): Promise<ReviewFixContext | undefined> {
+    if (payload.purpose !== "review_fix") {
+      return undefined;
+    }
+
+    const loopId = readString(payload.review_loop_id);
+    if (loopId === undefined) {
+      throw new Error("review_fix queue item is missing review_loop_id.");
+    }
+
+    const manager = new ReviewLoopManager(this.projectRoot);
+    const loop = await manager.loadLoopState(loopId);
+    if (item.task_id !== loop.task_id) {
+      throw new Error(
+        `review_fix queue item task_id does not match review loop ${loopId}.`
+      );
+    }
+
+    return {
+      loop,
+      instruction_path: await this.writeReviewFixInstruction(loop, payload)
+    };
+  }
+
+  private async writeReviewFixInstruction(
+    loop: ReviewLoopState,
+    payload: Record<string, unknown>
+  ): Promise<string> {
+    const iteration = readNumber(payload.iteration) ?? loop.iteration;
+    const reasons = readStringArray(payload.reasons) ?? [];
+    const instructionPath = resolveInside(
+      getKaironPaths(this.projectRoot).kaironDir,
+      "reviews",
+      "loops",
+      `${loop.loop_id}-fix-${iteration}.md`
+    );
+    const content = [
+      "# Kairon Review Fix Request",
+      "",
+      `Loop: ${loop.loop_id}`,
+      `Task: ${loop.task_id}`,
+      `Iteration: ${iteration}`,
+      `Implementer: ${loop.implementer}`,
+      "",
+      "Resolve the review findings below, then write the normal Kairon outbox.",
+      "Do not create or update review loop state directly; Kairon will record the fix run and queue the next review.",
+      "",
+      "Review reasons:",
+      ...(reasons.length === 0 ? ["- No detailed reasons were provided."] : reasons.map((reason) => `- ${reason}`)),
+      ""
+    ].join("\n");
+
+    await mkdir(path.dirname(instructionPath), { recursive: true });
+    await writeFile(instructionPath, content, "utf8");
+    return toProjectPath(this.projectRoot, instructionPath);
+  }
+
+  private async completeReviewFix(
+    reviewFix: ReviewFixContext | undefined,
+    record: CliSessionRunRecord
+  ): Promise<TaskReviewLoopSummary | undefined> {
+    if (reviewFix === undefined || record.run_id === undefined) {
+      return undefined;
+    }
+
+    const update = await new ReviewLoopManager(this.projectRoot).recordFixRun({
+      loopId: reviewFix.loop.loop_id,
+      runId: record.run_id,
+      status: record.status
+    });
+
+    return {
+      loop_id: update.state.loop_id,
+      status: update.state.status,
+      reviewers: update.state.reviewers,
+      integration: update.state.integration,
+      next_review_queue_item_id: update.next_review_queue_item_id
     };
   }
 

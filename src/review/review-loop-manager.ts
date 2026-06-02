@@ -81,6 +81,13 @@ export type ReviewNextAction =
       reasons: string[];
     };
 
+export type ReviewFixRunStatus = "completed" | "failed" | "setup_required";
+
+export type ReviewFixRunUpdate = {
+  state: ReviewLoopState;
+  next_review_queue_item_id?: string;
+};
+
 const codePathPatterns = [
   /^src\//,
   /^tests?\//,
@@ -200,6 +207,55 @@ export class ReviewLoopManager {
       queue_item_id: item.id,
       reasons: decision.reasons
     };
+  }
+
+  async recordFixRun(request: {
+    loopId: string;
+    runId: string;
+    status: ReviewFixRunStatus;
+  }): Promise<ReviewFixRunUpdate> {
+    const state = await this.loadLoopState(request.loopId);
+    const now = new Date().toISOString();
+    const history = state.history.some((entry) => entry.run_id === request.runId)
+      ? state.history
+      : [...state.history, { run_id: request.runId, type: "fix" as const }];
+
+    if (request.status === "completed") {
+      const nextState: ReviewLoopState = {
+        ...state,
+        status: "running",
+        history,
+        updated_at: now
+      };
+      await this.saveLoopState(nextState);
+      const item = await new WorkQueue(this.projectRoot).enqueue({
+        type: "review.run",
+        task_id: nextState.task_id,
+        priority: 80,
+        payload: {
+          loop_id: nextState.loop_id,
+          purpose: "post_fix_review",
+          fix_run_id: request.runId,
+          iteration: nextState.iteration
+        }
+      });
+
+      return {
+        state: nextState,
+        next_review_queue_item_id: item.id
+      };
+    }
+
+    const nextState: ReviewLoopState = {
+      ...state,
+      status:
+        request.status === "setup_required" ? "setup_required" : "changes_requested",
+      history,
+      updated_at: now
+    };
+    await this.saveLoopState(nextState);
+
+    return { state: nextState };
   }
 
   private async escalate(
