@@ -1,7 +1,9 @@
 import path from "node:path";
+import { writeFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import {
   createAntigravityPtySessionRunner,
+  resolvePtyCommandForSpawn,
   type PtyExitEvent,
   type PtyProcess,
   type PtySpawner
@@ -21,11 +23,12 @@ describe("createAntigravityPtySessionRunner", () => {
         spawnedArgs = args;
       }),
       pollIntervalMs: 5,
-      closeGraceMs: 5
+      closeGraceMs: 5,
+      platform: "linux"
     });
 
     const resultPromise = runner(job(root, outboxPath));
-    await Promise.resolve();
+    await waitForPtyReady();
     pty.emitData("agy ready\n");
     await writeJsonFileAtomic(outboxPath, {
       schema_version: "0.1",
@@ -57,7 +60,8 @@ describe("createAntigravityPtySessionRunner", () => {
     const pty = new FakePty();
     const runner = createAntigravityPtySessionRunner({
       ptySpawner: fakeSpawner(pty),
-      pollIntervalMs: 5
+      pollIntervalMs: 5,
+      platform: "linux"
     });
 
     const result = await runner(job(root, outboxPath, { runId: "RUN-0002", timeoutMs: 20 }));
@@ -76,11 +80,12 @@ describe("createAntigravityPtySessionRunner", () => {
     const runner = createAntigravityPtySessionRunner({
       ptySpawner: fakeSpawner(pty),
       pollIntervalMs: 5,
-      closeGraceMs: 5
+      closeGraceMs: 5,
+      platform: "linux"
     });
 
     const resultPromise = runner(job(root, outboxPath, { runId: "RUN-0003" }));
-    await Promise.resolve();
+    await waitForPtyReady();
     pty.emitExit({ exitCode: 7 });
     const result = await resultPromise;
 
@@ -89,6 +94,76 @@ describe("createAntigravityPtySessionRunner", () => {
       timedOut: false
     });
     expect(pty.killed).toBe(false);
+  });
+
+  it("resolves agy.exe from PATH before spawning node-pty on Windows", async () => {
+    const root = await createTempProject();
+    const executable = path.join(root, "agy.exe");
+    await writeFile(executable, "", "utf8");
+    const outboxPath = path.join(root, ".kairon", "runs", "RUN-0004", "outbox.json");
+    const pty = new FakePty();
+    let spawnedCommand = "";
+    const runner = createAntigravityPtySessionRunner({
+      ptySpawner: fakeSpawner(pty, (command) => {
+        spawnedCommand = command;
+      }),
+      pollIntervalMs: 5,
+      closeGraceMs: 5,
+      platform: "win32",
+      env: {
+        PATH: root,
+        PATHEXT: ".exe;.cmd"
+      }
+    });
+
+    const resultPromise = runner(job(root, outboxPath, { runId: "RUN-0004" }));
+    await waitForPtyReady();
+    await writeJsonFileAtomic(outboxPath, {
+      schema_version: "0.1",
+      run_id: "RUN-0004",
+      task_id: "TASK-0001",
+      agent: "gemini",
+      persona: "smoke",
+      status: "completed"
+    });
+    const result = await resultPromise;
+
+    expect(spawnedCommand).toBe(executable);
+    expect(result.command).toBe("agy");
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("returns setup-required without leaking File not found when the PTY command cannot be resolved", async () => {
+    const root = await createTempProject();
+    const outboxPath = path.join(root, ".kairon", "runs", "RUN-0005", "outbox.json");
+    const runner = createAntigravityPtySessionRunner({
+      ptySpawner: () => {
+        throw new Error("should not spawn unresolved commands");
+      },
+      platform: "win32",
+      env: {
+        PATH: root,
+        PATHEXT: ".exe"
+      }
+    });
+
+    const result = await runner(job(root, outboxPath, { runId: "RUN-0005" }));
+
+    expect(result.command).toBe("agy");
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain("pty_command_unresolved");
+    expect(result.stderr).not.toContain("pty_spawn_failed");
+    expect(result.stderr).not.toContain("File not found");
+  });
+});
+
+describe("resolvePtyCommandForSpawn", () => {
+  it("keeps non-Windows commands unresolved for PATH-based spawning", async () => {
+    await expect(resolvePtyCommandForSpawn("agy", {}, "linux")).resolves.toEqual({
+      command: "agy",
+      resolved: true,
+      candidates: ["agy"]
+    });
   });
 });
 
@@ -124,6 +199,10 @@ class FakePty implements PtyProcess {
   emitExit(event: PtyExitEvent): void {
     this.exitCallback?.(event);
   }
+}
+
+async function waitForPtyReady(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function fakeSpawner(

@@ -1,3 +1,5 @@
+import { access } from "node:fs/promises";
+import path from "node:path";
 import { readJsonFile } from "../core/fs/json-file.js";
 import type { CommandRunResult } from "./command-runner.js";
 import type {
@@ -37,6 +39,7 @@ export type PtySessionRunnerOptions = {
   cols?: number;
   rows?: number;
   env?: NodeJS.ProcessEnv;
+  platform?: NodeJS.Platform;
   now?: () => Date;
 };
 
@@ -53,6 +56,12 @@ async function runPtySession(
   const startedAt = isoNow(options);
   const args = antigravityArgs(job);
   const spawn = options.ptySpawner ?? defaultPtySpawner;
+  const env = options.env ?? process.env;
+  const commandResolution = await resolvePtyCommandForSpawn(
+    job.command,
+    env,
+    options.platform ?? process.platform
+  );
   const timeoutMs = job.timeoutMs ?? 300_000;
   const pollIntervalMs = options.pollIntervalMs ?? 250;
   const closeGraceMs = options.closeGraceMs ?? 1_500;
@@ -66,13 +75,33 @@ async function runPtySession(
   let pollTimer: NodeJS.Timeout | undefined;
   let timeoutTimer: NodeJS.Timeout | undefined;
 
+  if (!commandResolution.resolved) {
+    return {
+      command: job.command,
+      args,
+      cwd: job.cwd,
+      pid: null,
+      exitCode: 1,
+      signal: null,
+      stdout,
+      stderr: [
+        "KAIRON_SETUP_REQUIRED pty_command_unresolved:",
+        `command=${job.command}`,
+        `searched=${commandResolution.candidates.join(";")}`
+      ].join(" ") + "\n",
+      startedAt,
+      finishedAt: isoNow(options),
+      timedOut: false
+    };
+  }
+
   try {
-    pty = await spawn(job.command, args, {
+    pty = await spawn(commandResolution.command, args, {
       name: "xterm-256color",
       cols: options.cols ?? 120,
       rows: options.rows ?? 40,
       cwd: job.cwd,
-      env: options.env ?? process.env
+      env
     });
   } catch (error) {
     return {
@@ -154,6 +183,44 @@ async function runPtySession(
   });
 }
 
+export async function resolvePtyCommandForSpawn(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform
+): Promise<{ command: string; resolved: boolean; candidates: string[] }> {
+  if (platform !== "win32") {
+    return { command, resolved: true, candidates: [command] };
+  }
+
+  if (hasPathSeparator(command) || path.isAbsolute(command)) {
+    const exists = await canAccess(command);
+    return { command, resolved: exists, candidates: [command] };
+  }
+
+  const pathValue = getEnvValue(env, "PATH") ?? "";
+  const pathEntries = pathValue
+    .split(";")
+    .map((entry) => entry.trim().replace(/^"|"$/g, ""))
+    .filter((entry) => entry.length > 0);
+  const extensions = commandHasExtension(command)
+    ? [""]
+    : (getEnvValue(env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
+        .split(";")
+        .map((extension) => extension.trim())
+        .filter((extension) => extension.length > 0);
+  const candidates = pathEntries.flatMap((entry) =>
+    extensions.map((extension) => path.join(entry, `${command}${extension}`))
+  );
+
+  for (const candidate of candidates) {
+    if (await canAccess(candidate)) {
+      return { command: candidate, resolved: true, candidates };
+    }
+  }
+
+  return { command, resolved: false, candidates };
+}
+
 async function defaultPtySpawner(
   command: string,
   args: string[],
@@ -165,6 +232,33 @@ async function defaultPtySpawner(
 
 function antigravityArgs(job: InteractiveSessionJob): string[] {
   return ["--prompt-interactive", job.prompt];
+}
+
+function getEnvValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const exact = env[name];
+  if (exact !== undefined) {
+    return exact;
+  }
+
+  const match = Object.keys(env).find((key) => key.toLowerCase() === name.toLowerCase());
+  return match === undefined ? undefined : env[match];
+}
+
+function hasPathSeparator(command: string): boolean {
+  return command.includes("/") || command.includes("\\");
+}
+
+function commandHasExtension(command: string): boolean {
+  return path.extname(command).length > 0;
+}
+
+async function canAccess(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function hasReadyOutbox(outboxPath: string, runId: string): Promise<boolean> {

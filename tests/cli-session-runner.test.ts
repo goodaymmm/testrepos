@@ -446,6 +446,48 @@ describe("CliSessionRunner", () => {
       ]
     });
   });
+
+  it("classifies unresolved PTY commands as setup-required", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      interactiveSessionRunner: async (job) =>
+        commandResult(
+          {
+            command: job.command,
+            args: ["--prompt-interactive", job.prompt],
+            cwd: job.cwd,
+            timeoutMs: job.timeoutMs
+          },
+          {
+            exitCode: 1,
+            stderr: "KAIRON_SETUP_REQUIRED pty_command_unresolved: command=agy searched=\n"
+          }
+        )
+    });
+
+    const record = await runner.runAgentJob({
+      agent: "gemini",
+      date: "2026-05-25",
+      runId: "RUN-0009",
+      taskId: "TASK-0009",
+      persona: "researcher"
+    });
+
+    expect(record.status).toBe("setup_required");
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runs", "RUN-0009", "outbox.json"))
+    ).resolves.toMatchObject({
+      status: "setup_required",
+      events: [
+        {
+          type: "message.created",
+          payload: { reason: "cli_pty_command_unresolved" }
+        }
+      ]
+    });
+  });
 });
 
 function commandResult(
