@@ -100,7 +100,8 @@ export class QueueWorker {
       await this.commandInbox.complete(envelope.command_id, result);
     } catch (error) {
       await this.commandInbox.fail(envelope.command_id, {
-        message: String(error)
+        message: String(error),
+        code: `handler.${envelope.command.type}.failed`
       });
     }
 
@@ -130,7 +131,8 @@ export class QueueWorker {
       await this.workQueue.complete(item.id, result);
     } catch (error) {
       await this.workQueue.fail(item.id, {
-        message: String(error)
+        message: String(error),
+        code: `handler.${item.type}.failed`
       });
     }
 
