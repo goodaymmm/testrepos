@@ -58,7 +58,13 @@ describe("QueueWorker", () => {
       item_id: item.id
     });
     await expect(queue.list("failed")).resolves.toMatchObject([
-      { id: item.id, error: { message: "Error: boom" } }
+      {
+        id: item.id,
+        error: {
+          message: "Error: boom",
+          code: "handler.agent.run.failed"
+        }
+      }
     ]);
   });
 

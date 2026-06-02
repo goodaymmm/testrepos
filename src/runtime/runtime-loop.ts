@@ -9,9 +9,20 @@ import {
 import { WorkQueue } from "../queue/work-queue.js";
 import { StateApplier } from "../state/state-applier.js";
 import { createAntigravityPtySessionRunner } from "../agents/pty-session-runner.js";
+import { isAgentId } from "../agents/types.js";
 import { TaskRunner } from "../tasks/task-runner.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
+import {
+  GitTransactionExecutor,
+  type ExecuteGitTransactionRequest,
+  type GitTransactionRecord
+} from "../git/transaction-executor.js";
+import {
+  ReviewLoopExecutor,
+  type ReviewLoopExecutionRequest,
+  type ReviewLoopExecutionResult
+} from "../review/review-loop-executor.js";
 import {
   getLocalDateKey,
   getScheduleStatus,
@@ -51,6 +62,12 @@ export type RuntimeLoopOptions = {
     projectRoot: string,
     request: { date: string; now: Date }
   ) => Promise<DailyMaintenanceResult>;
+  reviewLoopRunner?: (
+    request: ReviewLoopExecutionRequest
+  ) => Promise<ReviewLoopExecutionResult>;
+  gitTransactionRunner?: (
+    request: ExecuteGitTransactionRequest
+  ) => Promise<GitTransactionRecord>;
 };
 
 export class RuntimeLoop {
@@ -86,7 +103,13 @@ export class RuntimeLoop {
       this.projectRoot,
       new WorkQueue(this.projectRoot),
       new CommandInbox(this.projectRoot),
-      mergeHandlers(defaultQueueHandlers(this.projectRoot, now), this.options.handlers)
+      mergeHandlers(
+        defaultQueueHandlers(this.projectRoot, now, {
+          reviewLoopRunner: this.options.reviewLoopRunner,
+          gitTransactionRunner: this.options.gitTransactionRunner
+        }),
+        this.options.handlers
+      )
     );
   }
 
@@ -161,7 +184,11 @@ export class RuntimeLoop {
   }
 }
 
-function defaultQueueHandlers(projectRoot: string, now: Date): QueueWorkerHandlers {
+function defaultQueueHandlers(
+  projectRoot: string,
+  now: Date,
+  options: Pick<RuntimeLoopOptions, "reviewLoopRunner" | "gitTransactionRunner"> = {}
+): QueueWorkerHandlers {
   return {
     commands: {
       "approval.decide": async (envelope) => {
@@ -190,6 +217,32 @@ function defaultQueueHandlers(projectRoot: string, now: Date): QueueWorkerHandle
           now: () => now
         }).runQueuedAgentItem(item, { date: localDateKey(now) });
         return { ...result };
+      },
+      "review.run": async (item) => {
+        const request = readReviewRunRequest(item.payload);
+        const runner =
+          options.reviewLoopRunner ??
+          ((input: ReviewLoopExecutionRequest) =>
+            new ReviewLoopExecutor(projectRoot, {
+              interactiveSessionRunner: createAntigravityPtySessionRunner(),
+              now: () => now
+            }).run(input));
+        const result = await runner({
+          ...request,
+          date: request.date ?? localDateKey(now)
+        });
+        return summarizeReviewRun(result);
+      },
+      "git.transaction": async (item) => {
+        const request = readGitTransactionRequest(item.task_id, item.payload);
+        const runner =
+          options.gitTransactionRunner ??
+          ((input: ExecuteGitTransactionRequest) =>
+            new GitTransactionExecutor(projectRoot, {
+              now: () => now
+            }).executeCommit(input));
+        const result = await runner(request);
+        return summarizeGitTransaction(result);
       },
       "maintenance.run": async (item) => {
         const payloadDate = readString(item.payload?.date);
@@ -255,6 +308,174 @@ function toProjectPath(projectRoot: string, filePath: string): string {
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function readBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function readStringArray(value: unknown): string[] | undefined {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.length > 0)
+    : undefined;
+}
+
+function readPayloadString(
+  payload: Record<string, unknown> | undefined,
+  keys: string[]
+): string | undefined {
+  for (const key of keys) {
+    const value = readString(payload?.[key]);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function readPayloadNumber(
+  payload: Record<string, unknown> | undefined,
+  keys: string[]
+): number | undefined {
+  for (const key of keys) {
+    const value = readNumber(payload?.[key]);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function readPayloadBoolean(
+  payload: Record<string, unknown> | undefined,
+  keys: string[]
+): boolean | undefined {
+  for (const key of keys) {
+    const value = readBoolean(payload?.[key]);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function readPayloadStringArray(
+  payload: Record<string, unknown> | undefined,
+  keys: string[]
+): string[] | undefined {
+  for (const key of keys) {
+    const value = readStringArray(payload?.[key]);
+    if (value !== undefined) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function readReviewRunRequest(
+  payload: Record<string, unknown> | undefined
+): ReviewLoopExecutionRequest {
+  const loopId = readPayloadString(payload, ["loop_id", "loopId"]);
+  if (loopId === undefined) {
+    throw new Error("review.run payload is missing loop_id.");
+  }
+
+  return {
+    loopId,
+    date: readPayloadString(payload, ["date"]),
+    timeoutMs: readPayloadNumber(payload, ["timeout_ms", "timeoutMs"])
+  };
+}
+
+function readGitTransactionRequest(
+  itemTaskId: string | undefined,
+  payload: Record<string, unknown> | undefined
+): ExecuteGitTransactionRequest {
+  const action = readPayloadString(payload, ["action"]) ?? "commit";
+  if (!["commit", "execute_commit"].includes(action)) {
+    throw new Error(`Unsupported git.transaction action: ${action}`);
+  }
+
+  const taskId =
+    itemTaskId ?? readPayloadString(payload, ["task_id", "taskId"]);
+  const runId = readPayloadString(payload, ["run_id", "runId"]);
+  const agent = readPayloadString(payload, ["agent"]);
+  const reviewLoopId = readPayloadString(payload, [
+    "review_loop_id",
+    "reviewLoopId"
+  ]);
+
+  if (taskId === undefined) {
+    throw new Error("git.transaction item is missing task_id.");
+  }
+  if (runId === undefined) {
+    throw new Error("git.transaction payload is missing run_id.");
+  }
+  if (agent === undefined || !isAgentId(agent)) {
+    throw new Error("git.transaction payload is missing a valid agent.");
+  }
+  if (reviewLoopId === undefined) {
+    throw new Error("git.transaction payload is missing review_loop_id.");
+  }
+
+  return {
+    taskId,
+    runId,
+    agent,
+    reviewLoopId,
+    branch: readPayloadString(payload, ["branch"]),
+    baseBranch: readPayloadString(payload, ["base_branch", "baseBranch"]),
+    baseSha: readPayloadString(payload, ["base_sha", "baseSha"]),
+    writePaths: readPayloadStringArray(payload, ["write_paths", "writePaths"]),
+    commitMessage: readPayloadString(payload, ["commit_message", "commitMessage"]),
+    pushRequested: readPayloadBoolean(payload, [
+      "push_requested",
+      "pushRequested"
+    ]),
+    pushTargetBranch: readPayloadString(payload, [
+      "push_target_branch",
+      "pushTargetBranch"
+    ])
+  };
+}
+
+function summarizeReviewRun(
+  result: ReviewLoopExecutionResult
+): Record<string, unknown> {
+  return {
+    loop_id: result.loop_id,
+    status: result.status,
+    iteration: result.iteration,
+    decision: result.decision.status,
+    next_action: result.next_action.action,
+    review_run_ids: result.review_run_ids,
+    review_result_ids: result.review_result_ids,
+    iteration_path: result.iteration_path
+  };
+}
+
+function summarizeGitTransaction(
+  record: GitTransactionRecord
+): Record<string, unknown> {
+  return {
+    transaction_id: record.transaction_id,
+    task_id: record.task_id,
+    run_id: record.run_id,
+    review_loop_id: record.review_loop_id,
+    status: record.status,
+    branch: record.branch,
+    commit_sha: record.commit_sha,
+    push: record.push,
+    transaction_path: record.transaction_path
+  };
 }
 
 function localDateKey(date: Date): string {

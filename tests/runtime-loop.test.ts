@@ -128,6 +128,215 @@ describe("RuntimeLoop", () => {
     ]);
   });
 
+  it("processes review.run items with the default runtime handler", async () => {
+    const root = await createInitializedProject();
+    const queue = new WorkQueue(root);
+    const item = await queue.enqueue({
+      type: "review.run",
+      schedule_mode: "active_work",
+      payload: {
+        loop_id: "REV-0001",
+        timeout_ms: 12_000
+      }
+    });
+    let capturedRequest: unknown;
+
+    const result = await new RuntimeLoop(root, {
+      now: () => new Date("2026-05-25T08:00:00.000Z"),
+      reviewLoopRunner: async (request) => {
+        capturedRequest = request;
+        return {
+          schema_version: "0.1",
+          loop_id: request.loopId,
+          status: "approved",
+          iteration: 1,
+          review_run_ids: ["RUN-0002"],
+          review_result_ids: ["REV-0002"],
+          iteration_path: ".kairon/reviews/loops/REV-0001-iteration-1.json",
+          decision: {
+            status: "passed",
+            reasons: [],
+            blocking_findings: [],
+            review_ids: ["REV-0002"]
+          },
+          next_action: {
+            action: "approve",
+            review_ids: ["REV-0002"]
+          }
+        };
+      }
+    }).runTick();
+
+    expect(capturedRequest).toEqual({
+      loopId: "REV-0001",
+      date: "2026-05-25",
+      timeoutMs: 12_000
+    });
+    expect(result).toMatchObject({
+      mode: "active_work",
+      action: "processed-item",
+      queue_result: {
+        status: "processed-item",
+        item_id: item.id,
+        item_type: "review.run"
+      }
+    });
+    await expect(queue.list("completed")).resolves.toMatchObject([
+      {
+        id: item.id,
+        result: {
+          loop_id: "REV-0001",
+          status: "approved",
+          decision: "passed",
+          next_action: "approve",
+          review_run_ids: ["RUN-0002"],
+          review_result_ids: ["REV-0002"]
+        }
+      }
+    ]);
+  });
+
+  it("records review.run handler failures on malformed queue payloads", async () => {
+    const root = await createInitializedProject();
+    const queue = new WorkQueue(root);
+    const item = await queue.enqueue({
+      type: "review.run",
+      schedule_mode: "active_work"
+    });
+
+    const result = await new RuntimeLoop(root, {
+      now: () => new Date("2026-05-25T08:00:00.000Z")
+    }).runTick();
+
+    expect(result).toMatchObject({
+      mode: "active_work",
+      action: "processed-item",
+      queue_result: {
+        status: "processed-item",
+        item_id: item.id,
+        item_type: "review.run"
+      }
+    });
+    await expect(queue.list("failed")).resolves.toMatchObject([
+      {
+        id: item.id,
+        error: {
+          message: "Error: review.run payload is missing loop_id.",
+          code: "handler.review.run.failed"
+        }
+      }
+    ]);
+  });
+
+  it("processes git.transaction items with the default runtime handler", async () => {
+    const root = await createInitializedProject();
+    const queue = new WorkQueue(root);
+    const item = await queue.enqueue({
+      type: "git.transaction",
+      task_id: "TASK-0001",
+      schedule_mode: "active_work",
+      payload: {
+        run_id: "RUN-0001",
+        agent: "codex",
+        review_loop_id: "REV-0001",
+        write_paths: ["src/**"],
+        commit_message: "TASK-0001 test commit",
+        push_requested: true,
+        push_target_branch: "auto/TASK-0001/codex"
+      }
+    });
+    let capturedRequest: unknown;
+
+    const result = await new RuntimeLoop(root, {
+      now: () => new Date("2026-05-25T08:00:00.000Z"),
+      gitTransactionRunner: async (request) => {
+        capturedRequest = request;
+        return {
+          schema_version: "0.1",
+          transaction_id: "GTX-0001",
+          task_id: request.taskId,
+          run_id: request.runId,
+          review_loop_id: request.reviewLoopId,
+          branch: "auto/TASK-0001/codex",
+          worktree_path: ".kairon/worktrees/TASK-0001-codex",
+          status: "committed",
+          base_branch: "main",
+          base_sha: "base-sha",
+          parent_sha: "parent-sha",
+          commit_sha: "commit-sha",
+          diff_sha256: "diff-sha",
+          checks: [{ name: "review", status: "passed" }],
+          push: {
+            requested: true,
+            allowed: false,
+            remote: "origin",
+            remote_ref: "auto/TASK-0001/codex",
+            pushed: false
+          },
+          rollback: {
+            strategy: "reset_branch_to_parent",
+            parent_sha: "parent-sha",
+            command_hint: "git reset --hard parent-sha"
+          },
+          workspace: {
+            schema_version: "0.1",
+            task_id: request.taskId,
+            branch: "auto/TASK-0001/codex",
+            agent: request.agent,
+            base_branch: "main",
+            base_sha: "base-sha",
+            worktree_path: ".kairon/worktrees/TASK-0001-codex",
+            status: "active",
+            writer_lock: ".kairon/git/locks/branch-auto-TASK-0001-codex.json",
+            path_lock: ".kairon/git/locks/path-TASK-0001.json",
+            write_paths: ["src/**"],
+            created_at: "2026-05-25T08:00:00.000Z"
+          },
+          transaction_path: ".kairon/git/transactions/GTX-0001.json",
+          created_at: "2026-05-25T08:00:00.000Z",
+          updated_at: "2026-05-25T08:00:00.000Z"
+        };
+      }
+    }).runTick();
+
+    expect(capturedRequest).toEqual({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      agent: "codex",
+      reviewLoopId: "REV-0001",
+      branch: undefined,
+      baseBranch: undefined,
+      baseSha: undefined,
+      writePaths: ["src/**"],
+      commitMessage: "TASK-0001 test commit",
+      pushRequested: true,
+      pushTargetBranch: "auto/TASK-0001/codex"
+    });
+    expect(result).toMatchObject({
+      mode: "active_work",
+      action: "processed-item",
+      queue_result: {
+        status: "processed-item",
+        item_id: item.id,
+        item_type: "git.transaction"
+      }
+    });
+    await expect(queue.list("completed")).resolves.toMatchObject([
+      {
+        id: item.id,
+        result: {
+          transaction_id: "GTX-0001",
+          task_id: "TASK-0001",
+          run_id: "RUN-0001",
+          review_loop_id: "REV-0001",
+          status: "committed",
+          branch: "auto/TASK-0001/codex",
+          commit_sha: "commit-sha"
+        }
+      }
+    ]);
+  });
+
   it("allows approved work during standby", async () => {
     const root = await createInitializedProject();
     const queue = new WorkQueue(root);
