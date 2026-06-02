@@ -162,6 +162,52 @@ describe("ApprovalQueue", () => {
     });
   });
 
+  it("accepts whitespace-separated approval seed actions from PowerShell", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+
+    const text = await seedApprovalCommand(root, "APR-MANUAL-0002", {
+      actions: "approve reject request_changes snooze"
+    });
+
+    expect(text).toContain("Kairon approval seeded.");
+    expect(text).toContain("actions=approve,reject,request_changes,snooze");
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "approvals", "APR-MANUAL-0002.json"))
+    ).resolves.toMatchObject({
+      id: "APR-MANUAL-0002",
+      status: "pending",
+      actions: ["approve", "reject", "request_changes", "snooze"]
+    });
+  });
+
+  it("formats invalid approval seed actions without throwing a stack trace", async () => {
+    const root = await createTempProject();
+    const previousExitCode = process.exitCode;
+
+    try {
+      process.exitCode = undefined;
+      await initializeProject({ projectRoot: root });
+
+      await expect(
+        seedApprovalCommand(root, "APR-MANUAL-0003", {
+          actions: "approve invalid_action"
+        })
+      ).resolves.toBe(
+        [
+          "Kairon approval seed rejected.",
+          "approval_id=APR-MANUAL-0003",
+          "reason=invalid_action",
+          "action=invalid_action",
+          "message=Invalid approval action: invalid_action. Expected one of: approve, reject, request_changes, snooze."
+        ].join("\n")
+      );
+      expect(process.exitCode).toBe(APPROVAL_COMMAND_ERROR_EXIT_CODE);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
   it("formats action-not-allowed decisions for CLI output", async () => {
     const root = await createTempProject();
     const previousExitCode = process.exitCode;
