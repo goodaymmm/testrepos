@@ -66,26 +66,7 @@ export function buildJobPrompt(input: JobPromptInput): string {
     "",
     "Stdout fallback format:",
     "KAIRON_OUTBOX_JSON_START",
-    JSON.stringify(
-      {
-        schema_version: "0.1",
-        run_id: input.runId,
-        task_id: input.taskId,
-        persona: input.persona,
-        status: "completed",
-        events: [
-          {
-            type: "message.created",
-            payload: {
-              message_type: "agent.run.completed",
-              body: "Short completion summary."
-            }
-          }
-        ]
-      },
-      null,
-      2
-    ),
+    JSON.stringify(buildFallbackOutbox(input), null, 2),
     "KAIRON_OUTBOX_JSON_END",
     "",
     "Context path:",
@@ -99,4 +80,38 @@ export function buildJobPrompt(input: JobPromptInput): string {
     `KAIRON_JOB_END ${input.runId}`,
     ""
   ].join("\n");
+}
+
+function buildFallbackOutbox(input: JobPromptInput): Record<string, unknown> {
+  const outbox: Record<string, unknown> = {
+    schema_version: "0.1",
+    run_id: input.runId,
+    task_id: input.taskId,
+    persona: input.persona,
+    status: "completed",
+    events: [
+      {
+        type: "message.created",
+        payload: {
+          message_type: "agent.run.completed",
+          body: "Short completion summary."
+        }
+      }
+    ]
+  };
+
+  if (input.capabilities?.includes("review")) {
+    outbox.review_result = {
+      target: {},
+      status: "commented",
+      score: {
+        overall: 0.85
+      },
+      findings: [],
+      tests_passed: true,
+      secret_scan_passed: true
+    };
+  }
+
+  return outbox;
 }

@@ -231,6 +231,49 @@ describe("ReviewLoopExecutor", () => {
     await expect(new WorkQueue(root).list("ready")).resolves.toEqual([]);
   });
 
+  it("pauses review loops on generated runner failure outboxes without reporting missing review_result", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: reviewOutboxRunner(root, {
+        status: "failed",
+        events: [
+          {
+            type: "message.created",
+            payload: {
+              message_type: "agent.run.failure",
+              reason: "cli_failed",
+              timed_out: true
+            }
+          }
+        ]
+      })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    const reasons = result.decision.reasons.join("\n");
+    expect(result).toMatchObject({
+      status: "setup_required",
+      next_action: {
+        action: "setup_required",
+        reviewers: ["claude"]
+      },
+      review_result_ids: []
+    });
+    expect(reasons).toContain(
+      "claude: reviewer CLI did not produce a usable outbox: cli_failed, timed_out=true"
+    );
+    expect(reasons).not.toContain("review outbox is missing review_result");
+    await expect(new WorkQueue(root).list("ready")).resolves.toEqual([]);
+  });
+
   it("pauses review loops when review_result fails schema validation", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
