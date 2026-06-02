@@ -817,6 +817,13 @@ function classifyCliSetupRequired(
     };
   }
 
+  if (output.includes("pty_command_unresolved")) {
+    return {
+      reason: "cli_pty_command_unresolved",
+      message: "Agent CLI requires a PTY adapter, but the configured command could not be resolved to an executable."
+    };
+  }
+
   return undefined;
 }
 
