@@ -10,6 +10,7 @@ import {
 } from "../src/cli/commands/approval.js";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
+import { WorkQueue } from "../src/queue/work-queue.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("ApprovalQueue", () => {
@@ -94,6 +95,80 @@ describe("ApprovalQueue", () => {
         action: "reject"
       })
     ).rejects.toThrow(ApprovalNotPendingError);
+  });
+
+  it("queues approved git push transactions for resume", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeTransaction(root, { transaction_id: "GTX-0001" });
+    await writeApproval(root, {
+      id: "APR-0001",
+      status: "pending",
+      type: "git_push",
+      task_id: "TASK-0001",
+      transaction_id: "GTX-0001",
+      remote: "origin",
+      remote_ref: "auto/TASK-0001/codex",
+      expected_head_sha: "commit-sha"
+    });
+
+    await new ApprovalQueue(root).decide({
+      approvalId: "APR-0001",
+      action: "approve"
+    });
+
+    await expect(new WorkQueue(root).list("ready")).resolves.toMatchObject([
+      {
+        id: "JOB-0001",
+        type: "git.transaction",
+        task_id: "TASK-0001",
+        payload: {
+          action: "resume_push",
+          approved: true,
+          approval_decision: "approve",
+          transaction_id: "GTX-0001",
+          approval_id: "APR-0001",
+          expected_head_sha: "commit-sha",
+          remote: "origin",
+          remote_ref: "auto/TASK-0001/codex"
+        }
+      }
+    ]);
+  });
+
+  it("records rejected git push approvals on the transaction", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeTransaction(root, { transaction_id: "GTX-0001" });
+    await writeApproval(root, {
+      id: "APR-0001",
+      status: "pending",
+      type: "git_push",
+      transaction_id: "GTX-0001"
+    });
+
+    await new ApprovalQueue(root).decide({
+      approvalId: "APR-0001",
+      action: "reject",
+      reason: "not ready"
+    });
+
+    await expect(new WorkQueue(root).list("ready")).resolves.toHaveLength(0);
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "git", "transactions", "GTX-0001.json"))
+    ).resolves.toMatchObject({
+      status: "failed",
+      push: {
+        reason: "push approval reject"
+      },
+      checks: expect.arrayContaining([
+        {
+          name: "push_approval",
+          status: "failed",
+          detail: "decision=reject"
+        }
+      ])
+    });
   });
 
   it("formats duplicate decisions for CLI output without throwing a stack trace", async () => {
@@ -311,6 +386,63 @@ async function writeApproval(
       created_at: "2026-05-26T00:00:00.000Z",
       updated_at: "2026-05-26T00:00:00.000Z",
       ...approval
+    }
+  );
+}
+
+async function writeTransaction(
+  root: string,
+  transaction: Record<string, unknown>
+): Promise<void> {
+  const transactionId = String(transaction.transaction_id);
+  await writeJsonFileAtomic(
+    path.join(root, ".kairon", "git", "transactions", `${transactionId}.json`),
+    {
+      schema_version: "0.1",
+      transaction_id: transactionId,
+      task_id: "TASK-0001",
+      run_id: "RUN-0001",
+      review_loop_id: "REV-0001",
+      branch: "auto/TASK-0001/codex",
+      worktree_path: ".kairon/worktrees/TASK-0001-codex",
+      status: "approval_required",
+      base_branch: "main",
+      base_sha: "base-sha",
+      parent_sha: "parent-sha",
+      commit_sha: "commit-sha",
+      diff_sha256: "diff-sha",
+      checks: [],
+      push: {
+        requested: true,
+        allowed: false,
+        remote: "origin",
+        remote_ref: "auto/TASK-0001/codex",
+        pushed: false,
+        approval_id: "APR-0001"
+      },
+      rollback: {
+        strategy: "reset_branch_to_parent",
+        parent_sha: "parent-sha",
+        command_hint: "git reset --hard parent-sha"
+      },
+      workspace: {
+        schema_version: "0.1",
+        task_id: "TASK-0001",
+        branch: "auto/TASK-0001/codex",
+        agent: "codex",
+        base_branch: "main",
+        base_sha: "base-sha",
+        worktree_path: ".kairon/worktrees/TASK-0001-codex",
+        status: "active",
+        writer_lock: ".kairon/git/locks/branch-auto-TASK-0001-codex.json",
+        path_lock: ".kairon/git/locks/path-TASK-0001.json",
+        write_paths: ["src/**"],
+        created_at: "2026-05-26T00:00:00.000Z"
+      },
+      transaction_path: `.kairon/git/transactions/${transactionId}.json`,
+      created_at: "2026-05-26T00:00:00.000Z",
+      updated_at: "2026-05-26T00:00:00.000Z",
+      ...transaction
     }
   );
 }

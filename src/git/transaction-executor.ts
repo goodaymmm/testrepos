@@ -6,7 +6,7 @@ import {
 } from "../agents/command-runner.js";
 import type { AgentId } from "../agents/types.js";
 import { loadConfigFile } from "../core/config/load-config.js";
-import { writeJsonFileAtomic } from "../core/fs/json-file.js";
+import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import { nextId } from "../core/ids/counter.js";
 import { StateApplier } from "../state/state-applier.js";
@@ -95,6 +95,14 @@ export type ExecuteGitTransactionRequest = {
   commitMessage?: string;
   pushRequested?: boolean;
   pushTargetBranch?: string;
+};
+
+export type ResumeGitTransactionPushRequest = {
+  transactionId: string;
+  approvalId?: string;
+  expectedHeadSha?: string;
+  remote?: string;
+  remoteRef?: string;
 };
 
 type PoliciesConfig = {
@@ -276,6 +284,116 @@ export class GitTransactionExecutor {
     }
   }
 
+  async resumeApprovedPush(
+    request: ResumeGitTransactionPushRequest
+  ): Promise<GitTransactionRecord> {
+    const policy = await this.loadGitPolicy();
+    const commandRunner = this.options.commandRunner ?? spawnCommandRunner;
+    let record = await readTransactionRecord(this.projectRoot, request.transactionId);
+
+    if (record.status === "pushed") {
+      return record;
+    }
+
+    if (record.status !== "approval_required") {
+      throw new GitPolicyBlockedError(
+        `Git transaction ${record.transaction_id} is not waiting for push approval. Current status: ${record.status}.`
+      );
+    }
+
+    if (
+      request.approvalId !== undefined &&
+      record.push.approval_id !== undefined &&
+      request.approvalId !== record.push.approval_id
+    ) {
+      throw new GitPolicyBlockedError(
+        `Git transaction ${record.transaction_id} approval id does not match.`
+      );
+    }
+
+    const remote = request.remote ?? record.push.remote;
+    const remoteRef = request.remoteRef ?? record.push.remote_ref ?? record.branch;
+    const expectedHeadSha = request.expectedHeadSha ?? record.commit_sha;
+    const worktreePath = resolveInside(this.projectRoot, record.worktree_path);
+
+    try {
+      const headSha = firstLine(
+        await runGit(commandRunner, worktreePath, ["rev-parse", "HEAD"], "read push head")
+      );
+      if (expectedHeadSha !== undefined && headSha !== expectedHeadSha) {
+        throw new GitPolicyBlockedError(
+          `Git transaction head moved before approved push. Expected ${expectedHeadSha}, got ${headSha}.`
+        );
+      }
+
+      const remoteHead = firstRemoteSha(
+        await runGit(commandRunner, worktreePath, ["ls-remote", remote, remoteRef], "read remote ref")
+      );
+      if (
+        remoteHead !== undefined &&
+        record.base_sha !== undefined &&
+        remoteHead !== record.base_sha
+      ) {
+        throw new GitPolicyBlockedError(
+          `Remote ref ${remote}/${remoteRef} moved before approved push. Expected ${record.base_sha}, got ${remoteHead}.`
+        );
+      }
+
+      record = updateRecord(record, "pushing", this.now().toISOString(), {
+        push: {
+          ...record.push,
+          allowed: true,
+          remote,
+          remote_ref: remoteRef
+        },
+        checks: [
+          ...record.checks,
+          { name: "push_head", status: "passed", detail: headSha },
+          {
+            name: "remote_ref",
+            status: "passed",
+            detail: remoteHead ?? "unborn"
+          }
+        ]
+      });
+      await writeTransactionRecord(this.projectRoot, record);
+
+      await runGit(
+        commandRunner,
+        worktreePath,
+        ["push", remote, `${record.branch}:${remoteRef}`],
+        "push"
+      );
+
+      record = updateRecord(record, "pushed", this.now().toISOString(), {
+        push: {
+          ...record.push,
+          requested: true,
+          allowed: true,
+          remote,
+          remote_ref: remoteRef,
+          pushed: true
+        },
+        rollback: rollbackMetadata(policy, "pushed_unmerged", record.parent_sha)
+      });
+      await writeTransactionRecord(this.projectRoot, record);
+      return record;
+    } catch (error) {
+      const failed = updateRecord(record, "failed", this.now().toISOString(), {
+        checks: [
+          ...record.checks,
+          {
+            name: "git_push_resume",
+            status: "failed",
+            detail: String(error)
+          }
+        ]
+      });
+      await writeTransactionRecord(this.projectRoot, failed);
+      throw error;
+    }
+  }
+
   private async loadGitPolicy(): Promise<GitPolicy> {
     const config = await loadConfigFile<PoliciesConfig>(this.projectRoot, "policies.json");
     return config.git;
@@ -384,8 +502,13 @@ async function requestPushApproval(
         id: approvalId,
         type: input.type,
         title: `Git push approval for ${input.record.task_id}`,
+        task_id: input.record.task_id,
+        run_id: input.record.run_id,
+        review_loop_id: input.record.review_loop_id,
         transaction_id: input.record.transaction_id,
         branch: input.record.branch,
+        commit_sha: input.record.commit_sha,
+        expected_head_sha: input.record.commit_sha,
         remote: input.policy.remote,
         remote_ref: input.remoteRef,
         reason: input.reason
@@ -546,6 +669,15 @@ async function writeTransactionRecord(
   );
 }
 
+async function readTransactionRecord(
+  projectRoot: string,
+  transactionId: string
+): Promise<GitTransactionRecord> {
+  return readJsonFile<GitTransactionRecord>(
+    transactionRecordPath(projectRoot, transactionId)
+  );
+}
+
 function defaultCommitMessage(
   request: ExecuteGitTransactionRequest,
   snapshot: DiffSnapshot,
@@ -563,6 +695,15 @@ function defaultCommitMessage(
 
 function firstLine(value: string): string {
   return value.split(/\r?\n/)[0]?.trim() ?? "";
+}
+
+function firstRemoteSha(value: string): string | undefined {
+  const first = firstLine(value);
+  if (first.length === 0) {
+    return undefined;
+  }
+
+  return first.split(/\s+/)[0];
 }
 
 function toProjectPath(projectRoot: string, filePath: string): string {
