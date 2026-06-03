@@ -147,8 +147,24 @@ export function createProgram(): Command {
   program
     .command("start")
     .description("Start the Kairon runtime.")
-    .action(async () => {
-      console.log(await startRuntime(process.cwd()));
+    .option("--daemon", "Run continuously until stopped.")
+    .option("--interval-ms <ms>", "Daemon tick interval in milliseconds.")
+    .option("--max-ticks <count>", "Stop daemon after this many ticks.")
+    .option("--max-idle-ticks <count>", "Stop daemon after this many consecutive idle ticks.")
+    .action(async (options: {
+      daemon?: boolean;
+      intervalMs?: string;
+      maxTicks?: string;
+      maxIdleTicks?: string;
+    }) => {
+      console.log(
+        await startRuntime(process.cwd(), {
+          daemon: options.daemon,
+          intervalMs: parseOptionalNumber(options.intervalMs),
+          maxTicks: parseOptionalNumber(options.maxTicks),
+          maxIdleTicks: parseOptionalNumber(options.maxIdleTicks)
+        })
+      );
     });
 
   program
@@ -277,4 +293,13 @@ function samePath(left: string, right: string): boolean {
   }
 
   return left === right;
+}
+
+function parseOptionalNumber(value: string | undefined): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }

@@ -1,15 +1,49 @@
 import { LockAlreadyExistsError } from "../../core/fs/lock-file.js";
 import {
   acquireRuntimeLock,
+  requestRuntimeStop,
   releaseRuntimeLock
 } from "../../runtime/runtime-lock.js";
+import { RuntimeDaemon } from "../../runtime/runtime-daemon.js";
 import { RuntimeLoop } from "../../runtime/runtime-loop.js";
 
 export const RUNTIME_ALREADY_RUNNING_EXIT_CODE = 3;
 
-export async function startRuntime(projectRoot: string): Promise<string> {
+export type StartRuntimeOptions = {
+  daemon?: boolean;
+  intervalMs?: number;
+  maxTicks?: number;
+  maxIdleTicks?: number;
+};
+
+export async function startRuntime(
+  projectRoot: string,
+  options: StartRuntimeOptions = {}
+): Promise<string> {
   try {
-    const status = await acquireRuntimeLock(projectRoot);
+    const status = await acquireRuntimeLock(projectRoot, {
+      mode: options.daemon === true ? "daemon" : "single_tick"
+    });
+
+    if (options.daemon === true) {
+      const unregisterSignals = registerRuntimeStopSignals(projectRoot);
+      try {
+        const result = await new RuntimeDaemon(projectRoot, {
+          intervalMs: options.intervalMs,
+          maxTicks: options.maxTicks,
+          maxIdleTicks: options.maxIdleTicks
+        }).run();
+        return [
+          `Kairon runtime daemon stopped. pid=${status.locked ? status.data.pid : "unknown"}`,
+          `runtime.daemon.ticks=${result.ticks}`,
+          `runtime.daemon.idleTicks=${result.idle_ticks}`,
+          `runtime.daemon.stopReason=${result.stop_reason}`
+        ].join("\n");
+      } finally {
+        unregisterSignals();
+      }
+    }
+
     let tick;
     try {
       tick = await new RuntimeLoop(projectRoot).runTick();
@@ -17,7 +51,6 @@ export async function startRuntime(projectRoot: string): Promise<string> {
       await releaseRuntimeLock(projectRoot);
       throw error;
     }
-
     return [
       `Kairon runtime started. pid=${status.locked ? status.data.pid : "unknown"}`,
       `runtime.tick.mode=${tick.mode}`,
@@ -31,4 +64,21 @@ export async function startRuntime(projectRoot: string): Promise<string> {
 
     throw error;
   }
+}
+
+function registerRuntimeStopSignals(projectRoot: string): () => void {
+  const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM"];
+  const handler = () => {
+    void requestRuntimeStop(projectRoot);
+  };
+
+  for (const signal of signals) {
+    process.once(signal, handler);
+  }
+
+  return () => {
+    for (const signal of signals) {
+      process.off(signal, handler);
+    }
+  };
 }
