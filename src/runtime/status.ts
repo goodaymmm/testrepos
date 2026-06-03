@@ -13,6 +13,9 @@ export type RuntimeStatus = {
     stale?: boolean;
     pid?: number;
     owner?: string;
+    mode?: string;
+    heartbeat_at?: string;
+    stop_requested?: boolean;
   };
   queue: {
     ready: number;
@@ -39,7 +42,10 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
           locked: true,
           stale: lock.stale,
           pid: lock.data.pid,
-          owner: lock.data.owner
+          owner: lock.data.owner,
+          mode: lock.data.mode,
+          heartbeat_at: lock.data.heartbeat_at,
+          stop_requested: lock.data.stop_requested
         }
       : { locked: false },
     queue: {
@@ -60,11 +66,22 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
     `schedule.activeWorkClosed=${status.schedule.activeWorkClosed}`,
     `runtime.locked=${status.runtimeLock.locked}`,
     `runtime.stale=${status.runtimeLock.stale ?? false}`,
+    status.runtimeLock.mode === undefined
+      ? null
+      : `runtime.mode=${status.runtimeLock.mode}`,
+    status.runtimeLock.heartbeat_at === undefined
+      ? null
+      : `runtime.heartbeatAt=${status.runtimeLock.heartbeat_at}`,
+    status.runtimeLock.stop_requested === undefined
+      ? null
+      : `runtime.stopRequested=${status.runtimeLock.stop_requested}`,
     `queue.ready=${status.queue.ready}`,
     `queue.claimed=${status.queue.claimed}`,
     `queue.failed=${status.queue.failed}`,
     `approvals.pending=${status.approvals.pending}`
-  ].join("\n");
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
 }
 
 async function countPendingApprovals(projectRoot: string): Promise<number> {
