@@ -5,6 +5,7 @@ import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import {
   normalizeDiscordApprovalInteraction,
   normalizeDiscordLeaveCommand,
+  normalizeDiscordStatusCommand,
   parseApprovalCustomId,
   validateDiscordApprovalInteraction
 } from "../src/discord/interactions.js";
@@ -171,6 +172,32 @@ describe("Discord interactions", () => {
       command: {
         type: "schedule.close_active_work",
         reason: "discord_kairon_leave"
+      }
+    });
+  });
+
+  it("normalizes /kairon status into a runtime status command", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+
+    await expect(
+      normalizeDiscordStatusCommand(
+        root,
+        gateway,
+        {
+          interaction_id: "status-1",
+          user_id: "owner",
+          guild_id: "guild",
+          channel_id: "channel",
+          command_name: "kairon status"
+        },
+        new Date("2026-05-25T08:00:00.000Z")
+      )
+    ).resolves.toMatchObject({
+      accepted: true,
+      command: {
+        type: "runtime.status",
+        reason: "discord_kairon_status"
       }
     });
   });

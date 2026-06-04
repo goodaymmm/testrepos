@@ -39,10 +39,16 @@ export type CloseActiveWorkCommand = CommandOrigin & {
   reason: string;
 };
 
+export type RuntimeStatusCommand = CommandOrigin & {
+  type: "runtime.status";
+  reason: string;
+};
+
 export type KaironCommand =
   | ApprovalDecisionCommand
   | ApprovalSnoozeCommand
-  | CloseActiveWorkCommand;
+  | CloseActiveWorkCommand
+  | RuntimeStatusCommand;
 
 export type CommandEnvelope = {
   command_id: string;

@@ -24,8 +24,12 @@ describe("CommandInbox", () => {
       date: "2026-05-25",
       reason: "leave"
     });
+    await inbox.enqueue({
+      type: "runtime.status",
+      reason: "status"
+    });
 
-    await expect(inbox.list("queued")).resolves.toHaveLength(3);
+    await expect(inbox.list("queued")).resolves.toHaveLength(4);
   });
 
   it("deduplicates commands by idempotency key", async () => {

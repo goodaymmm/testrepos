@@ -280,6 +280,53 @@ export async function normalizeDiscordLeaveCommand(
   };
 }
 
+export async function normalizeDiscordStatusCommand(
+  projectRoot: string,
+  gateway: PreparedDiscordGateway,
+  interaction: DiscordInteractionInput,
+  now = new Date()
+): Promise<NormalizedDiscordCommand> {
+  const validation = validateGatewayActorAndChannel(gateway, interaction);
+  const key = discordInteractionKey(interaction.interaction_id);
+  const idempotency = new DiscordIdempotencyStore(projectRoot);
+
+  if (!validation.ok) {
+    const result = await idempotency.reject(key, validation.reason, {
+      ttlMinutes: gateway.status === "ready" ? gateway.idempotency_ttl_minutes : 60,
+      now
+    });
+    return { accepted: false, duplicate: result.duplicate, reason: validation.reason };
+  }
+
+  const command = {
+    type: "runtime.status" as const,
+    source: "discord" as const,
+    reason: "discord_kairon_status",
+    actor: {
+      discord_user_id: interaction.user_id,
+      mapped_user_id: "user:owner"
+    },
+    discord: buildDiscordMetadata(interaction),
+    received_at: interaction.received_at ?? now.toISOString()
+  };
+  const inboxResult = await new CommandInbox(projectRoot).enqueue(command, {
+    idempotencyKey: key
+  });
+  const result = await idempotency.accept(key, {
+    commandId: inboxResult.envelope.command_id,
+    ttlMinutes: validation.gateway.idempotency_ttl_minutes,
+    now
+  });
+
+  return {
+    accepted: true,
+    duplicate: inboxResult.duplicate || result.duplicate,
+    command,
+    command_id: inboxResult.envelope.command_id,
+    idempotency_key: key
+  };
+}
+
 function buildApprovalCommand(
   parsed: ParsedCustomId & { kind: "approval" },
   interaction: DiscordInteractionInput
