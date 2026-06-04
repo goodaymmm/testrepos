@@ -30,7 +30,32 @@ describe("FileSessionHost", () => {
       readJsonFile(path.join(root, ".kairon", "sessions", "2026-05-25", "codex", "session.json"))
     ).resolves.toMatchObject({
       active_run_id: null,
-      native: { resume_supported: true }
+      terminal_id: "TERM-codex-20260525",
+      resume_hint: {
+        strategy: "native_resume",
+        command: "codex",
+        args: ["resume", "--last"]
+      },
+      native: { resume_supported: true },
+      session_context_manifest:
+        ".kairon/sessions/2026-05-25/codex/session_context_manifest.json"
+    });
+    await expect(
+      readJsonFile(
+        path.join(
+          root,
+          ".kairon",
+          "sessions",
+          "2026-05-25",
+          "codex",
+          "session_context_manifest.json"
+        )
+      )
+    ).resolves.toMatchObject({
+      kind: "session_context_manifest",
+      session_id: "SESSION-2026-05-25-codex",
+      latest_context_path: null,
+      runs: []
     });
   });
 

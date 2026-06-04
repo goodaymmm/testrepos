@@ -158,23 +158,27 @@ export class CliSessionRunner {
     await writeText(paths.promptPath, prompt);
 
     if (!session.command_available) {
-      return this.writeSetupRequiredRecord({
+      const record = await this.writeSetupRequiredRecord({
         kind: "daily_bootstrap",
         session,
         bundle,
         paths,
         stderr: `Kairon setup required: ${session.command} is not available.\n`
       });
+      await this.recordSessionRun({ session, bundle, paths, record });
+      return record;
     }
 
     if (!getAgentAdapter(request.agent).supports.nonInteractive) {
-      return this.writeSetupRequiredRecord({
+      const record = await this.writeSetupRequiredRecord({
         kind: "daily_bootstrap",
         session,
         bundle,
         paths,
         stderr: `Kairon setup required: ${session.command} requires an interactive terminal or PTY adapter.\n`
       });
+      await this.recordSessionRun({ session, bundle, paths, record });
+      return record;
     }
 
     const invocation = buildAgentCliInvocation({
@@ -199,6 +203,7 @@ export class CliSessionRunner {
       status: statusFromResult(result)
     });
     await writeJsonFileAtomic(paths.runnerMetadataPath, record);
+    await this.recordSessionRun({ session, bundle, paths, record });
     return record;
   }
 
@@ -243,13 +248,19 @@ export class CliSessionRunner {
       contextPath: bundle.context_path,
       expectedOutboxPath: toProjectPath(this.projectRoot, outboxPath)
     });
-    await this.sessionHost.markRunStarted(
-      request.agent,
-      request.date,
-      request.runId
-    );
+    await this.sessionHost.markRunStarted(request.agent, request.date, {
+      kind: "job",
+      run_id: request.runId,
+      task_id: request.taskId,
+      persona: request.persona,
+      context_path: bundle.context_path,
+      outbox_path: toProjectPath(this.projectRoot, outboxPath),
+      runner_metadata_path: toProjectPath(this.projectRoot, paths.runnerMetadataPath),
+      status: "running",
+      started_at: new Date().toISOString()
+    });
 
-    let record: CliSessionRunRecord;
+    let record: CliSessionRunRecord | undefined;
 
     try {
       if (!session.command_available) {
@@ -406,12 +417,42 @@ export class CliSessionRunner {
       await writeJsonFileAtomic(paths.runnerMetadataPath, record);
       return record;
     } finally {
-      await this.sessionHost.markRunFinished(
-        request.agent,
-        request.date,
-        request.runId
-      );
+      await this.sessionHost.markRunFinished(request.agent, request.date, {
+        kind: "job",
+        run_id: request.runId,
+        task_id: request.taskId,
+        persona: request.persona,
+        context_path: bundle.context_path,
+        outbox_path: toProjectPath(this.projectRoot, outboxPath),
+        runner_metadata_path: toProjectPath(this.projectRoot, paths.runnerMetadataPath),
+        status: record?.status ?? "failed",
+        started_at: record?.created_at,
+        finished_at: record?.finished_at ?? new Date().toISOString()
+      });
     }
+  }
+
+  private async recordSessionRun(input: {
+    session: SessionMetadata;
+    bundle: ContextBundle;
+    paths: PathSet;
+    record: CliSessionRunRecord;
+  }): Promise<void> {
+    await this.sessionHost.recordSessionContext(input.session.agent, input.session.date, {
+      kind: input.record.kind,
+      run_id: input.record.run_id,
+      task_id: input.record.task_id,
+      persona: input.record.persona,
+      context_path: input.bundle.context_path,
+      outbox_path: input.record.outbox_path,
+      runner_metadata_path: toProjectPath(
+        this.projectRoot,
+        input.paths.runnerMetadataPath
+      ),
+      status: input.record.status,
+      started_at: input.record.created_at,
+      finished_at: input.record.finished_at
+    });
   }
 
   private async writeSetupRequiredRecord(input: {
