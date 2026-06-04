@@ -127,6 +127,90 @@ describe("CliSessionRunner", () => {
     ).resolves.toBe("done\n");
   });
 
+  it("reuses same-day session metadata and records run context checkpoints", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) => {
+        const prompt = invocation.stdin ?? "";
+        const runId = /KAIRON_JOB_START (RUN-\d+)/.exec(prompt)?.[1];
+        const taskId = /Task: (TASK-\d+)/.exec(prompt)?.[1];
+        const outboxPath = /Expected outbox: (.+)/.exec(prompt)?.[1];
+        if (runId === undefined || taskId === undefined || outboxPath === undefined) {
+          throw new Error("Expected outbox path was not included in prompt");
+        }
+        await writeJsonFileAtomic(path.join(root, outboxPath), {
+          schema_version: "0.1",
+          run_id: runId,
+          task_id: taskId,
+          agent: "codex",
+          persona: "implementer",
+          status: "completed"
+        });
+        return commandResult(invocation, { stdout: `${runId} done\n` });
+      }
+    });
+
+    await runner.runAgentJob({
+      agent: "codex",
+      date: "2026-05-25",
+      runId: "RUN-0100",
+      taskId: "TASK-0100",
+      persona: "implementer"
+    });
+    await runner.runAgentJob({
+      agent: "codex",
+      date: "2026-05-25",
+      runId: "RUN-0101",
+      taskId: "TASK-0101",
+      persona: "implementer"
+    });
+
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "sessions", "2026-05-25", "codex", "session.json"))
+    ).resolves.toMatchObject({
+      session_id: "SESSION-2026-05-25-codex",
+      terminal_id: "TERM-codex-20260525",
+      active_run_id: null,
+      last_run_id: "RUN-0101",
+      last_task_id: "TASK-0101",
+      last_context_path: ".kairon/runs/RUN-0101/context.md",
+      last_status: "completed",
+      resume_hint: {
+        strategy: "native_resume",
+        args: ["resume", "--last"]
+      }
+    });
+    await expect(
+      readJsonFile(
+        path.join(
+          root,
+          ".kairon",
+          "sessions",
+          "2026-05-25",
+          "codex",
+          "session_context_manifest.json"
+        )
+      )
+    ).resolves.toMatchObject({
+      kind: "session_context_manifest",
+      latest_context_path: ".kairon/runs/RUN-0101/context.md",
+      runs: [
+        {
+          run_id: "RUN-0100",
+          status: "completed",
+          context_path: ".kairon/runs/RUN-0100/context.md"
+        },
+        {
+          run_id: "RUN-0101",
+          status: "completed",
+          context_path: ".kairon/runs/RUN-0101/context.md"
+        }
+      ]
+    });
+  });
+
   it("creates a setup-required failure outbox when a CLI is missing", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
