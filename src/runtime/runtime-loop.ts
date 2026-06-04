@@ -7,7 +7,7 @@ import {
   type QueueWorkerResult
 } from "../queue/queue-worker.js";
 import { WorkQueue } from "../queue/work-queue.js";
-import { StateApplier } from "../state/state-applier.js";
+import { StateApplier, type InternalCommand } from "../state/state-applier.js";
 import { createAntigravityPtySessionRunner } from "../agents/pty-session-runner.js";
 import { isAgentId } from "../agents/types.js";
 import { TaskRunner } from "../tasks/task-runner.js";
@@ -29,6 +29,7 @@ import {
   getScheduleStatus,
   type ScheduleStatus
 } from "./schedule-engine.js";
+import { formatRuntimeStatus, getRuntimeStatus } from "./status.js";
 
 export type RuntimeTickAction =
   | "processed-command"
@@ -198,21 +199,27 @@ function defaultQueueHandlers(
     commands: {
       "approval.decide": async (envelope) => {
         const result = await new StateApplier(projectRoot).applyCommand(
-          envelope.command
+          envelope.command as InternalCommand
         );
         return { applied_event_ids: result.appliedEventIds };
       },
       "approval.snooze": async (envelope) => {
         const result = await new StateApplier(projectRoot).applyCommand(
-          envelope.command
+          envelope.command as InternalCommand
         );
         return { applied_event_ids: result.appliedEventIds };
       },
       "schedule.close_active_work": async (envelope) => {
         const result = await new StateApplier(projectRoot).applyCommand(
-          envelope.command
+          envelope.command as InternalCommand
         );
         return { applied_event_ids: result.appliedEventIds };
+      },
+      "runtime.status": async () => {
+        const status = await getRuntimeStatus(projectRoot);
+        return {
+          status: formatRuntimeStatus(status)
+        };
       }
     },
     items: {

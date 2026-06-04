@@ -6,6 +6,7 @@ import {
 } from "../../runtime/runtime-lock.js";
 import { RuntimeDaemon } from "../../runtime/runtime-daemon.js";
 import { RuntimeLoop } from "../../runtime/runtime-loop.js";
+import { startDiscordGateway } from "../../discord/gateway.js";
 
 export const RUNTIME_ALREADY_RUNNING_EXIT_CODE = 3;
 
@@ -27,6 +28,7 @@ export async function startRuntime(
 
     if (options.daemon === true) {
       const unregisterSignals = registerRuntimeStopSignals(projectRoot);
+      const discordGateway = await startDiscordGateway(projectRoot);
       try {
         const result = await new RuntimeDaemon(projectRoot, {
           intervalMs: options.intervalMs,
@@ -40,6 +42,7 @@ export async function startRuntime(
           `runtime.daemon.stopReason=${result.stop_reason}`
         ].join("\n");
       } finally {
+        await discordGateway.stop();
         unregisterSignals();
       }
     }
