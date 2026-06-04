@@ -76,6 +76,7 @@ type ApprovalRecord = {
   actions?: string[];
   discord?: {
     nonce?: string;
+    nonce_expires_at?: string;
   };
 };
 
@@ -147,6 +148,10 @@ export async function validateDiscordApprovalInteraction(
 
   if (resolveApprovalNonce(approval) !== parsed.nonce) {
     return { ok: false, reason: "approval nonce does not match" };
+  }
+
+  if (isApprovalNonceExpired(approval, interaction.received_at)) {
+    return { ok: false, reason: "approval nonce expired" };
   }
 
   if (!resolveApprovalActions(approval).includes(parsed.action)) {
@@ -336,7 +341,7 @@ function buildApprovalCommand(
       type: "approval.snooze",
       source: "discord",
       approval_id: parsed.approval_id,
-      until: interaction.snooze_until ?? new Date(Date.now() + 30 * 60_000).toISOString(),
+      until: interaction.snooze_until ?? new Date(Date.now() + 60 * 60_000).toISOString(),
       actor: buildActor(interaction),
       discord: buildDiscordMetadata(interaction),
       nonce: parsed.nonce,
@@ -349,7 +354,10 @@ function buildApprovalCommand(
     source: "discord",
     approval_id: parsed.approval_id,
     decision: parsed.action,
-    reason: parsed.action === "request_changes" ? interaction.reason : undefined,
+    reason:
+      parsed.action === "reject" || parsed.action === "request_changes"
+        ? interaction.reason
+        : undefined,
     actor: buildActor(interaction),
     discord: buildDiscordMetadata(interaction),
     nonce: parsed.nonce,
@@ -406,6 +414,10 @@ function parseAction(
     return { action: rawAction, modal: false };
   }
 
+  if (rawAction === "reject_modal") {
+    return { action: "reject", modal: true };
+  }
+
   if (rawAction === "changes" || rawAction === "request_changes") {
     return { action: "request_changes", modal: false };
   }
@@ -419,6 +431,24 @@ function parseAction(
 
 function resolveApprovalNonce(approval: ApprovalRecord): string | undefined {
   return approval.discord_nonce ?? approval.nonce ?? approval.discord?.nonce;
+}
+
+function isApprovalNonceExpired(
+  approval: ApprovalRecord,
+  receivedAt: string | undefined
+): boolean {
+  const expiresAt = approval.discord?.nonce_expires_at;
+  if (expiresAt === undefined) {
+    return false;
+  }
+
+  const expiresAtTime = Date.parse(expiresAt);
+  if (!Number.isFinite(expiresAtTime)) {
+    return false;
+  }
+
+  const receivedAtTime = Date.parse(receivedAt ?? new Date().toISOString());
+  return Number.isFinite(receivedAtTime) && receivedAtTime > expiresAtTime;
 }
 
 function resolveApprovalActions(approval: ApprovalRecord): ApprovalAction[] {

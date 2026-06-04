@@ -39,17 +39,27 @@ export type DiscordApprovalMessage = {
     }>;
   }>;
   components: Array<{
-    type: "action_row";
+    type: 1;
     components: DiscordButton[];
   }>;
 };
 
 type DiscordButton = {
-  type: "button";
-  style: "primary" | "secondary" | "success" | "danger" | "link";
+  type: 2;
+  style: 1 | 2 | 3 | 4 | 5;
   label: string;
   custom_id?: string;
   url?: string;
+};
+
+export type ApprovalStatusMessageInput = {
+  id: string;
+  title?: string;
+  type?: string;
+  status: string;
+  decision?: string;
+  reason?: string;
+  snooze_until?: string;
 };
 
 const secretLikePattern =
@@ -115,8 +125,8 @@ function buildComponents(
     if (action === "open_board") {
       if (boardUrl !== undefined) {
         buttons.push({
-          type: "button",
-          style: "link",
+          type: 2,
+          style: 5,
           label: "Open Board",
           url: boardUrl
         });
@@ -125,7 +135,7 @@ function buildComponents(
     }
 
     buttons.push({
-      type: "button",
+      type: 2,
       style: buttonStyle(action),
       label: buttonLabel(action),
       custom_id: customId(approvalId, action, nonce)
@@ -134,10 +144,37 @@ function buildComponents(
 
   return [
     {
-      type: "action_row",
+      type: 1,
       components: buttons
     }
   ];
+}
+
+export function buildApprovalStatusMessage(
+  approval: ApprovalStatusMessageInput
+): Omit<DiscordApprovalMessage, "nonce"> {
+  const fields = [
+    field("Approval", approval.id, true),
+    approval.type === undefined ? null : field("Type", approval.type, true),
+    field("Status", approval.status, true),
+    approval.decision === undefined ? null : field("Decision", approval.decision, true),
+    approval.snooze_until === undefined
+      ? null
+      : field("Snooze until", approval.snooze_until, true),
+    approval.reason === undefined ? null : field("Reason", approval.reason, false)
+  ].filter((item): item is NonNullable<typeof item> => item !== null);
+
+  return {
+    content: `Approval ${approval.status}: ${approval.id}`,
+    embeds: [
+      {
+        title: truncate(sanitize(approval.title ?? approval.id), 120),
+        description: "Approval request status was updated.",
+        fields
+      }
+    ],
+    components: []
+  };
 }
 
 function customId(
@@ -145,7 +182,12 @@ function customId(
   action: Exclude<NonNullable<ApprovalMessageInput["actions"]>[number], "open_board">,
   nonce: string
 ): string {
-  const rawAction = action === "request_changes" ? "changes" : action;
+  const rawAction =
+    action === "request_changes"
+      ? "changes_modal"
+      : action === "reject"
+        ? "reject_modal"
+        : action;
   const value = `kr:v1:apr:${approvalId}:${rawAction}:${nonce}`;
 
   if (value.length > 100) {
@@ -157,16 +199,16 @@ function customId(
 
 function buttonStyle(
   action: Exclude<NonNullable<ApprovalMessageInput["actions"]>[number], "open_board">
-): "primary" | "secondary" | "success" | "danger" {
+): 1 | 2 | 3 | 4 {
   switch (action) {
     case "approve":
-      return "success";
+      return 3;
     case "reject":
-      return "danger";
+      return 4;
     case "request_changes":
-      return "primary";
+      return 1;
     case "snooze":
-      return "secondary";
+      return 2;
   }
 }
 

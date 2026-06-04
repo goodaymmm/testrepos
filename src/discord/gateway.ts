@@ -7,9 +7,19 @@ import {
   normalizeDiscordApprovalInteraction,
   normalizeDiscordLeaveCommand,
   normalizeDiscordStatusCommand,
+  parseApprovalCustomId,
+  validateDiscordApprovalInteraction,
   type DiscordInteractionInput,
   type NormalizedDiscordCommand
 } from "./interactions.js";
+import { StateApplier, type InternalCommand } from "../state/state-applier.js";
+import { CommandInbox } from "../queue/command-inbox.js";
+import {
+  notifyPendingDiscordApprovals,
+  updateDiscordApprovalMessage,
+  type DiscordApprovalChannel,
+  type DiscordApprovalNotificationResult
+} from "./approval-notifier.js";
 
 export type DiscordProviderConfig = {
   enabled: boolean;
@@ -80,6 +90,7 @@ export type DiscordGatewayRuntimeStatus =
       guild_id: string;
       approval_channel_id: string;
       commands_registered: boolean;
+      approval_notifications?: DiscordApprovalNotificationResult;
       client_user_id?: string;
       error?: string;
       reconnect?: {
@@ -95,6 +106,9 @@ export type DiscordGatewayClient = {
   on(event: string, callback: (...args: unknown[]) => unknown): unknown;
   login(token: string): Promise<unknown> | unknown;
   destroy(): Promise<unknown> | unknown;
+  channels?: {
+    fetch(channelId: string): Promise<unknown> | unknown;
+  };
   user?: {
     id?: string;
   } | null;
@@ -127,6 +141,10 @@ export type DiscordGatewayInteraction = {
   deferReply?: (options: { ephemeral: boolean }) => Promise<unknown> | unknown;
   editReply?: (options: { content: string }) => Promise<unknown> | unknown;
   reply?: (options: { content: string; ephemeral: boolean }) => Promise<unknown> | unknown;
+  showModal?: (modal: unknown) => Promise<unknown> | unknown;
+  fields?: {
+    getTextInputValue?: (customId: string) => string;
+  };
 };
 
 export type DiscordGatewayHandle = {
@@ -145,6 +163,11 @@ export type StartDiscordGatewayOptions = {
   restFactory?: (
     gateway: PreparedDiscordGateway & { status: "ready" }
   ) => Promise<DiscordRestRegistration> | DiscordRestRegistration;
+  approvalChannelFactory?: (
+    gateway: PreparedDiscordGateway & { status: "ready" },
+    client: DiscordGatewayClient
+  ) => Promise<DiscordApprovalChannel | null> | DiscordApprovalChannel | null;
+  approvalScanIntervalMs?: number;
 };
 
 export async function prepareDiscordGateway(
@@ -259,8 +282,17 @@ export async function startDiscordGateway(
 
   const client = await (options.clientFactory ?? createDiscordJsClient)(prepared);
   let reconnectAttempts = 0;
+  let approvalScanTimer: NodeJS.Timeout | undefined;
+  let lastApprovalNotificationResult: DiscordApprovalNotificationResult | undefined;
+  let approvalChannel: DiscordApprovalChannel | null = null;
   client.on("interactionCreate", (interaction) =>
-    handleGatewayInteraction(projectRoot, prepared, interaction, now).catch((error) =>
+    handleGatewayInteraction(
+      projectRoot,
+      prepared,
+      interaction,
+      now,
+      () => approvalChannel
+    ).catch((error) =>
       writeGatewayStatus(projectRoot, {
         schema_version: "0.1",
         status: "error",
@@ -269,6 +301,7 @@ export async function startDiscordGateway(
         guild_id: prepared.guild_id,
         approval_channel_id: prepared.approval_channel_id,
         commands_registered: prepared.register_commands_on_start,
+        approval_notifications: lastApprovalNotificationResult,
         error: String(error),
         reconnect: {
           ...prepared.reconnect,
@@ -308,6 +341,48 @@ export async function startDiscordGateway(
 
   await client.login(prepared.bot_token);
   await ready;
+
+  approvalChannel = await resolveApprovalChannel(
+    prepared,
+    client,
+    options.approvalChannelFactory
+  );
+  if (approvalChannel !== null) {
+    lastApprovalNotificationResult = await notifyPendingDiscordApprovals(
+      projectRoot,
+      prepared,
+      approvalChannel,
+      { now }
+    );
+    approvalScanTimer = setInterval(() => {
+      void notifyPendingDiscordApprovals(projectRoot, prepared, approvalChannel!, {
+        now
+      })
+        .then((result) => {
+          lastApprovalNotificationResult = result;
+        })
+        .catch((error) =>
+          writeGatewayStatus(projectRoot, {
+            schema_version: "0.1",
+            status: "error",
+            mode: "gateway",
+            application_id: prepared.application_id,
+            guild_id: prepared.guild_id,
+            approval_channel_id: prepared.approval_channel_id,
+            commands_registered: prepared.register_commands_on_start,
+            approval_notifications: lastApprovalNotificationResult,
+            error: String(error),
+            reconnect: {
+              ...prepared.reconnect,
+              attempts: reconnectAttempts
+            },
+            updated_at: now().toISOString()
+          })
+        );
+    }, options.approvalScanIntervalMs ?? 30_000);
+    approvalScanTimer.unref?.();
+  }
+
   await writeGatewayStatus(projectRoot, {
     schema_version: "0.1",
     status: "ready",
@@ -316,6 +391,7 @@ export async function startDiscordGateway(
     guild_id: prepared.guild_id,
     approval_channel_id: prepared.approval_channel_id,
     commands_registered: prepared.register_commands_on_start,
+    approval_notifications: lastApprovalNotificationResult,
     client_user_id: client.user?.id,
     reconnect: {
       ...prepared.reconnect,
@@ -328,6 +404,9 @@ export async function startDiscordGateway(
     status: "ready",
     status_path: toProjectPath(projectRoot, statusPath),
     stop: async () => {
+      if (approvalScanTimer !== undefined) {
+        clearInterval(approvalScanTimer);
+      }
       await client.destroy();
       await writeGatewayStatus(projectRoot, {
         schema_version: "0.1",
@@ -337,6 +416,7 @@ export async function startDiscordGateway(
         guild_id: prepared.guild_id,
         approval_channel_id: prepared.approval_channel_id,
         commands_registered: prepared.register_commands_on_start,
+        approval_notifications: lastApprovalNotificationResult,
         client_user_id: client.user?.id,
         reconnect: {
           ...prepared.reconnect,
@@ -374,9 +454,14 @@ async function handleGatewayInteraction(
   projectRoot: string,
   gateway: PreparedDiscordGateway & { status: "ready" },
   rawInteraction: unknown,
-  now: () => Date
+  now: () => Date,
+  getApprovalChannel: () => DiscordApprovalChannel | null
 ): Promise<void> {
   const interaction = rawInteraction as DiscordGatewayInteraction;
+  if (await maybeShowApprovalReasonModal(projectRoot, gateway, interaction, now())) {
+    return;
+  }
+
   await acknowledgeInteraction(interaction);
 
   const result = await normalizeGatewayInteraction(
@@ -385,7 +470,14 @@ async function handleGatewayInteraction(
     interaction,
     now()
   );
-  await respondToInteraction(interaction, result);
+  const sideEffect = await applyGatewayInteractionSideEffects(
+    projectRoot,
+    interaction,
+    result,
+    getApprovalChannel(),
+    now
+  );
+  await respondToInteraction(interaction, result, sideEffect);
 }
 
 async function normalizeGatewayInteraction(
@@ -440,8 +532,100 @@ function toDiscordInteractionInput(
       interaction.commandName === undefined
         ? undefined
         : [interaction.commandName, subcommand].filter(Boolean).join(" "),
+    reason: readModalTextInput(interaction, "reason"),
+    snooze_until: readModalTextInput(interaction, "snooze_until"),
     received_at: now.toISOString()
   };
+}
+
+async function maybeShowApprovalReasonModal(
+  projectRoot: string,
+  gateway: PreparedDiscordGateway & { status: "ready" },
+  interaction: DiscordGatewayInteraction,
+  now: Date
+): Promise<boolean> {
+  if (interaction.customId?.startsWith("kr:v1:apr:") !== true) {
+    return false;
+  }
+
+  const parsed = parseApprovalCustomId(interaction.customId);
+  if (parsed.kind !== "approval" || !parsed.modal) {
+    return false;
+  }
+
+  const validation = await validateDiscordApprovalInteraction(
+    projectRoot,
+    gateway,
+    toDiscordInteractionInput(interaction, now)
+  );
+  if (!validation.ok) {
+    await replyToModalTrigger(interaction, `Kairon approval was rejected: ${validation.reason}`);
+    return true;
+  }
+
+  if (interaction.showModal === undefined) {
+    await replyToModalTrigger(
+      interaction,
+      "Kairon approval reason modal is unavailable."
+    );
+    return true;
+  }
+
+  await interaction.showModal(buildApprovalReasonModal(parsed));
+  return true;
+}
+
+async function replyToModalTrigger(
+  interaction: DiscordGatewayInteraction,
+  content: string
+): Promise<void> {
+  if (interaction.reply !== undefined) {
+    await interaction.reply({ content, ephemeral: true });
+  }
+}
+
+async function applyGatewayInteractionSideEffects(
+  projectRoot: string,
+  interaction: DiscordGatewayInteraction,
+  result: NormalizedDiscordCommand,
+  approvalChannel: DiscordApprovalChannel | null,
+  now: () => Date
+): Promise<string | undefined> {
+  if (!result.accepted || result.duplicate || result.command_id === undefined) {
+    return undefined;
+  }
+
+  if (
+    result.command.type !== "approval.decide" &&
+    result.command.type !== "approval.snooze"
+  ) {
+    return undefined;
+  }
+
+  const inbox = new CommandInbox(projectRoot);
+  try {
+    const applied = await new StateApplier(projectRoot).applyCommand(
+      result.command as InternalCommand
+    );
+    await inbox.complete(result.command_id, {
+      applied_event_ids: applied.appliedEventIds
+    });
+    if (approvalChannel !== null) {
+      await updateDiscordApprovalMessage(
+        projectRoot,
+        result.command.approval_id,
+        approvalChannel,
+        { now }
+      );
+    }
+
+    return result.command.type === "approval.snooze"
+      ? `Kairon approval snoozed: ${result.command.approval_id}`
+      : `Kairon approval decided: ${result.command.approval_id}`;
+  } catch (error) {
+    await inbox.fail(result.command_id, { message: String(error) });
+    return `Kairon approval command failed: ${String(error)}`;
+  }
 }
 
 async function acknowledgeInteraction(
@@ -466,9 +650,15 @@ async function acknowledgeInteraction(
 
 async function respondToInteraction(
   interaction: DiscordGatewayInteraction,
-  result: NormalizedDiscordCommand
+  result: NormalizedDiscordCommand,
+  sideEffectContent: string | undefined
 ): Promise<void> {
   if (interaction.editReply === undefined) {
+    return;
+  }
+
+  if (sideEffectContent !== undefined) {
+    await interaction.editReply({ content: sideEffectContent });
     return;
   }
 
@@ -486,6 +676,67 @@ async function respondToInteraction(
       ? `Kairon command is already queued: ${result.command_id}`
       : `Kairon command queued: ${result.command_id}`
   });
+}
+
+async function resolveApprovalChannel(
+  gateway: PreparedDiscordGateway & { status: "ready" },
+  client: DiscordGatewayClient,
+  channelFactory: StartDiscordGatewayOptions["approvalChannelFactory"]
+): Promise<DiscordApprovalChannel | null> {
+  if (channelFactory !== undefined) {
+    return channelFactory(gateway, client);
+  }
+
+  const channel = await client.channels?.fetch(gateway.approval_channel_id);
+  if (isDiscordApprovalChannel(channel)) {
+    return channel;
+  }
+
+  return null;
+}
+
+function isDiscordApprovalChannel(value: unknown): value is DiscordApprovalChannel {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    typeof (value as DiscordApprovalChannel).send === "function"
+  );
+}
+
+function readModalTextInput(
+  interaction: DiscordGatewayInteraction,
+  customId: string
+): string | undefined {
+  const value = interaction.fields?.getTextInputValue?.(customId)?.trim();
+  return value === undefined || value.length === 0 ? undefined : value;
+}
+
+function buildApprovalReasonModal(
+  parsed: ReturnType<typeof parseApprovalCustomId> & { kind: "approval" }
+): unknown {
+  const rawAction = parsed.action === "request_changes" ? "changes" : parsed.action;
+  return {
+    custom_id: `kr:v1:apr:${parsed.approval_id}:${rawAction}:${parsed.nonce}`,
+    title:
+      parsed.action === "reject"
+        ? "Reject approval"
+        : "Request approval changes",
+    components: [
+      {
+        type: 1,
+        components: [
+          {
+            type: 4,
+            custom_id: "reason",
+            label: "Reason",
+            style: 2,
+            required: true,
+            max_length: 1000
+          }
+        ]
+      }
+    ]
+  };
 }
 
 async function registerKaironSlashCommands(

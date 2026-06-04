@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildApprovalMessage,
+  buildApprovalStatusMessage,
   containsUnsafeApprovalMessageData
 } from "../src/discord/approval-message.js";
 
@@ -40,8 +41,8 @@ describe("buildApprovalMessage", () => {
     expect(message.components[0]?.components.map((button) => button.custom_id)).toEqual(
       expect.arrayContaining([
         "kr:v1:apr:APR-0001:approve:n42",
-        "kr:v1:apr:APR-0001:reject:n42",
-        "kr:v1:apr:APR-0001:changes:n42",
+        "kr:v1:apr:APR-0001:reject_modal:n42",
+        "kr:v1:apr:APR-0001:changes_modal:n42",
         "kr:v1:apr:APR-0001:snooze:n42"
       ])
     );
@@ -68,5 +69,22 @@ describe("buildApprovalMessage", () => {
         diff: "diff --git a/a b/a"
       })
     ).toBe(true);
+  });
+
+  it("builds a compact status update and clears action components", () => {
+    const message = buildApprovalStatusMessage({
+      id: "APR-0003",
+      title: "Merge approval",
+      type: "git_push",
+      status: "decided",
+      decision: "approve",
+      reason: "Looks good."
+    });
+
+    expect(message.content).toBe("Approval decided: APR-0003");
+    expect(message.components).toEqual([]);
+    expect(message.embeds[0]?.fields.map((field) => field.name)).toEqual(
+      expect.arrayContaining(["Approval", "Status", "Decision", "Reason"])
+    );
   });
 });
