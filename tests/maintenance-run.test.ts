@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { runMaintenance } from "../src/cli/commands/maintenance.js";
-import { readJsonFile } from "../src/core/fs/json-file.js";
+import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { runDailyMaintenance } from "../src/maintenance/run.js";
 import { WorkQueue } from "../src/queue/work-queue.js";
 import { createTempProject } from "./test-utils.js";
@@ -58,5 +59,43 @@ describe("runDailyMaintenance", () => {
     await initializeProject({ projectRoot: root });
 
     await expect(runMaintenance(root)).resolves.toContain("Kairon maintenance completed");
+  });
+
+  it("refreshes the RAG index during maintenance when enabled", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeJsonFileAtomic(path.join(root, ".kairon", "config", "rag.json"), {
+      schema_version: "0.1",
+      enabled: true,
+      storage: {
+        base_dir: ".kairon/rag",
+        lexical: "local"
+      },
+      security: {
+        exclude_paths: [".env*", "**/*.pem", "**/*secret*", "**/*token*"]
+      }
+    });
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    await writeFile(
+      path.join(root, "docs", "maintenance-rag.md"),
+      "Maintenance should refresh local RAG memory.",
+      "utf8"
+    );
+
+    const result = await runDailyMaintenance(root, { date: "2026-05-25" });
+
+    expect(result.rag_index).toMatchObject({
+      index_path: ".kairon/rag/index.json",
+      chunk_count: expect.any(Number)
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "rag", "index.json"))
+    ).resolves.toMatchObject({
+      kind: "rag_lexical_index",
+      sources: expect.arrayContaining([
+        expect.objectContaining({ path: "docs/maintenance-rag.md" })
+      ])
+    });
+    await expect(runMaintenance(root)).resolves.toContain("rag_index=.kairon/rag/index.json");
   });
 });
