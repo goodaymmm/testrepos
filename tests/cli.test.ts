@@ -21,6 +21,7 @@ describe("createProgram", () => {
       "leave",
       "maintenance",
       "migrate",
+      "recovery",
       "review",
       "start",
       "status",

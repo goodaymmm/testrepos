@@ -46,6 +46,10 @@ export type DailyReport = {
     branches: Record<string, unknown>[];
     transactions: Record<string, unknown>[];
   };
+  recovery: {
+    total: number;
+    items: Record<string, unknown>[];
+  };
   created_at: string;
 };
 
@@ -59,11 +63,12 @@ export async function createDailyReport(
 ): Promise<DailyReport> {
   const paths = getKaironPaths(projectRoot);
   const reportPath = resolveInside(paths.reportsDir, "daily", `${request.date}.json`);
-  const [runs, approvals, reviews, git] = await Promise.all([
+  const [runs, approvals, reviews, git, recovery] = await Promise.all([
     collectRuns(projectRoot, request.date),
     collectApprovals(projectRoot, request.date),
     collectReviews(projectRoot, request.date),
-    collectGit(projectRoot, request.date)
+    collectGit(projectRoot, request.date),
+    collectRecovery(projectRoot, request.date)
   ]);
   const report: DailyReport = {
     schema_version: "0.1",
@@ -92,6 +97,10 @@ export async function createDailyReport(
       transactions_total: git.transactions.length,
       branches: git.branches,
       transactions: git.transactions
+    },
+    recovery: {
+      total: recovery.length,
+      items: recovery
     },
     created_at: new Date().toISOString()
   };
@@ -237,6 +246,18 @@ async function collectGit(
       )
     )
   };
+}
+
+async function collectRecovery(
+  projectRoot: string,
+  date: string
+): Promise<Record<string, unknown>[]> {
+  const recoveryDir = getKaironPaths(projectRoot).recoveryDir;
+  const artifacts = await readJsonFilesInDir(recoveryDir);
+
+  return artifacts
+    .filter((artifact) => matchesDate([optionalString(artifact.created_at)], date))
+    .sort(compareUnknownByUpdatedAt);
 }
 
 async function readJsonFilesInDir(

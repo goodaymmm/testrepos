@@ -225,6 +225,7 @@ export const kaironDirectories = [
   "runtime/pids",
   "runtime/terminals",
   "runtime/discord",
+  "recovery",
   "state",
   "rag",
   "board",

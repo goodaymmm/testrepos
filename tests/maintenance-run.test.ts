@@ -47,7 +47,10 @@ describe("runDailyMaintenance", () => {
         now: new Date("2026-05-25T02:00:00.000Z")
       })
     ).resolves.toMatchObject({
-      expired_test_queue_item_ids: [stale.id]
+      expired_test_queue_item_ids: [stale.id],
+      recovery: {
+        artifact_path: expect.stringMatching(/^\.kairon\/recovery\/REC-/)
+      }
     });
     await expect(queue.list("failed")).resolves.toMatchObject([
       { id: stale.id, error: { code: "stale_test_queue_item" } }
@@ -96,6 +99,8 @@ describe("runDailyMaintenance", () => {
         expect.objectContaining({ path: "docs/maintenance-rag.md" })
       ])
     });
-    await expect(runMaintenance(root)).resolves.toContain("rag_index=.kairon/rag/index.json");
+    const output = await runMaintenance(root);
+    expect(output).toContain("recovery_artifact=.kairon/recovery/REC-");
+    expect(output).toContain("rag_index=.kairon/rag/index.json");
   });
 });
