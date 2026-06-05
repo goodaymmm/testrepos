@@ -226,6 +226,7 @@ export const kaironDirectories = [
   "runtime/terminals",
   "runtime/discord",
   "state",
+  "rag",
   "reports",
   "reports/daily",
   "cleanup",

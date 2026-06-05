@@ -4,6 +4,11 @@ import path from "node:path";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { readJsonLines } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
+import {
+  isRagEnabled,
+  searchRagIndex,
+  type RagSearchResult
+} from "../rag/lexical-index.js";
 import type { AgentId } from "./types.js";
 
 export type RunContextRequest = {
@@ -28,7 +33,8 @@ export type ContextSource = {
     | "scratch"
     | "daily_report"
     | "handoff"
-    | "extra";
+    | "extra"
+    | "rag";
   path: string;
   sha256: string;
   bytes: number;
@@ -45,6 +51,7 @@ export type ContextBundle = {
   context_path: string;
   manifest_path: string;
   sources: ContextSource[];
+  rag_results?: RagSearchResult[];
   created_at: string;
 };
 
@@ -54,6 +61,13 @@ type SourceDraft = {
   content: string;
 };
 
+export type ContextBuilderOptions = {
+  rag?: {
+    enabled?: boolean;
+    topK?: number;
+  };
+};
+
 const agentRuleFiles: Record<AgentId, string[]> = {
   codex: ["AGENTS.md", path.join(".kairon", "rules", "codex", "AGENTS.md")],
   claude: ["CLAUDE.md", path.join(".kairon", "rules", "claude", "CLAUDE.md")],
@@ -61,14 +75,22 @@ const agentRuleFiles: Record<AgentId, string[]> = {
 };
 
 export class ContextBuilder {
-  constructor(private readonly projectRoot: string) {}
+  constructor(
+    private readonly projectRoot: string,
+    private readonly options: ContextBuilderOptions = {}
+  ) {}
 
   async buildRunContext(request: RunContextRequest): Promise<ContextBundle> {
     const paths = getKaironPaths(this.projectRoot);
     const runDir = resolveInside(paths.runsDir, request.runId);
     await mkdir(runDir, { recursive: true });
 
-    const sources = await this.collectRunSources(request);
+    const collectedSources = await this.collectRunSources(request);
+    const ragResults = await this.retrieveRagSources(request, collectedSources);
+    const sources =
+      ragResults.length === 0
+        ? collectedSources
+        : [...collectedSources, createRagSource(paths.root, ragResults)];
     const contextPath = resolveInside(runDir, "context.md");
     const manifestPath = resolveInside(runDir, "context_manifest.json");
     const bundle = createBundle({
@@ -81,6 +103,7 @@ export class ContextBuilder {
       contextPath,
       manifestPath,
       sources,
+      ragResults,
       projectRoot: paths.root
     });
 
@@ -223,6 +246,30 @@ export class ContextBuilder {
 
     return sources;
   }
+
+  private async retrieveRagSources(
+    request: RunContextRequest,
+    sources: SourceDraft[]
+  ): Promise<RagSearchResult[]> {
+    const enabled =
+      this.options.rag?.enabled ?? (await isRagEnabled(this.projectRoot));
+    if (!enabled) {
+      return [];
+    }
+
+    const topK = this.options.rag?.topK ?? 5;
+    const existingSourcePaths = new Set(
+      sources.map((source) => relativeToProject(this.projectRoot, source.absolutePath))
+    );
+    const results = await searchRagIndex(this.projectRoot, {
+      query: buildRagQuery(request, sources),
+      topK: topK * 3
+    });
+
+    return results
+      .filter((result) => !existingSourcePaths.has(result.path))
+      .slice(0, topK);
+  }
 }
 
 function createBundle(input: {
@@ -236,6 +283,7 @@ function createBundle(input: {
   manifestPath: string;
   sources: SourceDraft[];
   projectRoot: string;
+  ragResults?: RagSearchResult[];
 }): ContextBundle {
   return {
     schema_version: "0.1",
@@ -253,6 +301,7 @@ function createBundle(input: {
       sha256: sha256(source.content),
       bytes: Buffer.byteLength(source.content, "utf8")
     })),
+    rag_results: input.ragResults,
     created_at: new Date().toISOString()
   };
 }
@@ -286,6 +335,56 @@ async function writeContextFiles(
 
   await writeFile(paths.contextPath, `${content}\n`, "utf8");
   await writeJsonFileAtomic(paths.manifestPath, bundle);
+}
+
+function createRagSource(
+  projectRoot: string,
+  results: RagSearchResult[]
+): SourceDraft {
+  return {
+    type: "rag",
+    absolutePath: resolveInside(projectRoot, ".kairon", "rag", "index.json"),
+    content: formatRagResults(results).join("\n")
+  };
+}
+
+function buildRagQuery(
+  request: RunContextRequest,
+  sources: SourceDraft[]
+): string {
+  return [
+    request.taskId,
+    request.persona,
+    ...sources
+      .filter((source) =>
+        ["task", "messages", "extra", "handoff"].includes(source.type)
+      )
+      .map((source) => source.content)
+  ]
+    .join("\n")
+    .slice(0, 5_000);
+}
+
+function formatRagResults(results: RagSearchResult[] | undefined): string[] {
+  if (results === undefined || results.length === 0) {
+    return [];
+  }
+
+  return [
+    "# Kairon RAG Retrieval",
+    "",
+    ...results.flatMap((result, index) => [
+      `## Result ${index + 1}`,
+      `source_id=${result.source_id}`,
+      `path=${result.path}`,
+      `source_type=${result.source_type}`,
+      `hash=${result.content_hash}`,
+      `score=${result.score}`,
+      "",
+      result.text.trimEnd(),
+      ""
+    ])
+  ];
 }
 
 async function readOptionalText(filePath: string): Promise<string | null> {

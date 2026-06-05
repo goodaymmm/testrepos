@@ -1,5 +1,10 @@
 import { loadConfigFile } from "../core/config/load-config.js";
 import { WorkQueue } from "../queue/work-queue.js";
+import {
+  buildRagIndex,
+  isRagEnabled,
+  type BuildRagIndexResult
+} from "../rag/lexical-index.js";
 import { getLocalDateKey } from "../runtime/schedule-engine.js";
 import {
   createCleanupProposals,
@@ -23,6 +28,10 @@ export type DailyMaintenanceResult = {
   cleanup_proposal: CleanupProposal;
   handoffs: AgentHandoff[];
   expired_test_queue_item_ids: string[];
+  rag_index?: Pick<
+    BuildRagIndexResult,
+    "index_path" | "source_count" | "chunk_count"
+  >;
 };
 
 type ScheduleConfig = {
@@ -42,6 +51,10 @@ export async function runDailyMaintenance(
     date,
     dailyReport
   });
+  const ragIndex =
+    (await isRagEnabled(projectRoot))
+      ? await buildRagIndex(projectRoot, { now: () => now })
+      : undefined;
 
   return {
     schema_version: "0.1",
@@ -52,7 +65,15 @@ export async function runDailyMaintenance(
     daily_report: dailyReport,
     cleanup_proposal: cleanupProposal,
     handoffs,
-    expired_test_queue_item_ids: expiredTestItems.map((item) => item.id)
+    expired_test_queue_item_ids: expiredTestItems.map((item) => item.id),
+    rag_index:
+      ragIndex === undefined
+        ? undefined
+        : {
+            index_path: ragIndex.index_path,
+            source_count: ragIndex.source_count,
+            chunk_count: ragIndex.chunk_count
+          }
   };
 }
 
