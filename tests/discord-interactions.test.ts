@@ -39,6 +39,10 @@ describe("Discord interactions", () => {
       action: "request_changes",
       modal: true
     });
+    expect(parseApprovalCustomId("kr:v1:apr:APR-0001:reject_modal:n42")).toMatchObject({
+      action: "reject",
+      modal: true
+    });
     expect(parseApprovalCustomId("invalid")).toMatchObject({
       kind: "unknown"
     });
@@ -101,6 +105,28 @@ describe("Discord interactions", () => {
       ok: false,
       reason: "approval was not found"
     });
+    await writeApproval(root, {
+      id: "APR-0002",
+      status: "pending",
+      discord_nonce: "expired",
+      actions: ["approve"],
+      discord: {
+        nonce_expires_at: "2026-05-24T00:00:00.000Z"
+      }
+    });
+    await expect(
+      validateDiscordApprovalInteraction(root, gateway, {
+        interaction_id: "i1",
+        user_id: "owner",
+        guild_id: "guild",
+        channel_id: "channel",
+        custom_id: "kr:v1:apr:APR-0002:approve:expired",
+        received_at: "2026-05-25T00:00:00.000Z"
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      reason: "approval nonce expired"
+    });
   });
 
   it("normalizes approval decision interactions into Command Inbox", async () => {
@@ -147,6 +173,37 @@ describe("Discord interactions", () => {
     ).resolves.toMatchObject({
       accepted: false,
       duplicate: true
+    });
+  });
+
+  it("normalizes reject modal submissions with a reason", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeApproval(root, {
+      id: "APR-0001",
+      status: "pending",
+      discord_nonce: "n42",
+      actions: ["reject"]
+    });
+
+    await expect(
+      normalizeDiscordApprovalInteraction(root, gateway, {
+        interaction_id: "i1",
+        user_id: "owner",
+        guild_id: "guild",
+        channel_id: "channel",
+        message_id: "m1",
+        custom_id: "kr:v1:apr:APR-0001:reject:n42",
+        reason: "Blocked by policy.",
+        received_at: "2026-05-25T00:00:00.000Z"
+      })
+    ).resolves.toMatchObject({
+      accepted: true,
+      command: {
+        type: "approval.decide",
+        decision: "reject",
+        reason: "Blocked by policy."
+      }
     });
   });
 
