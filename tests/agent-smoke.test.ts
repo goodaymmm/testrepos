@@ -107,11 +107,14 @@ describe("runAgentSmoke", () => {
       readJsonFile(path.join(root, ".kairon", "runs", geminiResult.run_id, "outbox.json"))
     ).resolves.toMatchObject({
       agent: "gemini",
-      status: "failed",
+      status: "setup_required",
       events: [
         {
           type: "message.created",
-          payload: { reason: "cli_pty_required" }
+          payload: {
+            classification_status: "setup_required",
+            reason: "cli_pty_required"
+          }
         }
       ]
     });
@@ -155,11 +158,14 @@ describe("runAgentSmoke", () => {
       readJsonFile(path.join(root, ".kairon", "runs", result.run_id, "outbox.json"))
     ).resolves.toMatchObject({
       agent: "gemini",
-      status: "failed",
+      status: "setup_required",
       events: [
         {
           type: "message.created",
-          payload: { reason: "cli_command_missing" }
+          payload: {
+            classification_status: "setup_required",
+            reason: "cli_command_missing"
+          }
         }
       ]
     });

@@ -88,12 +88,7 @@ export async function runAgentSmoke(
 }
 
 export function formatAgentSmokeResult(result: AgentSmokeResult): string {
-  const headline =
-    result.status === "setup_required"
-      ? "Kairon agent smoke setup required."
-      : result.status === "completed"
-        ? "Kairon agent smoke completed."
-        : "Kairon agent smoke failed.";
+  const headline = smokeHeadline(result.status);
 
   return [
     headline,
@@ -109,6 +104,34 @@ export function formatAgentSmokeResult(result: AgentSmokeResult): string {
     `stdout=${result.stdout_log}`,
     `stderr=${result.stderr_log}`
   ].join("\n");
+}
+
+function smokeHeadline(status: CliSessionRunRecord["status"]): string {
+  if (status === "completed") {
+    return "Kairon agent smoke completed.";
+  }
+
+  if (status === "setup_required") {
+    return "Kairon agent smoke setup required.";
+  }
+
+  if (status === "permission_required") {
+    return "Kairon agent smoke permission required.";
+  }
+
+  if (status === "rate_limited") {
+    return "Kairon agent smoke rate limited.";
+  }
+
+  if (status === "timeout") {
+    return "Kairon agent smoke timed out.";
+  }
+
+  if (status === "no_output") {
+    return "Kairon agent smoke produced no output.";
+  }
+
+  return "Kairon agent smoke failed.";
 }
 
 async function writeSmokeTask(

@@ -181,7 +181,7 @@ describe("ReviewLoopExecutor", () => {
       review_result_ids: []
     });
     expect(result.decision.reasons.join("\n")).toContain(
-      "claude: setup required for claude"
+      "claude: cli_rate_limited for claude"
     );
     await expect(new WorkQueue(root).list("ready")).resolves.toEqual([]);
     await expect(

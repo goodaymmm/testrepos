@@ -81,7 +81,14 @@ export type ReviewNextAction =
       reasons: string[];
     };
 
-export type ReviewFixRunStatus = "completed" | "failed" | "setup_required";
+export type ReviewFixRunStatus =
+  | "completed"
+  | "failed"
+  | "setup_required"
+  | "permission_required"
+  | "rate_limited"
+  | "timeout"
+  | "no_output";
 
 export type ReviewFixRunUpdate = {
   state: ReviewLoopState;
@@ -249,7 +256,7 @@ export class ReviewLoopManager {
     const nextState: ReviewLoopState = {
       ...state,
       status:
-        request.status === "setup_required" ? "setup_required" : "changes_requested",
+        request.status === "failed" ? "changes_requested" : "setup_required",
       history,
       updated_at: now
     };

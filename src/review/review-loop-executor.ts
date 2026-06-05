@@ -140,10 +140,10 @@ export class ReviewLoopExecutor {
       });
       reviewRuns.push({ runId, record });
 
-      if (record.status === "setup_required") {
+      if (isReviewerBlockedStatus(record.status)) {
         setupRequiredReviewers.push(reviewer);
         setupRequiredReasons.push(
-          `${reviewer}: setup required for ${record.command}`
+          reviewerBlockedReason(reviewer, record)
         );
         continue;
       }
@@ -452,8 +452,11 @@ function setupRequired(
 }
 
 function setupRequiredReasonFromOutbox(outbox: ReviewOutbox): string | undefined {
-  if (outbox.status === "setup_required") {
-    return "reviewer CLI setup is required";
+  if (isBlockedOutboxStatus(outbox.status)) {
+    const reason = findClassifiedReason(outbox.events);
+    return reason === undefined
+      ? `reviewer CLI is blocked: ${String(outbox.status)}`
+      : `reviewer CLI is blocked: ${reason}`;
   }
 
   if (outbox.status === "failed") {
@@ -464,6 +467,34 @@ function setupRequiredReasonFromOutbox(outbox: ReviewOutbox): string | undefined
   }
 
   return findSetupRequiredReason(outbox.events);
+}
+
+function isReviewerBlockedStatus(status: CliSessionRunRecord["status"]): boolean {
+  return (
+    status === "setup_required" ||
+    status === "permission_required" ||
+    status === "rate_limited" ||
+    status === "timeout" ||
+    status === "no_output"
+  );
+}
+
+function reviewerBlockedReason(
+  reviewer: AgentId,
+  record: CliSessionRunRecord
+): string {
+  const detail = record.failure_reason ?? record.status;
+  return `${reviewer}: ${detail} for ${record.command}`;
+}
+
+function isBlockedOutboxStatus(status: unknown): boolean {
+  return (
+    status === "setup_required" ||
+    status === "permission_required" ||
+    status === "rate_limited" ||
+    status === "timeout" ||
+    status === "no_output"
+  );
 }
 
 function findFailureReason(value: unknown): string | undefined {
@@ -517,6 +548,34 @@ function findSetupRequiredReason(value: unknown): string | undefined {
   }
 
   return findSetupRequiredReason(Object.values(record));
+}
+
+function findClassifiedReason(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const reason = findClassifiedReason(item);
+      if (reason !== undefined) {
+        return reason;
+      }
+    }
+    return undefined;
+  }
+
+  if (value === null || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.message_type === "string" &&
+    record.message_type.startsWith("agent.run.") &&
+    typeof record.reason === "string"
+  ) {
+    const timedOut = record.timed_out === true ? ", timed_out=true" : "";
+    return `${record.reason}${timedOut}`;
+  }
+
+  return findClassifiedReason(Object.values(record));
 }
 
 async function nextUniqueRunId(

@@ -201,14 +201,49 @@ describe("TaskRunner", () => {
     await expect(
       readJsonFile(path.join(root, ".kairon", "runs", result.run_id, "outbox.json"))
     ).resolves.toMatchObject({
-      status: "failed",
+      status: "setup_required",
       agent: "codex",
       events: [
         {
           type: "message.created",
-          payload: { reason: "cli_command_missing" }
+          payload: {
+            classification_status: "setup_required",
+            reason: "cli_command_missing"
+          }
         }
       ]
+    });
+  });
+
+  it("returns rate_limited without retrying a selected agent CLI", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runner = new TaskRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) =>
+        commandResult(invocation, {
+          exitCode: 1,
+          stdout: '{"error":"rate_limit","result":"usage limit reached"}'
+        })
+    });
+    const task = await runner.createTask({
+      title: "Handle provider limit",
+      persona: "implementer",
+      capabilities: ["coding"]
+    });
+
+    const result = await runner.runTask({ taskId: task.task_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "rate_limited",
+      agent: "codex",
+      command: "codex"
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "tasks", task.task_id, "task.json"))
+    ).resolves.toMatchObject({
+      status: "failed",
+      last_run_status: "rate_limited"
     });
   });
 
