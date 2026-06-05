@@ -403,11 +403,7 @@ export function formatCreateTaskResult(result: CreateTaskResult): string {
 
 export function formatRunTaskResult(result: RunTaskResult): string {
   return [
-    result.status === "completed"
-      ? "Kairon task run completed."
-      : result.status === "setup_required"
-        ? "Kairon task run setup required."
-        : "Kairon task run failed.",
+    taskRunHeadline(result.status),
     `task_id=${result.task_id}`,
     `queue_item_id=${result.queue_item_id}`,
     `run_id=${result.run_id}`,
@@ -423,6 +419,34 @@ export function formatRunTaskResult(result: RunTaskResult): string {
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
+}
+
+function taskRunHeadline(status: CliSessionRunRecord["status"]): string {
+  if (status === "completed") {
+    return "Kairon task run completed.";
+  }
+
+  if (status === "setup_required") {
+    return "Kairon task run setup required.";
+  }
+
+  if (status === "permission_required") {
+    return "Kairon task run permission required.";
+  }
+
+  if (status === "rate_limited") {
+    return "Kairon task run rate limited.";
+  }
+
+  if (status === "timeout") {
+    return "Kairon task run timed out.";
+  }
+
+  if (status === "no_output") {
+    return "Kairon task run produced no output.";
+  }
+
+  return "Kairon task run failed.";
 }
 
 function taskPath(projectRoot: string, taskId: string): string {

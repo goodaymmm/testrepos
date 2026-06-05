@@ -13,7 +13,11 @@ export type SessionRunStatus =
   | "running"
   | "completed"
   | "failed"
-  | "setup_required";
+  | "setup_required"
+  | "permission_required"
+  | "rate_limited"
+  | "timeout"
+  | "no_output";
 
 export type SessionResumeHint = {
   strategy:

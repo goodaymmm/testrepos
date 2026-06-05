@@ -232,11 +232,15 @@ describe("CliSessionRunner", () => {
     ).resolves.toMatchObject({
       run_id: "RUN-0002",
       agent: "gemini",
-      status: "failed",
+      status: "setup_required",
       events: [
         {
           type: "message.created",
-          payload: { reason: "cli_command_missing" }
+          payload: {
+            classification_status: "setup_required",
+            reason: "cli_command_missing",
+            setup_action: expect.stringContaining("agy")
+          }
         }
       ]
     });
@@ -291,7 +295,7 @@ describe("CliSessionRunner", () => {
     });
   });
 
-  it("classifies provider rate limits as setup-required", async () => {
+  it("classifies provider rate limits as rate_limited", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
     const runner = new CliSessionRunner(root, {
@@ -316,25 +320,147 @@ describe("CliSessionRunner", () => {
       persona: "smoke"
     });
 
-    expect(record.status).toBe("setup_required");
+    expect(record.status).toBe("rate_limited");
+    expect(record.failure_reason).toBe("cli_rate_limited");
     expect(record.exit_code).toBe(1);
     await expect(
       readJsonFile(path.join(root, ".kairon", "runs", "RUN-0006", "outbox.json"))
     ).resolves.toMatchObject({
       run_id: "RUN-0006",
       agent: "claude",
-      status: "setup_required",
+      status: "rate_limited",
       events: [
         {
           type: "message.created",
-          payload: { reason: "cli_rate_limited" }
+          payload: {
+            message_type: "agent.run.rate_limited",
+            classification_status: "rate_limited",
+            reason: "cli_rate_limited"
+          }
         }
       ]
     });
     await expect(
       readJsonFile(path.join(root, ".kairon", "runtime", "terminals", "TERM-claude-20260525.json"))
     ).resolves.toMatchObject({
-      status: "setup_required"
+      status: "rate_limited"
+    });
+  });
+
+  it("classifies permission prompts without auto-approval", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) =>
+        commandResult(invocation, {
+          exitCode: 1,
+          stderr: "Approval required: allow this command?"
+        })
+    });
+
+    const record = await runner.runAgentJob({
+      agent: "codex",
+      date: "2026-05-25",
+      runId: "RUN-0010",
+      taskId: "TASK-0010",
+      persona: "smoke"
+    });
+
+    expect(record.status).toBe("permission_required");
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runs", "RUN-0010", "outbox.json"))
+    ).resolves.toMatchObject({
+      status: "permission_required",
+      events: [
+        {
+          type: "message.created",
+          payload: {
+            message_type: "agent.run.permission_required",
+            reason: "cli_permission_required",
+            setup_action: expect.stringContaining("interactive")
+          }
+        }
+      ]
+    });
+  });
+
+  it("classifies timed-out CLI runs and preserves artifacts", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) =>
+        commandResult(invocation, {
+          exitCode: null,
+          signal: "SIGTERM",
+          timedOut: true,
+          stderr: "still running"
+        })
+    });
+
+    const record = await runner.runAgentJob({
+      agent: "claude",
+      date: "2026-05-25",
+      runId: "RUN-0011",
+      taskId: "TASK-0011",
+      persona: "smoke"
+    });
+
+    expect(record).toMatchObject({
+      status: "timeout",
+      failure_reason: "cli_timeout",
+      timed_out: true
+    });
+    await expect(
+      readFile(path.join(root, ".kairon", "runs", "RUN-0011", "stderr.log"), "utf8")
+    ).resolves.toBe("still running");
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runs", "RUN-0011", "outbox.json"))
+    ).resolves.toMatchObject({
+      status: "timeout",
+      events: [
+        {
+          type: "message.created",
+          payload: {
+            message_type: "agent.run.timeout",
+            timed_out: true
+          }
+        }
+      ]
+    });
+  });
+
+  it("classifies successful processes with no outbox and no output as no_output", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) => commandResult(invocation)
+    });
+
+    const record = await runner.runAgentJob({
+      agent: "codex",
+      date: "2026-05-25",
+      runId: "RUN-0012",
+      taskId: "TASK-0012",
+      persona: "smoke"
+    });
+
+    expect(record.status).toBe("no_output");
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runs", "RUN-0012", "outbox.json"))
+    ).resolves.toMatchObject({
+      status: "no_output",
+      events: [
+        {
+          type: "message.created",
+          payload: {
+            message_type: "agent.run.no_output",
+            reason: "cli_no_output"
+          }
+        }
+      ]
     });
   });
 
@@ -420,11 +546,14 @@ describe("CliSessionRunner", () => {
       readJsonFile(path.join(root, ".kairon", "runs", "RUN-0004", "outbox.json"))
     ).resolves.toMatchObject({
       agent: "gemini",
-      status: "failed",
+      status: "setup_required",
       events: [
         {
           type: "message.created",
-          payload: { reason: "cli_pty_required" }
+          payload: {
+            classification_status: "setup_required",
+            reason: "cli_pty_required"
+          }
         }
       ]
     });

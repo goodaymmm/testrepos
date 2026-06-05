@@ -7,6 +7,12 @@ import {
   type CommandRunner,
   type CommandRunResult
 } from "./command-runner.js";
+import {
+  classificationForSetupRequired,
+  classifyCliRunResult,
+  type CliRunClassification,
+  type CliRunClassificationStatus
+} from "./cli-classification.js";
 import type { InteractiveSessionRunner } from "./interactive-session-runner.js";
 import { ContextBuilder, type ContextBundle } from "./context-builder.js";
 import {
@@ -28,7 +34,7 @@ import {
 } from "../review/review-loop-manager.js";
 import type { ChangedFile } from "../git/diff-snapshot.js";
 
-export type CliSessionRunStatus = "completed" | "failed" | "setup_required";
+export type CliSessionRunStatus = CliRunClassificationStatus;
 
 export type BootstrapAgentSessionRequest = {
   agent: AgentId;
@@ -70,6 +76,11 @@ export type CliSessionRunRecord = {
   exit_code: number | null;
   signal: NodeJS.Signals | null;
   timed_out: boolean;
+  classification?: CliRunClassification;
+  failure_reason?: string;
+  setup_action?: string;
+  retry_after?: string;
+  matched_pattern?: string;
   prompt_path: string;
   stdout_log: string;
   stderr_log: string;
@@ -94,7 +105,15 @@ type TerminalState = {
   stdin_open: boolean;
   stdout_log: string;
   stderr_log: string;
-  status: "ready" | "running" | "failed" | "setup_required";
+  status:
+    | "ready"
+    | "running"
+    | "failed"
+    | "setup_required"
+    | "permission_required"
+    | "rate_limited"
+    | "timeout"
+    | "no_output";
   updated_at: string;
 };
 
@@ -158,24 +177,36 @@ export class CliSessionRunner {
     await writeText(paths.promptPath, prompt);
 
     if (!session.command_available) {
+      const classification = classificationForSetupRequired({
+        agent: request.agent,
+        reason: "cli_command_missing",
+        command: session.command
+      });
       const record = await this.writeSetupRequiredRecord({
         kind: "daily_bootstrap",
         session,
         bundle,
         paths,
-        stderr: `Kairon setup required: ${session.command} is not available.\n`
+        stderr: `Kairon setup required: ${session.command} is not available.\n`,
+        classification
       });
       await this.recordSessionRun({ session, bundle, paths, record });
       return record;
     }
 
     if (!getAgentAdapter(request.agent).supports.nonInteractive) {
+      const classification = classificationForSetupRequired({
+        agent: request.agent,
+        reason: "cli_pty_required",
+        command: session.command
+      });
       const record = await this.writeSetupRequiredRecord({
         kind: "daily_bootstrap",
         session,
         bundle,
         paths,
-        stderr: `Kairon setup required: ${session.command} requires an interactive terminal or PTY adapter.\n`
+        stderr: `Kairon setup required: ${session.command} requires an interactive terminal or PTY adapter.\n`,
+        classification
       });
       await this.recordSessionRun({ session, bundle, paths, record });
       return record;
@@ -189,9 +220,14 @@ export class CliSessionRunner {
       timeoutMs: request.timeoutMs
     });
     const result = await this.commandRunner(invocation);
+    const classification = classifyCliRunResult(request.agent, result);
 
     await writeRunLogs(paths, result);
-    await this.writeTerminalState(session, result, terminalStatusFromResult(result));
+    await this.writeTerminalState(
+      session,
+      result,
+      terminalStatusFromRunStatus(classification.status)
+    );
 
     const record = this.createRecord({
       kind: "daily_bootstrap",
@@ -200,7 +236,8 @@ export class CliSessionRunner {
       paths,
       result,
       invocation,
-      status: statusFromResult(result)
+      classification,
+      status: classification.status
     });
     await writeJsonFileAtomic(paths.runnerMetadataPath, record);
     await this.recordSessionRun({ session, bundle, paths, record });
@@ -264,11 +301,15 @@ export class CliSessionRunner {
 
     try {
       if (!session.command_available) {
-        await this.writeFailureOutbox({
+        const classification = classificationForSetupRequired({
+          agent: request.agent,
+          reason: "cli_command_missing",
+          command: session.command
+        });
+        await this.writeClassifiedOutbox({
           request,
           outboxPath,
-          reason: "cli_command_missing",
-          message: `${session.command} is not available.`
+          classification
         });
         record = await this.writeSetupRequiredRecord({
           kind: "job",
@@ -276,7 +317,8 @@ export class CliSessionRunner {
           bundle,
           paths,
           stderr: `Kairon setup required: ${session.command} is not available.\n`,
-          request
+          request,
+          classification
         });
         return record;
       }
@@ -297,17 +339,20 @@ export class CliSessionRunner {
             contextPath: bundle.context_path,
             session
           });
-          const setupRequired = classifyCliSetupRequired(result);
-          if (setupRequired !== undefined) {
-            await this.writeSetupRequiredOutbox({
+          const classification = classifyCliRunResult(request.agent, result);
+          if (shouldWriteClassifiedOutbox(classification.status)) {
+            await this.writeClassifiedOutbox({
               request,
               outboxPath,
-              reason: setupRequired.reason,
-              message: setupRequired.message,
+              classification,
               result
             });
             await writeRunLogs(paths, result);
-            await this.writeTerminalState(session, result, "setup_required");
+            await this.writeTerminalState(
+              session,
+              result,
+              terminalStatusFromRunStatus(classification.status)
+            );
             record = this.createRecord({
               kind: "job",
               session,
@@ -315,17 +360,23 @@ export class CliSessionRunner {
               paths,
               result,
               request,
-              status: "setup_required"
+              classification,
+              status: classification.status
             });
             await writeJsonFileAtomic(paths.runnerMetadataPath, record);
             return record;
           }
 
-          const outboxStatus = await this.ensureOutbox(request, outboxPath, result);
+          const outboxStatus = await this.ensureOutbox(
+            request,
+            outboxPath,
+            result,
+            classification
+          );
           const status =
             outboxStatus.source === "generated_failure"
-              ? "failed"
-              : (outboxStatus.runStatus ?? statusFromResult(result));
+              ? (outboxStatus.runStatus ?? "failed")
+              : (outboxStatus.runStatus ?? classification.status);
           const reviewLoop = await this.maybeStartReviewLoop(request);
 
           await writeRunLogs(paths, result);
@@ -338,17 +389,22 @@ export class CliSessionRunner {
             result,
             request,
             reviewLoop,
+            classification: outboxStatus.classification ?? classification,
             status
           });
           await writeJsonFileAtomic(paths.runnerMetadataPath, record);
           return record;
         }
 
-        await this.writeFailureOutbox({
+        const classification = classificationForSetupRequired({
+          agent: request.agent,
+          reason: "cli_pty_required",
+          command: session.command
+        });
+        await this.writeClassifiedOutbox({
           request,
           outboxPath,
-          reason: "cli_pty_required",
-          message: `${session.command} requires an interactive terminal or PTY adapter for Kairon automation.`
+          classification
         });
         record = await this.writeSetupRequiredRecord({
           kind: "job",
@@ -356,7 +412,8 @@ export class CliSessionRunner {
           bundle,
           paths,
           stderr: `Kairon setup required: ${session.command} requires an interactive terminal or PTY adapter.\n`,
-          request
+          request,
+          classification
         });
         return record;
       }
@@ -369,17 +426,20 @@ export class CliSessionRunner {
         timeoutMs: request.timeoutMs
       });
       const result = await this.commandRunner(invocation);
-      const setupRequired = classifyCliSetupRequired(result);
-      if (setupRequired !== undefined) {
-        await this.writeSetupRequiredOutbox({
+      const classification = classifyCliRunResult(request.agent, result);
+      if (shouldWriteClassifiedOutbox(classification.status)) {
+        await this.writeClassifiedOutbox({
           request,
           outboxPath,
-          reason: setupRequired.reason,
-          message: setupRequired.message,
+          classification,
           result
         });
         await writeRunLogs(paths, result);
-        await this.writeTerminalState(session, result, "setup_required");
+        await this.writeTerminalState(
+          session,
+          result,
+          terminalStatusFromRunStatus(classification.status)
+        );
         record = this.createRecord({
           kind: "job",
           session,
@@ -388,17 +448,23 @@ export class CliSessionRunner {
           result,
           invocation,
           request,
-          status: "setup_required"
+          classification,
+          status: classification.status
         });
         await writeJsonFileAtomic(paths.runnerMetadataPath, record);
         return record;
       }
 
-      const outboxStatus = await this.ensureOutbox(request, outboxPath, result);
+      const outboxStatus = await this.ensureOutbox(
+        request,
+        outboxPath,
+        result,
+        classification
+      );
       const status =
         outboxStatus.source === "generated_failure"
-          ? "failed"
-          : (outboxStatus.runStatus ?? statusFromResult(result));
+          ? (outboxStatus.runStatus ?? "failed")
+          : (outboxStatus.runStatus ?? classification.status);
       const reviewLoop = await this.maybeStartReviewLoop(request);
 
       await writeRunLogs(paths, result);
@@ -412,6 +478,7 @@ export class CliSessionRunner {
         invocation,
         request,
         reviewLoop,
+        classification: outboxStatus.classification ?? classification,
         status
       });
       await writeJsonFileAtomic(paths.runnerMetadataPath, record);
@@ -461,18 +528,24 @@ export class CliSessionRunner {
     bundle: ContextBundle;
     paths: PathSet;
     stderr: string;
+    classification: CliRunClassification;
     request?: RunAgentJobRequest;
   }): Promise<CliSessionRunRecord> {
     await writeText(input.paths.stdoutPath, "");
     await writeText(input.paths.stderrPath, input.stderr);
-    await this.writeTerminalState(input.session, null, "setup_required");
+    await this.writeTerminalState(
+      input.session,
+      null,
+      terminalStatusFromRunStatus(input.classification.status)
+    );
     const record = this.createRecord({
       kind: input.kind,
       session: input.session,
       bundle: input.bundle,
       paths: input.paths,
       request: input.request,
-      status: "setup_required"
+      classification: input.classification,
+      status: input.classification.status
     });
     await writeJsonFileAtomic(input.paths.runnerMetadataPath, record);
     return record;
@@ -481,10 +554,12 @@ export class CliSessionRunner {
   private async ensureOutbox(
     request: RunAgentJobRequest,
     outboxPath: string,
-    result: CommandRunResult
+    result: CommandRunResult,
+    classification: CliRunClassification
   ): Promise<{
     source: "agent_outbox" | "stdout_outbox" | "generated_failure";
     runStatus?: CliSessionRunStatus;
+    classification?: CliRunClassification;
   }> {
     try {
       await access(outboxPath);
@@ -504,25 +579,28 @@ export class CliSessionRunner {
         };
       }
 
+      const generatedClassification = generatedFailureClassification(
+        result,
+        classification
+      );
       await this.writeFailureOutbox({
         request,
         outboxPath,
-        reason: result.exitCode === 0 ? "outbox_missing" : "cli_failed",
-        message:
-          result.exitCode === 0
-            ? "Agent process completed without writing the required outbox."
-            : "Agent process failed before writing a valid outbox.",
+        classification: generatedClassification,
         result
       });
-      return { source: "generated_failure" };
+      return {
+        source: "generated_failure",
+        runStatus: generatedClassification.status,
+        classification: generatedClassification
+      };
     }
   }
 
   private async writeFailureOutbox(input: {
     request: RunAgentJobRequest;
     outboxPath: string;
-    reason: string;
-    message: string;
+    classification: CliRunClassification;
     result?: CommandRunResult;
   }): Promise<void> {
     await writeJsonFileAtomic(input.outboxPath, {
@@ -531,14 +609,18 @@ export class CliSessionRunner {
       task_id: input.request.taskId,
       agent: input.request.agent,
       persona: input.request.persona,
-      status: "failed",
+      status: input.classification.status,
       events: [
         {
           type: "message.created",
           payload: {
-            message_type: "agent.run.failure",
-            reason: input.reason,
-            message: input.message,
+            message_type: messageTypeForClassification(input.classification.status),
+            classification_status: input.classification.status,
+            reason: input.classification.reason,
+            message: input.classification.message,
+            setup_action: input.classification.setup_action,
+            retry_after: input.classification.retry_after,
+            matched_pattern: input.classification.matched_pattern,
             exit_code: input.result?.exitCode ?? null,
             timed_out: input.result?.timedOut ?? false,
             stdout_excerpt: truncate(input.result?.stdout ?? ""),
@@ -549,12 +631,11 @@ export class CliSessionRunner {
     });
   }
 
-  private async writeSetupRequiredOutbox(input: {
+  private async writeClassifiedOutbox(input: {
     request: RunAgentJobRequest;
     outboxPath: string;
-    reason: string;
-    message: string;
-    result: CommandRunResult;
+    classification: CliRunClassification;
+    result?: CommandRunResult;
   }): Promise<void> {
     await writeJsonFileAtomic(input.outboxPath, {
       schema_version: "0.1",
@@ -562,18 +643,22 @@ export class CliSessionRunner {
       task_id: input.request.taskId,
       agent: input.request.agent,
       persona: input.request.persona,
-      status: "setup_required",
+      status: input.classification.status,
       events: [
         {
           type: "message.created",
           payload: {
-            message_type: "agent.run.setup_required",
-            reason: input.reason,
-            message: input.message,
-            exit_code: input.result.exitCode,
-            timed_out: input.result.timedOut,
-            stdout_excerpt: truncate(input.result.stdout),
-            stderr_excerpt: truncate(input.result.stderr)
+            message_type: messageTypeForClassification(input.classification.status),
+            classification_status: input.classification.status,
+            reason: input.classification.reason,
+            message: input.classification.message,
+            setup_action: input.classification.setup_action,
+            retry_after: input.classification.retry_after,
+            matched_pattern: input.classification.matched_pattern,
+            exit_code: input.result?.exitCode ?? null,
+            timed_out: input.result?.timedOut ?? false,
+            stdout_excerpt: truncate(input.result?.stdout ?? ""),
+            stderr_excerpt: truncate(input.result?.stderr ?? "")
           }
         }
       ]
@@ -653,6 +738,7 @@ export class CliSessionRunner {
     request?: RunAgentJobRequest;
     result?: CommandRunResult;
     invocation?: CliInvocation;
+    classification?: CliRunClassification;
     reviewLoop?: CliSessionRunRecord["review_loop"];
   }): CliSessionRunRecord {
     const now = new Date().toISOString();
@@ -674,6 +760,11 @@ export class CliSessionRunner {
       exit_code: input.result?.exitCode ?? null,
       signal: input.result?.signal ?? null,
       timed_out: input.result?.timedOut ?? false,
+      classification: input.classification,
+      failure_reason: input.classification?.reason,
+      setup_action: input.classification?.setup_action,
+      retry_after: input.classification?.retry_after,
+      matched_pattern: input.classification?.matched_pattern,
       prompt_path: toProjectPath(this.projectRoot, input.paths.promptPath),
       stdout_log: toProjectPath(this.projectRoot, input.paths.stdoutPath),
       stderr_log: toProjectPath(this.projectRoot, input.paths.stderrPath),
@@ -693,16 +784,6 @@ export class CliSessionRunner {
   }
 }
 
-function statusFromResult(
-  result: CommandRunResult
-): Extract<CliSessionRunStatus, "completed" | "failed"> {
-  return result.exitCode === 0 && !result.timedOut ? "completed" : "failed";
-}
-
-function terminalStatusFromResult(result: CommandRunResult): TerminalState["status"] {
-  return statusFromResult(result) === "completed" ? "ready" : "failed";
-}
-
 function terminalStatusFromRunStatus(
   status: CliSessionRunStatus
 ): TerminalState["status"] {
@@ -710,7 +791,69 @@ function terminalStatusFromRunStatus(
     return "ready";
   }
 
-  return status === "setup_required" ? "setup_required" : "failed";
+  if (
+    status === "setup_required" ||
+    status === "permission_required" ||
+    status === "rate_limited" ||
+    status === "timeout" ||
+    status === "no_output"
+  ) {
+    return status;
+  }
+
+  return "failed";
+}
+
+function shouldWriteClassifiedOutbox(status: CliSessionRunStatus): boolean {
+  return status !== "completed" && status !== "failed";
+}
+
+function generatedFailureClassification(
+  result: CommandRunResult,
+  classification: CliRunClassification
+): CliRunClassification {
+  if (classification.status !== "completed") {
+    return classification;
+  }
+
+  const hasOutput = `${result.stdout}\n${result.stderr}`.trim().length > 0;
+  if (!hasOutput) {
+    return {
+      status: "no_output",
+      reason: "cli_no_output",
+      message: "Agent CLI completed without stdout, stderr, or a valid outbox."
+    };
+  }
+
+  return {
+    status: "failed",
+    reason: "outbox_missing",
+    message: "Agent process completed without writing the required outbox."
+  };
+}
+
+function messageTypeForClassification(status: CliSessionRunStatus): string {
+  if (status === "setup_required") {
+    return "agent.run.setup_required";
+  }
+
+  if (status === "permission_required") {
+    return "agent.run.permission_required";
+  }
+
+  if (status === "rate_limited") {
+    return "agent.run.rate_limited";
+  }
+
+  if (status === "timeout") {
+    return "agent.run.timeout";
+  }
+
+  if (status === "no_output") {
+    return "agent.run.no_output";
+  }
+
+  return "agent.run.failure";
 }
 
 async function writeRunLogs(
@@ -825,47 +968,19 @@ function runStatusFromOutbox(
     return undefined;
   }
 
-  if (status === "completed" || status === "setup_required") {
+  if (
+    status === "completed" ||
+    status === "failed" ||
+    status === "setup_required" ||
+    status === "permission_required" ||
+    status === "rate_limited" ||
+    status === "timeout" ||
+    status === "no_output"
+  ) {
     return status;
   }
 
   return "failed";
-}
-
-function classifyCliSetupRequired(
-  result: CommandRunResult
-): { reason: string; message: string } | undefined {
-  const output = `${result.stdout}\n${result.stderr}`.toLowerCase();
-  if (
-    output.includes('"error":"rate_limit"') ||
-    output.includes('"error": "rate_limit"') ||
-    output.includes("rate_limit") ||
-    output.includes("you've hit your limit")
-  ) {
-    return {
-      reason: "cli_rate_limited",
-      message: "Agent CLI is rate limited. Retry after the provider reset window."
-    };
-  }
-
-  if (
-    output.includes("pty_spawn_failed") ||
-    output.includes("pty spawn failed")
-  ) {
-    return {
-      reason: "cli_pty_unavailable",
-      message: "Agent CLI requires a PTY adapter, but the PTY process could not be started."
-    };
-  }
-
-  if (output.includes("pty_command_unresolved")) {
-    return {
-      reason: "cli_pty_command_unresolved",
-      message: "Agent CLI requires a PTY adapter, but the configured command could not be resolved to an executable."
-    };
-  }
-
-  return undefined;
 }
 
 function terminalIdFor(agent: AgentId, date: string): string {
