@@ -12,6 +12,7 @@ import {
   seedApprovalCommand,
   showApprovalCommand
 } from "./commands/approval.js";
+import { exportBoard } from "./commands/board.js";
 import { applyConfig, proposeConfig } from "./commands/config.js";
 import { analyzeDocking } from "./commands/docking.js";
 import { runDoctorCommand } from "./commands/doctor.js";
@@ -142,6 +143,19 @@ export function createProgram(): Command {
     .option("--redaction-fixture", "Include omitted/redacted fields for display tests.")
     .action(async (approvalId: string, options) => {
       console.log(await seedApprovalCommand(process.cwd(), approvalId, options));
+    });
+
+  const board = program
+    .command("board")
+    .description("Export read-only Kairon board projections.");
+
+  board
+    .command("export")
+    .description("Export a sanitized board projection JSON file.")
+    .option("--output <path>", "Projection output path. Defaults to .kairon/board/projection.json.")
+    .option("--recent <count>", "Number of recent items to include per section.")
+    .action(async (options: { output?: string; recent?: string }) => {
+      console.log(await exportBoard(process.cwd(), options));
     });
 
   program
