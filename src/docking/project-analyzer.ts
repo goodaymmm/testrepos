@@ -49,8 +49,16 @@ type PackageJson = {
 
 type ProjectSignals = {
   packageJson?: PackageJson;
+  fileNames: string[];
+  nestedFileNames: string[];
   hasTsconfig: boolean;
   hasPyproject: boolean;
+  hasPubspec: boolean;
+  hasPackageJson: boolean;
+  hasDockerfile: boolean;
+  hasDockerCompose: boolean;
+  hasRequirements: boolean;
+  hasPythonFile: boolean;
 };
 
 const defaultProtectedPaths = [".env*", "infra/**", ".github/workflows/**"];
@@ -136,7 +144,7 @@ export async function analyzeProjectDocking(
   }
 
   const frameworks = detectFrameworks(entries, signals);
-  const packageManagers = detectPackageManagers(entries);
+  const packageManagers = detectPackageManagers(entries, signals);
   const primaryLanguage = detectPrimaryLanguage(entries, signals);
   const commands = detectCommands(signals, packageManagers);
 
@@ -250,43 +258,47 @@ function detectFrameworks(entries: TopLevelEntry[], signals: ProjectSignals): st
   const names = new Set(entries.map((entry) => entry.name));
   const frameworks = new Set<string>();
 
-  if (names.has("flutter") || names.has("pubspec.yaml")) {
+  if (names.has("flutter") || signals.hasPubspec) {
     frameworks.add("flutter");
   }
 
-  if (entries.some((entry) => entry.kind === "file" && path.extname(entry.name).toLowerCase() === ".py")) {
+  if (signals.hasPythonFile || signals.hasPyproject || signals.hasRequirements) {
     frameworks.add("python");
   }
 
-  if (names.has("package.json") || signals.packageJson) {
+  if (signals.hasPackageJson || signals.packageJson) {
     frameworks.add("node");
   }
 
-  if ([...names].some((name) => name.startsWith("vite.config."))) {
+  if (hasFileSignal(signals, (name) => name.startsWith("vite.config."))) {
     frameworks.add("vite");
   }
 
-  if (names.has(".next") || names.has("next.config.js") || names.has("next.config.ts")) {
+  if (names.has(".next") || hasFileSignal(signals, (name) => ["next.config.js", "next.config.ts"].includes(name))) {
     frameworks.add("next");
+  }
+
+  if (signals.hasDockerfile || signals.hasDockerCompose) {
+    frameworks.add("docker");
   }
 
   return [...frameworks].sort();
 }
 
-function detectPackageManagers(entries: TopLevelEntry[]): string[] {
+function detectPackageManagers(entries: TopLevelEntry[], signals: ProjectSignals): string[] {
   const names = new Set(entries.map((entry) => entry.name));
   const packageManagers = new Set<string>();
 
-  if (names.has("package-lock.json")) {
+  if (names.has("package-lock.json") || signals.nestedFileNames.includes("package-lock.json")) {
     packageManagers.add("npm");
   }
-  if (names.has("pnpm-lock.yaml")) {
+  if (names.has("pnpm-lock.yaml") || signals.nestedFileNames.includes("pnpm-lock.yaml")) {
     packageManagers.add("pnpm");
   }
-  if (names.has("yarn.lock")) {
+  if (names.has("yarn.lock") || signals.nestedFileNames.includes("yarn.lock")) {
     packageManagers.add("yarn");
   }
-  if (names.has("pubspec.yaml")) {
+  if (signals.hasPubspec) {
     packageManagers.add("flutter");
   }
 
@@ -312,10 +324,10 @@ function detectPrimaryLanguage(entries: TopLevelEntry[], signals: ProjectSignals
   if (extensions.has(".js") || extensions.has(".jsx")) {
     languages.add("javascript");
   }
-  if (extensions.has(".dart") || names.has("flutter") || names.has("pubspec.yaml")) {
+  if (extensions.has(".dart") || names.has("flutter") || signals.hasPubspec) {
     languages.add("dart");
   }
-  if (signals.hasPyproject) {
+  if (signals.hasPyproject || signals.hasRequirements || signals.hasPythonFile) {
     languages.add("python");
   }
 
@@ -372,13 +384,53 @@ async function readProjectSignals(
   projectRoot: string,
   entries: TopLevelEntry[]
 ): Promise<ProjectSignals> {
+  const fileNames = entries
+    .filter((entry) => entry.kind === "file")
+    .map((entry) => entry.name);
+  const nestedFileNames = await readNestedFileNames(projectRoot, entries);
   const names = new Set(entries.map((entry) => entry.name));
+  const signalNames = new Set([...fileNames, ...nestedFileNames]);
 
   return {
     packageJson: names.has("package.json") ? await readPackageJson(projectRoot) : undefined,
-    hasTsconfig: [...names].some((name) => name === "tsconfig.json" || name.startsWith("tsconfig.")),
-    hasPyproject: names.has("pyproject.toml")
+    fileNames,
+    nestedFileNames,
+    hasTsconfig: [...signalNames].some((name) => name === "tsconfig.json" || name.startsWith("tsconfig.")),
+    hasPyproject: signalNames.has("pyproject.toml"),
+    hasPubspec: signalNames.has("pubspec.yaml"),
+    hasPackageJson: signalNames.has("package.json"),
+    hasDockerfile: signalNames.has("Dockerfile"),
+    hasDockerCompose: signalNames.has("docker-compose.yml") || signalNames.has("docker-compose.yaml"),
+    hasRequirements: signalNames.has("requirements.txt"),
+    hasPythonFile: [...signalNames].some((name) => path.extname(name).toLowerCase() === ".py")
   };
+}
+
+async function readNestedFileNames(
+  projectRoot: string,
+  entries: TopLevelEntry[]
+): Promise<string[]> {
+  const nested = await Promise.all(
+    entries
+      .filter((entry) => entry.kind === "directory")
+      .filter((entry) => !ignoredDirectoryNames.has(entry.name))
+      .filter((entry) => !protectedDirectoryNames.has(entry.name))
+      .filter((entry) => !generatedDirectoryNames.has(entry.name))
+      .map(async (entry) => {
+        try {
+          const children = await readdir(path.join(projectRoot, entry.name), {
+            withFileTypes: true
+          });
+          return children
+            .filter((child) => child.isFile())
+            .map((child) => child.name);
+        } catch {
+          return [];
+        }
+      })
+  );
+
+  return [...new Set(nested.flat())];
 }
 
 async function readPackageJson(projectRoot: string): Promise<PackageJson | undefined> {
@@ -398,6 +450,13 @@ function packageDependsOn(packageJson: PackageJson | undefined, dependencyName: 
   return Boolean(
     packageJson?.dependencies?.[dependencyName] || packageJson?.devDependencies?.[dependencyName]
   );
+}
+
+function hasFileSignal(
+  signals: ProjectSignals,
+  predicate: (name: string) => boolean
+): boolean {
+  return [...signals.fileNames, ...signals.nestedFileNames].some(predicate);
 }
 
 async function readTopLevelEntries(projectRoot: string): Promise<TopLevelEntry[]> {

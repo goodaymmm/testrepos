@@ -74,6 +74,40 @@ describe("runDoctor", () => {
     );
   });
 
+  it("warns but does not fail when GitHub branch protection cannot be verified or config backups exist", async () => {
+    const root = await createInitializedGitProject();
+    await writeFile(
+      path.join(root, ".git", "config"),
+      [
+        '[remote "origin"]',
+        "  url = https://github.com/goodaymmm/Kairon.git",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(
+      path.join(root, ".kairon", "config", "project.json.bak-20260601010101"),
+      "{}\n",
+      "utf8"
+    );
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+
+    expect(result.ok).toBe(true);
+    expect(statusById(result, "git.branch_protection")).toBe("warning");
+    expect(statusById(result, "config.backups")).toBe("warning");
+    expect(checkById(result, "git.branch_protection")?.details).toContain(
+      "auth=missing"
+    );
+    expect(checkById(result, "config.backups")?.details).toContain(
+      "backup=.kairon/config/project.json.bak-20260601010101"
+    );
+  });
+
   it("formats doctor output with summary, checks, and next actions", async () => {
     const root = await createInitializedGitProject({ gitignore: false });
     const result = await runDoctor({
