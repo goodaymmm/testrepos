@@ -23,7 +23,7 @@ describe("analyzeProjectDocking", () => {
       proposal_kind: "project_config"
     });
     expect(project.primary_language).toBe("mixed");
-    expect(project.frameworks).toEqual(["flutter", "python"]);
+    expect(project.frameworks).toEqual(["docker", "flutter", "python"]);
     expect(project.package_managers).toEqual(["flutter"]);
     expect(project.paths.protected).toEqual(
       expect.arrayContaining([
@@ -108,6 +108,27 @@ describe("analyzeProjectDocking", () => {
     expect(project.commands.test).toEqual(["npm test"]);
     expect(project.commands.build).toEqual(["npm run build"]);
     expect(project.commands.lint).toEqual([]);
+  });
+
+  it("detects framework and package manager signals one directory below the project root", async () => {
+    const root = await createTempProject();
+    await mkdir(path.join(root, "mobile"), { recursive: true });
+    await mkdir(path.join(root, "web"), { recursive: true });
+    await mkdir(path.join(root, "service"), { recursive: true });
+
+    await writeFile(path.join(root, "mobile", "pubspec.yaml"), "{}\n", "utf8");
+    await writeFile(path.join(root, "web", "package.json"), "{}\n", "utf8");
+    await writeFile(path.join(root, "web", "package-lock.json"), "{}\n", "utf8");
+    await writeFile(path.join(root, "service", "requirements.txt"), "pytest\n", "utf8");
+    await writeFile(path.join(root, "service", "app.py"), "print('ok')\n", "utf8");
+    await writeFile(path.join(root, "Dockerfile"), "FROM node:22\n", "utf8");
+
+    const analysis = await analyzeProjectDocking(root);
+    const project = analysis.project_config;
+
+    expect(project.primary_language).toBe("mixed");
+    expect(project.frameworks).toEqual(["docker", "flutter", "node", "python"]);
+    expect(project.package_managers).toEqual(["flutter", "npm"]);
   });
 });
 

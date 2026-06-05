@@ -98,7 +98,7 @@ async function resolveCandidateRoots(
     .filter((candidate) => candidate.length > 0)
     .map((candidate) => resolveInside(paths.root, candidate))
     .filter((candidate) => !isInside(candidate, paths.kaironDir));
-  const unique = [...new Set(roots)];
+  const unique = [...new Set([...roots, ...(await resolveConfigBackupCandidates(paths.configDir))])];
   const existing: string[] = [];
 
   for (const candidate of unique) {
@@ -115,6 +115,21 @@ async function resolveCandidateRoots(
   return existing.sort((left, right) =>
     toProjectPath(paths.root, left).localeCompare(toProjectPath(paths.root, right))
   );
+}
+
+async function resolveConfigBackupCandidates(configDir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(configDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && /\.json\.bak-\d{14}$/.test(entry.name))
+      .map((entry) => resolveInside(configDir, entry.name));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
 }
 
 async function buildCandidate(

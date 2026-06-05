@@ -14,6 +14,11 @@ describe("createCleanupProposals", () => {
     await writeFile(path.join(root, "dist", "bundle.js"), "console.log('built');\n", "utf8");
     await mkdir(path.join(root, "coverage"), { recursive: true });
     await writeFile(path.join(root, "coverage", "summary.json"), "{}\n", "utf8");
+    await writeFile(
+      path.join(root, ".kairon", "config", "project.json.bak-20260601010101"),
+      "{}\n",
+      "utf8"
+    );
     await mkdir(path.join(root, ".kairon", "tmp", "existing"), { recursive: true });
     await writeFile(path.join(root, ".kairon", "tmp", "existing", "keep.txt"), "keep\n", "utf8");
 
@@ -21,6 +26,7 @@ describe("createCleanupProposals", () => {
 
     expect(proposal.direct_delete).toBe(false);
     expect(proposal.candidates.map((candidate) => candidate.path)).toEqual([
+      ".kairon/config/project.json.bak-20260601010101",
       "coverage",
       "dist"
     ]);

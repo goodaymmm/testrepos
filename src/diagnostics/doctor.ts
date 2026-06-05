@@ -1,4 +1,4 @@
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { defaultAgentAdapters } from "../agents/adapters/index.js";
 import { agentDisplayName } from "../agents/display.js";
@@ -96,6 +96,8 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(checkApiKeyContamination(env));
   checks.push(await checkDiscordConfig(options.projectRoot, env));
   checks.push(await checkGitPolicy(options.projectRoot));
+  checks.push(await checkGitHubBranchProtection(options.projectRoot, env));
+  checks.push(await checkConfigBackups(options.projectRoot));
 
   const summary = countStatuses(checks);
 
@@ -380,6 +382,117 @@ async function checkGitPolicy(projectRoot: string): Promise<DoctorCheck> {
   }
 
   return pass("policy.safety", "Safety policy", details);
+}
+
+async function checkGitHubBranchProtection(
+  projectRoot: string,
+  env: NodeJS.ProcessEnv
+): Promise<DoctorCheck> {
+  const remote = await readGitHubRemote(projectRoot);
+
+  if (remote === undefined) {
+    return pass("git.branch_protection", "GitHub branch protection", [
+      "skipped: no GitHub remote configured"
+    ]);
+  }
+
+  const authPresent = env.GITHUB_TOKEN !== undefined || env.GH_TOKEN !== undefined;
+  const details = [
+    `remote=${remote.name}`,
+    `url=${remote.url}`,
+    `auth=${authPresent ? "present" : "missing"}`,
+    "network_check=skipped"
+  ];
+
+  if (!authPresent) {
+    return warning(
+      "git.branch_protection",
+      "GitHub branch protection",
+      details,
+      "Set GH_TOKEN or GITHUB_TOKEN, then verify branch protection with GitHub before unattended protected branch operations."
+    );
+  }
+
+  return warning(
+    "git.branch_protection",
+    "GitHub branch protection",
+    details,
+    "Branch protection API verification is not available in local doctor yet; verify GitHub settings before protected branch operations."
+  );
+}
+
+async function checkConfigBackups(projectRoot: string): Promise<DoctorCheck> {
+  const backups = await listConfigBackups(projectRoot);
+
+  if (backups.length === 0) {
+    return pass("config.backups", "Config backups", ["no config backups found"]);
+  }
+
+  return warning(
+    "config.backups",
+    "Config backups",
+    [`count=${backups.length}`, ...backups.slice(0, 5).map((backup) => `backup=${backup}`)],
+    "Run kairon maintenance run and review the cleanup proposal before moving old config backups."
+  );
+}
+
+async function readGitHubRemote(
+  projectRoot: string
+): Promise<{ name: string; url: string } | undefined> {
+  try {
+    const config = await readFile(resolveInside(projectRoot, ".git", "config"), "utf8");
+    const remotes = parseGitRemotes(config);
+    return remotes.find((remote) => /github\.com[:/]/i.test(remote.url));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+function parseGitRemotes(config: string): Array<{ name: string; url: string }> {
+  const remotes: Array<{ name: string; url: string }> = [];
+  let currentRemote: string | undefined;
+
+  for (const line of config.split(/\r?\n/)) {
+    const section = /^\s*\[remote\s+"([^"]+)"\]\s*$/.exec(line);
+    if (section !== null) {
+      currentRemote = section[1];
+      continue;
+    }
+
+    if (/^\s*\[/.test(line)) {
+      currentRemote = undefined;
+      continue;
+    }
+
+    const url = /^\s*url\s*=\s*(.+?)\s*$/.exec(line);
+    if (currentRemote !== undefined && url !== null) {
+      remotes.push({ name: currentRemote, url: url[1] ?? "" });
+    }
+  }
+
+  return remotes.filter((remote) => remote.url.length > 0);
+}
+
+async function listConfigBackups(projectRoot: string): Promise<string[]> {
+  const configDir = getKaironPaths(projectRoot).configDir;
+
+  try {
+    const entries = await readdir(configDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && /\.json\.bak-\d{14}$/.test(entry.name))
+      .map((entry) => `.kairon/config/${entry.name}`)
+      .sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
 }
 
 function countStatuses(checks: DoctorCheck[]): Record<DoctorStatus, number> {
