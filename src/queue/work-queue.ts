@@ -79,6 +79,12 @@ export type ExpireReadyTestItemsOptions = {
   code?: string;
 };
 
+export type RequeueClaimOptions = {
+  now?: Date;
+  reason?: string;
+  code?: string;
+};
+
 const defaultQueueState: QueueState = {
   schema_version: "0.1",
   items: []
@@ -186,6 +192,32 @@ export class WorkQueue {
       item.error = error;
       item.failed_at = now;
       item.updated_at = now;
+      delete item.claim_expires_at;
+    });
+  }
+
+  async requeueClaim(
+    itemId: string,
+    options: RequeueClaimOptions = {}
+  ): Promise<QueueItem> {
+    return this.updateItem(itemId, (item) => {
+      if (item.status !== "claimed") {
+        throw new Error(`Queue item is not claimed: ${itemId}`);
+      }
+
+      const now = options.now ?? new Date();
+      item.status = "ready";
+      item.updated_at = now.toISOString();
+      item.result = {
+        ...(item.result ?? {}),
+        recovery: {
+          reason: options.reason ?? "Recovered expired queue claim.",
+          code: options.code ?? "runtime_recovery_requeued",
+          recovered_at: now.toISOString()
+        }
+      };
+      delete item.claimed_by;
+      delete item.claimed_at;
       delete item.claim_expires_at;
     });
   }

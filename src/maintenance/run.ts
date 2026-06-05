@@ -5,6 +5,10 @@ import {
   isRagEnabled,
   type BuildRagIndexResult
 } from "../rag/lexical-index.js";
+import {
+  runRuntimeRecovery,
+  type RuntimeRecoveryResult
+} from "../recovery/runtime-recovery.js";
 import { getLocalDateKey } from "../runtime/schedule-engine.js";
 import {
   createCleanupProposals,
@@ -28,6 +32,10 @@ export type DailyMaintenanceResult = {
   cleanup_proposal: CleanupProposal;
   handoffs: AgentHandoff[];
   expired_test_queue_item_ids: string[];
+  recovery: Pick<
+    RuntimeRecoveryResult,
+    "artifact_path" | "summary" | "recovery_id"
+  >;
   rag_index?: Pick<
     BuildRagIndexResult,
     "index_path" | "source_count" | "chunk_count"
@@ -45,6 +53,7 @@ export async function runDailyMaintenance(
   const now = request.now ?? new Date();
   const date = request.date ?? (await resolveDate(projectRoot, now));
   const expiredTestItems = await new WorkQueue(projectRoot).expireStaleTestItems(now);
+  const recovery = await runRuntimeRecovery(projectRoot, { now });
   const cleanupProposal = await createCleanupProposals(projectRoot, { date });
   const dailyReport = await createDailyReport(projectRoot, { date });
   const handoffs = await createDailyHandoffs(projectRoot, {
@@ -66,6 +75,11 @@ export async function runDailyMaintenance(
     cleanup_proposal: cleanupProposal,
     handoffs,
     expired_test_queue_item_ids: expiredTestItems.map((item) => item.id),
+    recovery: {
+      recovery_id: recovery.recovery_id,
+      artifact_path: recovery.artifact_path,
+      summary: recovery.summary
+    },
     rag_index:
       ragIndex === undefined
         ? undefined

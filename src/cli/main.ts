@@ -20,6 +20,7 @@ import { initializeProject } from "./commands/init.js";
 import { closeActiveWork } from "./commands/leave.js";
 import { runMaintenance } from "./commands/maintenance.js";
 import { runMigrations } from "./commands/migrate.js";
+import { runRecovery } from "./commands/recovery.js";
 import { runReviewLoopCommand } from "./commands/review.js";
 import { startRuntime } from "./commands/start.js";
 import { getStatusText } from "./commands/status.js";
@@ -228,6 +229,24 @@ export function createProgram(): Command {
   const review = program
     .command("review")
     .description("Run and inspect Kairon review loops.");
+
+  const recovery = program
+    .command("recovery")
+    .description("Run runtime recovery workflows.");
+
+  recovery
+    .command("run")
+    .description("Scan stale runtime state and recover safe work.")
+    .option("--claim-timeout-ms <ms>", "Fallback age for claimed queue items without claim expiry.")
+    .option("--runner-stale-ms <ms>", "Age threshold for stale running runner metadata.")
+    .option("--heartbeat-stale-ms <ms>", "Age threshold for stale daemon heartbeat.")
+    .action(async (options: {
+      claimTimeoutMs?: string;
+      runnerStaleMs?: string;
+      heartbeatStaleMs?: string;
+    }) => {
+      console.log(await runRecovery(process.cwd(), options));
+    });
 
   review
     .command("run")

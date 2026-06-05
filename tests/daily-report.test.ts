@@ -58,6 +58,15 @@ describe("createDailyReport", () => {
       status: "completed",
       created_at: "2026-05-25T06:00:00.000Z"
     });
+    await writeJsonFileAtomic(path.join(root, ".kairon", "recovery", "REC-20260525070000000.json"), {
+      schema_version: "0.1",
+      recovery_id: "REC-20260525070000000",
+      created_at: "2026-05-25T07:00:00.000Z",
+      summary: {
+        requeued_items: 1,
+        approvals_requested: 0
+      }
+    });
 
     const report = await createDailyReport(root, { date: "2026-05-25" });
 
@@ -77,11 +86,16 @@ describe("createDailyReport", () => {
       branches_total: 1,
       transactions_total: 1
     });
+    expect(report.recovery).toMatchObject({
+      total: 1,
+      items: [expect.objectContaining({ recovery_id: "REC-20260525070000000" })]
+    });
     await expect(
       readJsonFile(path.join(root, ".kairon", "reports", "daily", "2026-05-25.json"))
     ).resolves.toMatchObject({
       date: "2026-05-25",
-      runs: { total: 1 }
+      runs: { total: 1 },
+      recovery: { total: 1 }
     });
   });
 });

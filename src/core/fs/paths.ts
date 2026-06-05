@@ -13,6 +13,7 @@ export type KaironPaths = {
   runsDir: string;
   sessionsDir: string;
   runtimeDir: string;
+  recoveryDir: string;
   reportsDir: string;
   cleanupDir: string;
   tmpDir: string;
@@ -58,6 +59,7 @@ export function getKaironPaths(projectRoot: string): KaironPaths {
     runsDir: resolveInside(kaironDir, "runs"),
     sessionsDir: resolveInside(kaironDir, "sessions"),
     runtimeDir: resolveInside(kaironDir, "runtime"),
+    recoveryDir: resolveInside(kaironDir, "recovery"),
     reportsDir: resolveInside(kaironDir, "reports"),
     cleanupDir: resolveInside(kaironDir, "cleanup"),
     tmpDir: resolveInside(kaironDir, "tmp")
