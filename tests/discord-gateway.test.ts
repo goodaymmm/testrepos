@@ -158,6 +158,121 @@ describe("prepareDiscordGateway", () => {
     });
   });
 
+  it("records setup guidance when slash command registration is missing access", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await enableDiscordProvider(root);
+    const client = new FakeDiscordClient("bot-user");
+    const error = fakeDiscordApiError({
+      code: 50001,
+      status: 403,
+      message: "Missing Access"
+    });
+
+    const handle = await startDiscordGateway(root, {
+      env: readyEnv(),
+      clientFactory: () => client,
+      restFactory: () => failingRestRegistration(error),
+      readyTimeoutMs: 50
+    });
+
+    expect(handle).toMatchObject({
+      status: "setup_required",
+      reason: "discord_missing_access_register_commands"
+    });
+    expect(client.destroyed).toBe(true);
+    const gateway = await readJsonFile<Record<string, unknown>>(
+      path.join(root, ".kairon", "runtime", "discord", "gateway.json")
+    );
+    expect(gateway).toMatchObject({
+      status: "setup_required",
+      error_code: "discord_missing_access_register_commands",
+      operation: "register_commands",
+      commands_registered: false,
+      discord_error_code: "50001",
+      http_status: 403
+    });
+    expect(String(gateway.error)).toContain("registering slash commands");
+    expect(JSON.stringify(gateway)).not.toContain("DiscordAPIError");
+  });
+
+  it("records setup guidance when Discord rejects command registration form", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await enableDiscordProvider(root);
+    const client = new FakeDiscordClient("bot-user");
+
+    const handle = await startDiscordGateway(root, {
+      env: readyEnv(),
+      clientFactory: () => client,
+      restFactory: () =>
+        failingRestRegistration(
+          fakeDiscordApiError({
+            code: 50035,
+            status: 400,
+            message: "Invalid Form Body"
+          })
+        ),
+      readyTimeoutMs: 50
+    });
+
+    expect(handle).toMatchObject({
+      status: "setup_required",
+      reason: "discord_invalid_form_body"
+    });
+    const gateway = await readJsonFile<Record<string, unknown>>(
+      path.join(root, ".kairon", "runtime", "discord", "gateway.json")
+    );
+    expect(gateway).toMatchObject({
+      status: "setup_required",
+      error_code: "discord_invalid_form_body",
+      operation: "register_commands",
+      commands_registered: false,
+      discord_error_code: "50035",
+      http_status: 400
+    });
+  });
+
+  it("records setup guidance when approval channel access is missing", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await enableDiscordProvider(root);
+    const client = new FakeDiscordClient("bot-user");
+    const rest = new FakeDiscordRestRegistration();
+    const handlePromise = startDiscordGateway(root, {
+      env: readyEnv(),
+      clientFactory: () => client,
+      restFactory: () => rest,
+      approvalChannelFactory: () => {
+        throw fakeDiscordApiError({
+          code: 50001,
+          status: 403,
+          message: "Missing Access"
+        });
+      },
+      readyTimeoutMs: 50
+    });
+    await client.waitForLogin();
+    client.emitReady();
+    const handle = await handlePromise;
+
+    expect(handle).toMatchObject({
+      status: "setup_required",
+      reason: "discord_missing_access_approval_channel"
+    });
+    expect(client.destroyed).toBe(true);
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runtime", "discord", "gateway.json"))
+    ).resolves.toMatchObject({
+      status: "setup_required",
+      error_code: "discord_missing_access_approval_channel",
+      operation: "resolve_approval_channel",
+      commands_registered: true,
+      discord_error_code: "50001",
+      http_status: 403
+    });
+  });
+
   it("registers slash commands, records ready, and supports shutdown", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
@@ -476,6 +591,34 @@ class FakeDiscordRestRegistration implements DiscordRestRegistration {
     }
   };
   puts: Array<{ route: string; body: unknown }> = [];
+}
+
+function failingRestRegistration(error: unknown): DiscordRestRegistration {
+  return {
+    route: `/applications/${discordIds.application}/guilds/${discordIds.guild}/commands`,
+    rest: {
+      put: async () => {
+        throw error;
+      }
+    }
+  };
+}
+
+function fakeDiscordApiError(input: {
+  code: number;
+  status: number;
+  message: string;
+}): Error & { code: number; status: number; rawError: { message: string } } {
+  const error = new Error(input.message) as Error & {
+    code: number;
+    status: number;
+    rawError: { message: string };
+  };
+  error.name = "DiscordAPIError";
+  error.code = input.code;
+  error.status = input.status;
+  error.rawError = { message: input.message };
+  return error;
 }
 
 class FakeSlashInteraction implements DiscordGatewayInteraction {

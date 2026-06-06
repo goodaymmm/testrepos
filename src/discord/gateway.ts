@@ -90,7 +90,7 @@ export type DiscordGatewayRuntimeStatus =
     }
   | {
       schema_version: string;
-      status: "starting" | "ready" | "error" | "stopped";
+      status: "starting" | "ready" | "setup_required" | "error" | "stopped";
       mode: "gateway";
       application_id: string;
       guild_id: string;
@@ -99,6 +99,11 @@ export type DiscordGatewayRuntimeStatus =
       approval_notifications?: DiscordApprovalNotificationResult;
       client_user_id?: string;
       error?: string;
+      error_code?: string;
+      operation?: string;
+      next_action?: string;
+      discord_error_code?: string;
+      http_status?: number;
       reconnect?: {
         enabled: boolean;
         max_backoff_seconds: number;
@@ -154,8 +159,10 @@ export type DiscordGatewayInteraction = {
 };
 
 export type DiscordGatewayHandle = {
-  status: PreparedDiscordGateway["status"];
+  status: PreparedDiscordGateway["status"] | "setup_required" | "error";
   status_path: string;
+  reason?: string;
+  next_action?: string;
   stop(): Promise<void>;
 };
 
@@ -174,6 +181,22 @@ export type StartDiscordGatewayOptions = {
     client: DiscordGatewayClient
   ) => Promise<DiscordApprovalChannel | null> | DiscordApprovalChannel | null;
   approvalScanIntervalMs?: number;
+};
+
+type DiscordGatewaySetupOperation =
+  | "register_commands"
+  | "login"
+  | "wait_for_ready"
+  | "resolve_approval_channel"
+  | "notify_approvals";
+
+type ClassifiedDiscordGatewayError = {
+  status: "setup_required" | "error";
+  error_code: string;
+  error: string;
+  next_action: string;
+  discord_error_code?: string;
+  http_status?: number;
 };
 
 export async function prepareDiscordGateway(
@@ -355,30 +378,117 @@ export async function startDiscordGateway(
     });
   });
 
-  const ready = waitForReady(client, options.readyTimeoutMs ?? 30_000);
-
   if (prepared.register_commands_on_start) {
-    await registerKaironSlashCommands(
-      prepared,
-      options.restFactory ?? createDiscordJsRestRegistration
+    const setupFailure = await handleDiscordGatewaySetupFailure(
+      () =>
+        registerKaironSlashCommands(
+          prepared,
+          options.restFactory ?? createDiscordJsRestRegistration
+        ),
+      {
+        projectRoot,
+        prepared,
+        client,
+        now,
+        operation: "register_commands",
+        commandsRegistered: false,
+        reconnectAttempts,
+        getApprovalNotifications: () => lastApprovalNotificationResult
+      }
     );
+    if (setupFailure !== null) {
+      return setupFailure;
+    }
   }
 
-  await client.login(prepared.bot_token);
-  await ready;
-
-  approvalChannel = await resolveApprovalChannel(
-    prepared,
-    client,
-    options.approvalChannelFactory
-  );
-  if (approvalChannel !== null) {
-    lastApprovalNotificationResult = await notifyPendingDiscordApprovals(
+  const ready = waitForReady(client, options.readyTimeoutMs ?? 30_000);
+  const loginFailure = await handleDiscordGatewaySetupFailure(
+    async () => {
+      await client.login(prepared.bot_token);
+    },
+    {
       projectRoot,
       prepared,
-      approvalChannel,
-      { now }
+      client,
+      now,
+      operation: "login",
+      commandsRegistered: prepared.register_commands_on_start,
+      reconnectAttempts,
+      getApprovalNotifications: () => lastApprovalNotificationResult
+    }
+  );
+  if (loginFailure !== null) {
+    void ready.catch(() => undefined);
+    return loginFailure;
+  }
+
+  const readyFailure = await handleDiscordGatewaySetupFailure(
+    async () => {
+      await ready;
+    },
+    {
+      projectRoot,
+      prepared,
+      client,
+      now,
+      operation: "wait_for_ready",
+      commandsRegistered: prepared.register_commands_on_start,
+      reconnectAttempts,
+      getApprovalNotifications: () => lastApprovalNotificationResult
+    }
+  );
+  if (readyFailure !== null) {
+    return readyFailure;
+  }
+
+  const channelFailure = await handleDiscordGatewaySetupFailure(
+    async () => {
+      approvalChannel = await resolveApprovalChannel(
+        prepared,
+        client,
+        options.approvalChannelFactory
+      );
+    },
+    {
+      projectRoot,
+      prepared,
+      client,
+      now,
+      operation: "resolve_approval_channel",
+      commandsRegistered: prepared.register_commands_on_start,
+      reconnectAttempts,
+      getApprovalNotifications: () => lastApprovalNotificationResult
+    }
+  );
+  if (channelFailure !== null) {
+    return channelFailure;
+  }
+
+  if (approvalChannel !== null) {
+    const notificationFailure = await handleDiscordGatewaySetupFailure(
+      async () => {
+        lastApprovalNotificationResult = await notifyPendingDiscordApprovals(
+          projectRoot,
+          prepared,
+          approvalChannel!,
+          { now }
+        );
+      },
+      {
+        projectRoot,
+        prepared,
+        client,
+        now,
+        operation: "notify_approvals",
+        commandsRegistered: prepared.register_commands_on_start,
+        reconnectAttempts,
+        getApprovalNotifications: () => lastApprovalNotificationResult
+      }
     );
+    if (notificationFailure !== null) {
+      return notificationFailure;
+    }
+
     approvalScanTimer = setInterval(() => {
       void notifyPendingDiscordApprovals(projectRoot, prepared, approvalChannel!, {
         now
@@ -774,6 +884,153 @@ async function registerKaironSlashCommands(
   });
 }
 
+async function handleDiscordGatewaySetupFailure(
+  action: () => Promise<unknown> | unknown,
+  context: {
+    projectRoot: string;
+    prepared: PreparedDiscordGateway & { status: "ready" };
+    client: DiscordGatewayClient;
+    now: () => Date;
+    operation: DiscordGatewaySetupOperation;
+    commandsRegistered: boolean;
+    reconnectAttempts: number;
+    getApprovalNotifications: () => DiscordApprovalNotificationResult | undefined;
+  }
+): Promise<DiscordGatewayHandle | null> {
+  try {
+    await action();
+    return null;
+  } catch (error) {
+    const classified = classifyDiscordGatewayError(error, context.operation);
+    await destroyDiscordClientQuietly(context.client);
+    await writeGatewayStatus(context.projectRoot, {
+      schema_version: "0.1",
+      status: classified.status,
+      mode: "gateway",
+      application_id: context.prepared.application_id,
+      guild_id: context.prepared.guild_id,
+      approval_channel_id: context.prepared.approval_channel_id,
+      commands_registered: context.commandsRegistered,
+      approval_notifications: context.getApprovalNotifications(),
+      error: classified.error,
+      error_code: classified.error_code,
+      operation: context.operation,
+      next_action: classified.next_action,
+      discord_error_code: classified.discord_error_code,
+      http_status: classified.http_status,
+      reconnect: {
+        ...context.prepared.reconnect,
+        attempts: context.reconnectAttempts
+      },
+      updated_at: context.now().toISOString()
+    });
+
+    return {
+      status: classified.status,
+      status_path: toProjectPath(
+        context.projectRoot,
+        discordGatewayStatusPath(context.projectRoot)
+      ),
+      reason: classified.error_code,
+      next_action: classified.next_action,
+      stop: async () => undefined
+    };
+  }
+}
+
+function classifyDiscordGatewayError(
+  error: unknown,
+  operation: DiscordGatewaySetupOperation
+): ClassifiedDiscordGatewayError {
+  const discordErrorCode = getErrorNumber(error, "code");
+  const httpStatus = getErrorNumber(error, "status");
+  const discord_error_code =
+    discordErrorCode === undefined ? undefined : String(discordErrorCode);
+
+  if (discordErrorCode === 50035) {
+    return {
+      status: "setup_required",
+      error_code: "discord_invalid_form_body",
+      error: "Discord API rejected gateway setup: invalid form body.",
+      next_action:
+        "Verify the configured Discord application, guild, and channel IDs belong together, then retry.",
+      discord_error_code,
+      http_status: httpStatus
+    };
+  }
+
+  if (discordErrorCode === 50001 && operation === "register_commands") {
+    return {
+      status: "setup_required",
+      error_code: "discord_missing_access_register_commands",
+      error: "Discord API denied access while registering slash commands.",
+      next_action:
+        "Invite the bot to the configured guild with bot and applications.commands scopes, then retry.",
+      discord_error_code,
+      http_status: httpStatus
+    };
+  }
+
+  if (discordErrorCode === 50001 && operation === "resolve_approval_channel") {
+    return {
+      status: "setup_required",
+      error_code: "discord_missing_access_approval_channel",
+      error: "Discord API denied access to the configured approval channel.",
+      next_action:
+        "Verify KAIRON_DISCORD_APPROVAL_CHANNEL_ID and grant the bot View Channel and Send Messages permissions.",
+      discord_error_code,
+      http_status: httpStatus
+    };
+  }
+
+  if (operation === "wait_for_ready") {
+    return {
+      status: "error",
+      error_code: "discord_gateway_ready_timeout",
+      error: "Discord Gateway did not become ready before the timeout.",
+      next_action:
+        "Check the bot token, Discord gateway connectivity, and bot intents, then retry.",
+      discord_error_code,
+      http_status: httpStatus
+    };
+  }
+
+  return {
+    status: "error",
+    error_code: `discord_gateway_${operation}_failed`,
+    error: `Discord Gateway setup failed during ${operation}.`,
+    next_action:
+      "Check Discord connectivity, bot configuration, and Kairon gateway artifacts, then retry.",
+    discord_error_code,
+    http_status: httpStatus
+  };
+}
+
+async function destroyDiscordClientQuietly(client: DiscordGatewayClient): Promise<void> {
+  try {
+    await client.destroy();
+  } catch {
+    // The original setup failure is more useful than a shutdown failure here.
+  }
+}
+
+function getErrorNumber(error: unknown, key: "code" | "status"): number | undefined {
+  if (typeof error !== "object" || error === null || !(key in error)) {
+    return undefined;
+  }
+
+  const value = (error as Record<string, unknown>)[key];
+  if (typeof value === "number") {
+    return value;
+  }
+
+  if (typeof value === "string" && /^\d+$/.test(value)) {
+    return Number(value);
+  }
+
+  return undefined;
+}
+
 async function createDiscordJsClient(): Promise<DiscordGatewayClient> {
   const { Client, GatewayIntentBits } = await import("discord.js");
   return new Client({
@@ -801,6 +1058,7 @@ function waitForReady(
       settled = true;
       reject(new Error("Discord Gateway ready timeout."));
     }, timeoutMs);
+    timeout.unref?.();
 
     const onReady = () => {
       if (settled) {

@@ -35,12 +35,25 @@ export async function startRuntime(
           maxTicks: options.maxTicks,
           maxIdleTicks: options.maxIdleTicks
         }).run();
-        return [
+        const lines = [
           `Kairon runtime daemon stopped. pid=${status.locked ? status.data.pid : "unknown"}`,
           `runtime.daemon.ticks=${result.ticks}`,
           `runtime.daemon.idleTicks=${result.idle_ticks}`,
           `runtime.daemon.stopReason=${result.stop_reason}`
-        ].join("\n");
+        ];
+        if (
+          discordGateway.status === "setup_required" ||
+          discordGateway.status === "error"
+        ) {
+          lines.push(`discord.gateway.status=${discordGateway.status}`);
+          if (discordGateway.reason !== undefined) {
+            lines.push(`discord.gateway.reason=${discordGateway.reason}`);
+          }
+          if (discordGateway.next_action !== undefined) {
+            lines.push(`discord.gateway.next=${discordGateway.next_action}`);
+          }
+        }
+        return lines.join("\n");
       } finally {
         await discordGateway.stop();
         unregisterSignals();
