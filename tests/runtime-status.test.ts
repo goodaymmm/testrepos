@@ -21,6 +21,18 @@ describe("runtime status", () => {
       id: "APR-0001",
       status: "pending"
     });
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "runtime", "discord", "gateway.json"),
+      {
+        schema_version: "0.1",
+        status: "setup_required",
+        commands_registered: false,
+        error_code: "discord_missing_access_approval_channel",
+        operation: "resolve_approval_channel",
+        http_status: 403,
+        next_action: "Verify token=SHOULD_NOT_LEAK and channel permissions."
+      }
+    );
 
     const status = await getRuntimeStatus(root);
     expect(status.runtimeLock.locked).toBe(true);
@@ -30,5 +42,11 @@ describe("runtime status", () => {
     expect(status.approvals.pending).toBe(1);
     expect(formatRuntimeStatus(status)).toContain("queue.ready=1");
     expect(formatRuntimeStatus(status)).toContain("runtime.mode=daemon");
+    expect(formatRuntimeStatus(status)).toContain("discord.gateway.status=setup_required");
+    expect(formatRuntimeStatus(status)).toContain(
+      "discord.gateway.errorCode=discord_missing_access_approval_channel"
+    );
+    expect(formatRuntimeStatus(status)).toContain("discord.gateway.httpStatus=403");
+    expect(formatRuntimeStatus(status)).not.toContain("SHOULD_NOT_LEAK");
   });
 });

@@ -25,14 +25,23 @@ export type RuntimeStatus = {
   approvals: {
     pending: number;
   };
+  discordGateway?: {
+    status?: string;
+    commands_registered?: boolean;
+    error_code?: string;
+    operation?: string;
+    next_action?: string;
+    http_status?: number;
+  };
 };
 
 export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStatus> {
-  const [schedule, lock, queueItems, pendingApprovals] = await Promise.all([
+  const [schedule, lock, queueItems, pendingApprovals, discordGateway] = await Promise.all([
     getScheduleStatus(projectRoot),
     readRuntimeLockStatus(projectRoot),
     new WorkQueue(projectRoot).list(),
-    countPendingApprovals(projectRoot)
+    countPendingApprovals(projectRoot),
+    readDiscordGatewaySummary(projectRoot)
   ]);
 
   return {
@@ -55,7 +64,8 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     },
     approvals: {
       pending: pendingApprovals
-    }
+    },
+    discordGateway
   };
 }
 
@@ -78,10 +88,71 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
     `queue.ready=${status.queue.ready}`,
     `queue.claimed=${status.queue.claimed}`,
     `queue.failed=${status.queue.failed}`,
-    `approvals.pending=${status.approvals.pending}`
+    `approvals.pending=${status.approvals.pending}`,
+    status.discordGateway?.status === undefined
+      ? null
+      : `discord.gateway.status=${status.discordGateway.status}`,
+    status.discordGateway?.commands_registered === undefined
+      ? null
+      : `discord.gateway.commandsRegistered=${status.discordGateway.commands_registered}`,
+    status.discordGateway?.error_code === undefined
+      ? null
+      : `discord.gateway.errorCode=${status.discordGateway.error_code}`,
+    status.discordGateway?.operation === undefined
+      ? null
+      : `discord.gateway.operation=${status.discordGateway.operation}`,
+    status.discordGateway?.http_status === undefined
+      ? null
+      : `discord.gateway.httpStatus=${status.discordGateway.http_status}`,
+    status.discordGateway?.next_action === undefined
+      ? null
+      : `discord.gateway.nextAction=${status.discordGateway.next_action}`
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
+}
+
+async function readDiscordGatewaySummary(
+  projectRoot: string
+): Promise<RuntimeStatus["discordGateway"] | undefined> {
+  try {
+    const gateway = await readJsonFile<Record<string, unknown>>(
+      path.join(getKaironPaths(projectRoot).runtimeDir, "discord", "gateway.json")
+    );
+    return {
+      status: asString(gateway.status),
+      commands_registered: asBoolean(gateway.commands_registered),
+      error_code: asString(gateway.error_code),
+      operation: asString(gateway.operation),
+      next_action: sanitizeStatusText(asString(gateway.next_action)),
+      http_status: asNumber(gateway.http_status)
+    };
+  } catch (error) {
+    if (String(error).includes("ENOENT")) {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === "number" ? value : undefined;
+}
+
+function sanitizeStatusText(value: string | undefined): string | undefined {
+  return value
+    ?.replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 async function countPendingApprovals(projectRoot: string): Promise<number> {

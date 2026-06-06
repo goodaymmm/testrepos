@@ -13,6 +13,7 @@ import {
   type NormalizedDiscordCommand
 } from "./interactions.js";
 import { StateApplier, type InternalCommand } from "../state/state-applier.js";
+import { formatRuntimeStatus, getRuntimeStatus } from "../runtime/status.js";
 import { CommandInbox } from "../queue/command-inbox.js";
 import {
   notifyPendingDiscordApprovals,
@@ -751,13 +752,40 @@ async function applyGatewayInteractionSideEffects(
 
   if (
     result.command.type !== "approval.decide" &&
-    result.command.type !== "approval.snooze"
+    result.command.type !== "approval.snooze" &&
+    result.command.type !== "runtime.status" &&
+    result.command.type !== "schedule.close_active_work"
   ) {
     return undefined;
   }
 
   const inbox = new CommandInbox(projectRoot);
   try {
+    if (result.command.type === "runtime.status") {
+      const statusText = formatRuntimeStatus(await getRuntimeStatus(projectRoot));
+      await inbox.complete(result.command_id, {
+        summary: statusText.split("\n")
+      });
+      return {
+        content: formatDiscordStatusReply(statusText),
+        command_status: "completed"
+      };
+    }
+
+    if (result.command.type === "schedule.close_active_work") {
+      const applied = await new StateApplier(projectRoot).applyCommand(
+        result.command as InternalCommand
+      );
+      await inbox.complete(result.command_id, {
+        applied_event_ids: applied.appliedEventIds
+      });
+      return {
+        content: "Active Work closed for today.",
+        command_status: "completed",
+        applied_event_ids: applied.appliedEventIds
+      };
+    }
+
     const applied = await new StateApplier(projectRoot).applyCommand(
       result.command as InternalCommand
     );
@@ -862,9 +890,14 @@ async function respondToInteraction(
 
   await interaction.editReply({
     content: result.duplicate
-      ? `Kairon command is already queued: ${result.command_id}`
+      ? `Kairon command was already handled: ${result.command_id}`
       : `Kairon command queued: ${result.command_id}`
   });
+}
+
+function formatDiscordStatusReply(statusText: string): string {
+  const content = `Kairon status:\n${statusText}`;
+  return content.length <= 1900 ? content : `${content.slice(0, 1897)}...`;
 }
 
 async function resolveApprovalChannel(
