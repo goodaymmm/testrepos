@@ -19,6 +19,18 @@ describe("kairon-operation-test.ps1", () => {
     );
   });
 
+  it("includes a targeted RuntimeReview operation test", async () => {
+    const script = await readFile(
+      path.resolve("scripts", "kairon-operation-test.ps1"),
+      "utf8"
+    );
+
+    expect(script).toContain("RuntimeReview");
+    expect(script).toContain("Add-KaironReviewQueueItem");
+    expect(script).toContain("tick\\.item_type=review\\.run");
+    expect(script).toContain("runtime processed $actualItemId instead of expected $expectedItemId");
+  });
+
   runIfPowerShell("runs external commands without recursive scriptblock capture", async () => {
     const root = await createTempProject();
     const kaironRoot = path.join(root, "kairon");
