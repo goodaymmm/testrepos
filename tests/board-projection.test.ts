@@ -1,7 +1,9 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { renderBoardHtml } from "../src/board/html.js";
 import { createBoardProjection, exportBoardProjection } from "../src/board/projection.js";
+import { startBoardServer } from "../src/board/server.js";
 import { exportBoard } from "../src/cli/commands/board.js";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
@@ -102,6 +104,59 @@ describe("board projection", () => {
 
     expect(output).toContain("Kairon board projection exported.");
     expect(output).toContain("projection=.kairon/board/projection.json");
+  });
+
+  it("renders sanitized read-only board HTML with approval anchors", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await seedBoardArtifacts(root);
+
+    const projection = await createBoardProjection(root, {
+      now: () => new Date("2026-06-01T00:00:00.000Z")
+    });
+    const html = renderBoardHtml(projection);
+
+    expect(html).toContain("<title>Kairon Board</title>");
+    expect(html).toContain('id="approval-APR-0001"');
+    expect(html).toContain('href="#approval-APR-0001"');
+    expect(html).toContain("/projection.json");
+    expect(html).not.toContain("FULL_DIFF_SHOULD_NOT_APPEAR");
+    expect(html).not.toContain("FULL_STDOUT_SHOULD_NOT_APPEAR");
+    expect(html).not.toContain("SHOULD_NOT_LEAK");
+  });
+
+  it("serves the board on loopback only", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await seedBoardArtifacts(root);
+
+    await expect(
+      startBoardServer(root, { host: "0.0.0.0", port: 0 })
+    ).rejects.toThrow("127.0.0.1");
+
+    const server = await startBoardServer(root, {
+      host: "localhost",
+      port: 0,
+      now: () => new Date("2026-06-01T00:00:00.000Z")
+    });
+
+    try {
+      expect(server.board_url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
+      expect(server.projection_path).toBe(".kairon/board/projection.json");
+
+      const htmlResponse = await fetch(server.board_url);
+      expect(htmlResponse.status).toBe(200);
+      expect(await htmlResponse.text()).toContain("Kairon Board");
+
+      const projectionResponse = await fetch(`${server.board_url}projection.json`);
+      expect(projectionResponse.status).toBe(200);
+      expect(await projectionResponse.json()).toMatchObject({
+        kind: "board_projection",
+        generated_at: "2026-06-01T00:00:00.000Z"
+      });
+    } finally {
+      await server.stop();
+    }
   });
 });
 

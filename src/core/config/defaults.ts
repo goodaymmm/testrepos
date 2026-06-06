@@ -182,6 +182,10 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           enabled: true,
           max_backoff_seconds: 60
         }
+      },
+      board: {
+        enabled: false,
+        base_url: "http://127.0.0.1:8787"
       }
     },
     "rag.json": {

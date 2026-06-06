@@ -70,4 +70,18 @@ describe("createProgram", () => {
 
     expect(run?.options.map((option) => option.long)).toContain("--build-rag");
   });
+
+  it("registers board export and serve commands", () => {
+    const board = createProgram().commands.find((command) => command.name() === "board");
+
+    expect(board?.commands.map((command) => command.name()).sort()).toEqual([
+      "export",
+      "serve"
+    ]);
+    expect(
+      board?.commands
+        .find((command) => command.name() === "serve")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--host", "--port", "--recent"]));
+  });
 });

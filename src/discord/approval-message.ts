@@ -87,6 +87,7 @@ export function buildApprovalMessage(
     approval.risk_reason === undefined
       ? null
       : field("Risk reason", sanitize(approval.risk_reason), false),
+    approval.board_url === undefined ? null : field("Board", approval.board_url, false),
     field("Summary", formatSummaryItems(approval.summary_items ?? []), false),
     field("Checks", formatChecks(approval.checks ?? []), false)
   ].filter((item): item is NonNullable<typeof item> => item !== null);
