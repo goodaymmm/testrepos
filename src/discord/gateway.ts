@@ -199,6 +199,8 @@ type ClassifiedDiscordGatewayError = {
   http_status?: number;
 };
 
+const DISCORD_CLIENT_READY_EVENT = "clientReady";
+
 export async function prepareDiscordGateway(
   projectRoot: string,
   env: NodeJS.ProcessEnv = process.env
@@ -1069,8 +1071,7 @@ function waitForReady(
       resolve();
     };
 
-    client.once("clientReady", onReady);
-    client.once("ready", onReady);
+    client.once(DISCORD_CLIENT_READY_EVENT, onReady);
   });
 }
 

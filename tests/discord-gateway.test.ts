@@ -254,6 +254,8 @@ describe("prepareDiscordGateway", () => {
       readyTimeoutMs: 50
     });
     await client.waitForLogin();
+    expect(client.onceEventNames()).toContain("clientReady");
+    expect(client.onceEventNames()).not.toContain("ready");
     client.emitReady();
     const handle = await handlePromise;
 
@@ -664,15 +666,15 @@ class FakeDiscordClient implements DiscordGatewayClient {
   }
 
   emitReady(): void {
-    const handlers = [
-      ...(this.onceHandlers.get("clientReady") ?? []),
-      ...(this.onceHandlers.get("ready") ?? [])
-    ];
+    const handlers = [...(this.onceHandlers.get("clientReady") ?? [])];
     this.onceHandlers.delete("clientReady");
-    this.onceHandlers.delete("ready");
     for (const handler of handlers) {
       handler();
     }
+  }
+
+  onceEventNames(): string[] {
+    return [...this.onceHandlers.keys()];
   }
 
   async emitInteraction(interaction: DiscordGatewayInteraction): Promise<void> {
