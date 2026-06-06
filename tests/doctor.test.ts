@@ -6,6 +6,14 @@ import { formatDoctorResult, runDoctor } from "../src/diagnostics/doctor.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { createTempProject } from "./test-utils.js";
 
+const discordIds = {
+  application: "111111111111111111",
+  guild: "222222222222222222",
+  channel: "333333333333333333",
+  owner: "444444444444444444",
+  teammate: "555555555555555555"
+};
+
 describe("runDoctor", () => {
   it("passes a healthy initialized project", async () => {
     const root = await createInitializedGitProject();
@@ -89,11 +97,11 @@ describe("runDoctor", () => {
       commandAvailability: async () => true,
       env: {
         KAIRON_DISCORD_BOT_TOKEN: "secret-bot-token",
-        KAIRON_DISCORD_APPLICATION_ID: "app-id",
-        KAIRON_DISCORD_GUILD_ID: "guild-id",
-        KAIRON_DISCORD_APPROVAL_CHANNEL_ID: "approval-channel",
-        KAIRON_DISCORD_OWNER_USER_ID: "owner-user",
-        KAIRON_DISCORD_ALLOWED_USER_IDS: "owner-user,teammate"
+        KAIRON_DISCORD_APPLICATION_ID: discordIds.application,
+        KAIRON_DISCORD_GUILD_ID: discordIds.guild,
+        KAIRON_DISCORD_APPROVAL_CHANNEL_ID: discordIds.channel,
+        KAIRON_DISCORD_OWNER_USER_ID: discordIds.owner,
+        KAIRON_DISCORD_ALLOWED_USER_IDS: `${discordIds.owner},${discordIds.teammate}`
       }
     });
     const text = formatDoctorResult(result);
@@ -105,13 +113,15 @@ describe("runDoctor", () => {
         "gateway_status=ready",
         "live_status=ready",
         "live_missing_env=none",
+        "gateway_invalid_env=none",
+        "live_invalid_env=none",
         "KAIRON_DISCORD_BOT_TOKEN=present",
         "KAIRON_DISCORD_ALLOWED_USER_IDS=present"
       ])
     );
     expect(text).not.toContain("secret-bot-token");
-    expect(text).not.toContain("approval-channel");
-    expect(text).not.toContain("owner-user,teammate");
+    expect(text).not.toContain(discordIds.channel);
+    expect(text).not.toContain(`${discordIds.owner},${discordIds.teammate}`);
   });
 
   it("warns when Discord gateway env is ready but live approval env is incomplete", async () => {
@@ -123,10 +133,10 @@ describe("runDoctor", () => {
       commandAvailability: async () => true,
       env: {
         KAIRON_DISCORD_BOT_TOKEN: "secret-bot-token",
-        KAIRON_DISCORD_APPLICATION_ID: "app-id",
-        KAIRON_DISCORD_GUILD_ID: "guild-id",
-        KAIRON_DISCORD_APPROVAL_CHANNEL_ID: "approval-channel",
-        KAIRON_DISCORD_OWNER_USER_ID: "owner-user"
+        KAIRON_DISCORD_APPLICATION_ID: discordIds.application,
+        KAIRON_DISCORD_GUILD_ID: discordIds.guild,
+        KAIRON_DISCORD_APPROVAL_CHANNEL_ID: discordIds.channel,
+        KAIRON_DISCORD_OWNER_USER_ID: discordIds.owner
       }
     });
 
@@ -141,6 +151,42 @@ describe("runDoctor", () => {
     expect(checkById(result, "discord.config")?.details).toContain(
       "live_missing_env=KAIRON_DISCORD_ALLOWED_USER_IDS"
     );
+  });
+
+  it("reports invalid Discord id env without leaking values", async () => {
+    const root = await createInitializedGitProject();
+    await enableDiscordProvider(root);
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {
+        KAIRON_DISCORD_BOT_TOKEN: "secret-bot-token",
+        KAIRON_DISCORD_APPLICATION_ID: discordIds.application,
+        KAIRON_DISCORD_GUILD_ID: "not-a-snowflake",
+        KAIRON_DISCORD_APPROVAL_CHANNEL_ID: discordIds.channel,
+        KAIRON_DISCORD_OWNER_USER_ID: discordIds.owner,
+        KAIRON_DISCORD_ALLOWED_USER_IDS: `${discordIds.owner},invalid-user`
+      }
+    });
+    const text = formatDoctorResult(result);
+
+    expect(result.ok).toBe(false);
+    expect(statusById(result, "discord.config")).toBe("error");
+    expect(checkById(result, "discord.config")?.details).toEqual(
+      expect.arrayContaining([
+        "gateway_status=setup_required",
+        "live_status=setup_required",
+        "gateway_invalid_env=KAIRON_DISCORD_GUILD_ID",
+        "live_invalid_env=KAIRON_DISCORD_GUILD_ID,KAIRON_DISCORD_ALLOWED_USER_IDS"
+      ])
+    );
+    expect(checkById(result, "discord.config")?.nextAction).toBe(
+      "Fix invalid Discord gateway env vars: KAIRON_DISCORD_GUILD_ID."
+    );
+    expect(text).not.toContain("not-a-snowflake");
+    expect(text).not.toContain("invalid-user");
+    expect(text).not.toContain("secret-bot-token");
   });
 
   it("warns but does not fail when GitHub branch protection cannot be verified or config backups exist", async () => {

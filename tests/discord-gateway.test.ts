@@ -39,6 +39,14 @@ const enabledConfig: DiscordGatewayConfig = {
   }
 };
 
+const discordIds = {
+  application: "111111111111111111",
+  guild: "222222222222222222",
+  channel: "333333333333333333",
+  owner: "444444444444444444",
+  teammate: "555555555555555555"
+};
+
 describe("prepareDiscordGateway", () => {
   it("starts disabled when provider is disabled", async () => {
     const root = await createTempProject();
@@ -61,21 +69,39 @@ describe("prepareDiscordGateway", () => {
     expect(
       prepareDiscordGatewayFromConfig(enabledConfig, {
         BOT: "token",
-        APP: "app",
-        GUILD: "guild",
-        CHANNEL: "channel",
-        OWNER: "owner",
-        ALLOWED: "owner,teammate"
+        APP: discordIds.application,
+        GUILD: discordIds.guild,
+        CHANNEL: discordIds.channel,
+        OWNER: discordIds.owner,
+        ALLOWED: `${discordIds.owner},${discordIds.teammate}`
       })
     ).toMatchObject({
       status: "ready",
       mode: "gateway",
-      allowed_user_ids: ["owner", "teammate"],
+      allowed_user_ids: [discordIds.owner, discordIds.teammate],
       idempotency_ttl_minutes: 30,
       reconnect: {
         enabled: true,
         max_backoff_seconds: 60
       }
+    });
+  });
+
+  it("starts disabled when enabled provider has invalid Discord id env", () => {
+    expect(
+      prepareDiscordGatewayFromConfig(enabledConfig, {
+        BOT: "token",
+        APP: discordIds.application,
+        GUILD: "not-a-snowflake",
+        CHANNEL: discordIds.channel,
+        OWNER: discordIds.owner,
+        ALLOWED: `${discordIds.owner},not-a-snowflake`
+      })
+    ).toMatchObject({
+      status: "disabled",
+      reason: "discord provider env is invalid",
+      missing_env: [],
+      invalid_env: ["GUILD", "ALLOWED"]
     });
   });
 
@@ -100,6 +126,38 @@ describe("prepareDiscordGateway", () => {
     });
   });
 
+  it("writes a disabled runtime artifact and does not create a client when env is invalid", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await enableDiscordProvider(root);
+    let clientCreated = false;
+
+    const handle = await startDiscordGateway(root, {
+      env: {
+        KAIRON_DISCORD_BOT_TOKEN: "token",
+        KAIRON_DISCORD_APPLICATION_ID: discordIds.application,
+        KAIRON_DISCORD_GUILD_ID: "not-a-snowflake",
+        KAIRON_DISCORD_APPROVAL_CHANNEL_ID: discordIds.channel,
+        KAIRON_DISCORD_OWNER_USER_ID: discordIds.owner,
+        KAIRON_DISCORD_ALLOWED_USER_IDS: discordIds.owner
+      },
+      clientFactory: () => {
+        clientCreated = true;
+        return new FakeDiscordClient("bot-user");
+      }
+    });
+
+    expect(handle.status).toBe("disabled");
+    expect(clientCreated).toBe(false);
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runtime", "discord", "gateway.json"))
+    ).resolves.toMatchObject({
+      status: "disabled",
+      reason: "discord provider env is invalid",
+      invalid_env: ["KAIRON_DISCORD_GUILD_ID"]
+    });
+  });
+
   it("registers slash commands, records ready, and supports shutdown", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
@@ -119,7 +177,7 @@ describe("prepareDiscordGateway", () => {
 
     expect(handle.status).toBe("ready");
     expect(rest.puts[0]).toMatchObject({
-      route: "/applications/app/guilds/guild/commands",
+      route: rest.route,
       body: buildKaironSlashCommands()
     });
     await expect(
@@ -208,7 +266,7 @@ describe("prepareDiscordGateway", () => {
     ).resolves.toMatchObject({
       discord_nonce: expect.stringMatching(/^n/),
       discord: {
-        channel_id: "channel",
+        channel_id: discordIds.channel,
         message_id: "message-1",
         unsafe_fields_omitted: true
       }
@@ -278,7 +336,7 @@ describe("prepareDiscordGateway", () => {
       discord_nonce: "n42",
       actions: ["reject"],
       discord: {
-        channel_id: "channel",
+        channel_id: discordIds.channel,
         message_id: "message-1",
         nonce: "n42"
       }
@@ -336,11 +394,11 @@ describe("prepareDiscordGateway", () => {
 function readyEnv(): NodeJS.ProcessEnv {
   return {
     KAIRON_DISCORD_BOT_TOKEN: "token",
-    KAIRON_DISCORD_APPLICATION_ID: "app",
-    KAIRON_DISCORD_GUILD_ID: "guild",
-    KAIRON_DISCORD_APPROVAL_CHANNEL_ID: "channel",
-    KAIRON_DISCORD_OWNER_USER_ID: "owner",
-    KAIRON_DISCORD_ALLOWED_USER_IDS: "owner"
+    KAIRON_DISCORD_APPLICATION_ID: discordIds.application,
+    KAIRON_DISCORD_GUILD_ID: discordIds.guild,
+    KAIRON_DISCORD_APPROVAL_CHANNEL_ID: discordIds.channel,
+    KAIRON_DISCORD_OWNER_USER_ID: discordIds.owner,
+    KAIRON_DISCORD_ALLOWED_USER_IDS: discordIds.owner
   };
 }
 
@@ -411,7 +469,7 @@ class FakeDiscordClient implements DiscordGatewayClient {
 }
 
 class FakeDiscordRestRegistration implements DiscordRestRegistration {
-  route = "/applications/app/guilds/guild/commands";
+  route = `/applications/${discordIds.application}/guilds/${discordIds.guild}/commands`;
   rest = {
     put: async (route: string, options: { body: unknown }) => {
       this.puts.push({ route, body: options.body });
@@ -421,9 +479,9 @@ class FakeDiscordRestRegistration implements DiscordRestRegistration {
 }
 
 class FakeSlashInteraction implements DiscordGatewayInteraction {
-  user = { id: "owner" };
-  guildId = "guild";
-  channelId = "channel";
+  user = { id: discordIds.owner };
+  guildId = discordIds.guild;
+  channelId = discordIds.channel;
   commandName = "kairon";
   deferredOptions: { ephemeral: boolean } | undefined;
   editedReply: string | undefined;
@@ -452,9 +510,9 @@ class FakeSlashInteraction implements DiscordGatewayInteraction {
 }
 
 class FakeButtonInteraction implements DiscordGatewayInteraction {
-  user = { id: "owner" };
-  guildId = "guild";
-  channelId = "channel";
+  user = { id: discordIds.owner };
+  guildId = discordIds.guild;
+  channelId = discordIds.channel;
   message = { id: "message-1" };
   deferredOptions: { ephemeral: boolean } | undefined;
   modal: unknown;
@@ -479,9 +537,9 @@ class FakeButtonInteraction implements DiscordGatewayInteraction {
 }
 
 class FakeModalSubmitInteraction implements DiscordGatewayInteraction {
-  user = { id: "owner" };
-  guildId = "guild";
-  channelId = "channel";
+  user = { id: discordIds.owner };
+  guildId = discordIds.guild;
+  channelId = discordIds.channel;
   message = { id: "message-1" };
   deferredOptions: { ephemeral: boolean } | undefined;
   editedReply: string | undefined;
