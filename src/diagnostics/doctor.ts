@@ -9,6 +9,7 @@ import {
 import { agentIds } from "../agents/types.js";
 import { loadConfigFile, validateAllConfigs } from "../core/config/load-config.js";
 import { getKaironPaths, resolveInside } from "../core/fs/paths.js";
+import { validateDiscordEnvValues } from "../discord/env-validation.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -331,13 +332,27 @@ async function checkDiscordConfig(
   const present = envNames.filter((name) => hasEnvValue(env, name));
   const missing = envNames.filter((name) => !hasEnvValue(env, name));
   const gatewayMissing = gatewayEnvNames.filter((name) => !hasEnvValue(env, name));
-  const liveReady = discord.enabled === true && missing.length === 0;
+  const envValidation = validateDiscordEnvValues({
+    env,
+    applicationIdEnv: discord.application_id_env,
+    guildIdEnv: discord.guild_id_env,
+    approvalChannelIdEnv: discord.approval_channel_id_env,
+    ownerUserIdEnv: discord.owner_user_id_env,
+    allowedUserIdsEnv: discord.allowed_user_ids_env
+  });
+  const gatewayInvalid = envValidation.gateway_invalid_env;
+  const liveInvalid = envValidation.live_invalid_env;
+  const gatewayReady = gatewayMissing.length === 0 && gatewayInvalid.length === 0;
+  const liveReady =
+    discord.enabled === true && missing.length === 0 && liveInvalid.length === 0;
   const details = [
     `enabled=${discord.enabled === true}`,
     `mode=${discord.mode ?? "unknown"}`,
-    `gateway_status=${gatewayMissing.length === 0 ? "ready" : "setup_required"}`,
+    `gateway_status=${gatewayReady ? "ready" : "setup_required"}`,
     `live_status=${liveReady ? "ready" : "setup_required"}`,
     `live_missing_env=${missing.length === 0 ? "none" : missing.join(",")}`,
+    `gateway_invalid_env=${gatewayInvalid.length === 0 ? "none" : gatewayInvalid.join(",")}`,
+    `live_invalid_env=${liveInvalid.length === 0 ? "none" : liveInvalid.join(",")}`,
     ...envNames.map((name) => `${name}=${hasEnvValue(env, name) ? "present" : "missing"}`)
   ];
 
@@ -350,12 +365,30 @@ async function checkDiscordConfig(
     );
   }
 
+  if (discord.enabled === true && gatewayInvalid.length > 0) {
+    return error(
+      "discord.config",
+      "Discord notification config",
+      details,
+      `Fix invalid Discord gateway env vars: ${gatewayInvalid.join(", ")}.`
+    );
+  }
+
   if (discord.enabled === true && missing.length > 0) {
     return warning(
       "discord.config",
       "Discord notification config",
       details,
       `Set missing Discord live env vars: ${missing.join(", ")}.`
+    );
+  }
+
+  if (discord.enabled === true && liveInvalid.length > 0) {
+    return warning(
+      "discord.config",
+      "Discord notification config",
+      details,
+      `Fix invalid Discord live env vars: ${liveInvalid.join(", ")}.`
     );
   }
 

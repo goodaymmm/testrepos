@@ -20,6 +20,10 @@ import {
   type DiscordApprovalChannel,
   type DiscordApprovalNotificationResult
 } from "./approval-notifier.js";
+import {
+  parseDiscordIdList,
+  validateDiscordEnvValues
+} from "./env-validation.js";
 
 export type DiscordProviderConfig = {
   enabled: boolean;
@@ -55,6 +59,7 @@ export type PreparedDiscordGateway =
       status: "disabled";
       reason: string;
       missing_env: string[];
+      invalid_env?: string[];
     }
   | {
       status: "ready";
@@ -80,6 +85,7 @@ export type DiscordGatewayRuntimeStatus =
       status: "disabled";
       reason: string;
       missing_env: string[];
+      invalid_env?: string[];
       updated_at: string;
     }
   | {
@@ -212,10 +218,28 @@ export function prepareDiscordGatewayFromConfig(
     };
   }
 
+  const envValidation = validateDiscordEnvValues({
+    env,
+    applicationIdEnv: provider.application_id_env,
+    guildIdEnv: provider.guild_id_env,
+    approvalChannelIdEnv: provider.approval_channel_id_env,
+    ownerUserIdEnv: provider.owner_user_id_env,
+    allowedUserIdsEnv: provider.allowed_user_ids_env
+  });
+
+  if (envValidation.invalid_env.length > 0) {
+    return {
+      status: "disabled",
+      reason: "discord provider env is invalid",
+      missing_env: [],
+      invalid_env: envValidation.invalid_env
+    };
+  }
+
   const ownerUserId = env[provider.owner_user_id_env] ?? "";
   const allowedUserIds = new Set([
     ownerUserId,
-    ...parseUserIdList(
+    ...parseDiscordIdList(
       provider.allowed_user_ids_env === undefined
         ? undefined
         : env[provider.allowed_user_ids_env]
@@ -256,6 +280,7 @@ export async function startDiscordGateway(
       status: "disabled",
       reason: prepared.reason,
       missing_env: prepared.missing_env,
+      invalid_env: prepared.invalid_env,
       updated_at: now().toISOString()
     });
     return {
@@ -813,13 +838,6 @@ function isKaironChatCommand(interaction: DiscordGatewayInteraction): boolean {
 
 function hasEnvValue(env: NodeJS.ProcessEnv, name: string): boolean {
   return (env[name] ?? "").trim().length > 0;
-}
-
-function parseUserIdList(value: string | undefined): string[] {
-  return (value ?? "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
 }
 
 function toProjectPath(projectRoot: string, filePath: string): string {
