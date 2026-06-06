@@ -18,12 +18,18 @@ import {
   notifyPendingDiscordApprovals,
   updateDiscordApprovalMessage,
   type DiscordApprovalChannel,
+  type DiscordApprovalMessageUpdateResult,
   type DiscordApprovalNotificationResult
 } from "./approval-notifier.js";
 import {
   parseDiscordIdList,
   validateDiscordEnvValues
 } from "./env-validation.js";
+import {
+  auditDiscordDecisionInteraction,
+  sanitizeDiscordAuditText,
+  type DiscordDecisionAuditSideEffect
+} from "./decision-audit.js";
 
 export type DiscordProviderConfig = {
   enabled: boolean;
@@ -200,6 +206,10 @@ type ClassifiedDiscordGatewayError = {
 };
 
 const DISCORD_CLIENT_READY_EVENT = "clientReady";
+
+type GatewayInteractionSideEffect = DiscordDecisionAuditSideEffect & {
+  content?: string;
+};
 
 export async function prepareDiscordGateway(
   projectRoot: string,
@@ -595,7 +605,8 @@ async function handleGatewayInteraction(
   getApprovalChannel: () => DiscordApprovalChannel | null
 ): Promise<void> {
   const interaction = rawInteraction as DiscordGatewayInteraction;
-  if (await maybeShowApprovalReasonModal(projectRoot, gateway, interaction, now())) {
+  const receivedAt = now();
+  if (await maybeShowApprovalReasonModal(projectRoot, gateway, interaction, receivedAt)) {
     return;
   }
 
@@ -605,7 +616,7 @@ async function handleGatewayInteraction(
     projectRoot,
     gateway,
     interaction,
-    now()
+    receivedAt
   );
   const sideEffect = await applyGatewayInteractionSideEffects(
     projectRoot,
@@ -614,6 +625,12 @@ async function handleGatewayInteraction(
     getApprovalChannel(),
     now
   );
+  await auditDiscordDecisionInteraction(projectRoot, {
+    interaction: toDiscordInteractionInput(interaction, receivedAt),
+    result,
+    sideEffect,
+    recordedAt: now()
+  });
   await respondToInteraction(interaction, result, sideEffect);
 }
 
@@ -727,7 +744,7 @@ async function applyGatewayInteractionSideEffects(
   result: NormalizedDiscordCommand,
   approvalChannel: DiscordApprovalChannel | null,
   now: () => Date
-): Promise<string | undefined> {
+): Promise<GatewayInteractionSideEffect | undefined> {
   if (!result.accepted || result.duplicate || result.command_id === undefined) {
     return undefined;
   }
@@ -744,24 +761,59 @@ async function applyGatewayInteractionSideEffects(
     const applied = await new StateApplier(projectRoot).applyCommand(
       result.command as InternalCommand
     );
-    await inbox.complete(result.command_id, {
-      applied_event_ids: applied.appliedEventIds
-    });
+    let messageUpdate: DiscordApprovalMessageUpdateResult | undefined;
+    let messageUpdateStatus: GatewayInteractionSideEffect["message_update_status"] =
+      "unavailable";
+    let messageUpdateReason: string | undefined =
+      "approval channel is unavailable";
+    let messageId: string | undefined = interaction.message?.id;
+
     if (approvalChannel !== null) {
-      await updateDiscordApprovalMessage(
-        projectRoot,
-        result.command.approval_id,
-        approvalChannel,
-        { now }
-      );
+      try {
+        messageUpdate = await updateDiscordApprovalMessage(
+          projectRoot,
+          result.command.approval_id,
+          approvalChannel,
+          { now }
+        );
+        messageUpdateStatus = messageUpdate.status;
+        messageUpdateReason =
+          messageUpdate.status === "skipped" ? messageUpdate.reason : undefined;
+        messageId =
+          messageUpdate.status === "updated"
+            ? messageUpdate.message_id
+            : interaction.message?.id;
+      } catch (error) {
+        messageUpdateStatus = "failed";
+        messageUpdateReason = sanitizeDiscordAuditText(String(error));
+      }
     }
 
-    return result.command.type === "approval.snooze"
-      ? `Kairon approval snoozed: ${result.command.approval_id}`
-      : `Kairon approval decided: ${result.command.approval_id}`;
+    const sideEffect: GatewayInteractionSideEffect = {
+      content:
+        result.command.type === "approval.snooze"
+          ? `Kairon approval snoozed: ${result.command.approval_id}`
+          : `Kairon approval decided: ${result.command.approval_id}`,
+      command_status: "completed",
+      applied_event_ids: applied.appliedEventIds,
+      message_update_status: messageUpdateStatus,
+      message_update_reason: messageUpdateReason,
+      message_id: messageId
+    };
+    await inbox.complete(result.command_id, {
+      applied_event_ids: applied.appliedEventIds,
+      message_update_status: messageUpdateStatus,
+      message_update_reason: messageUpdateReason
+    });
+    return sideEffect;
   } catch (error) {
-    await inbox.fail(result.command_id, { message: String(error) });
-    return `Kairon approval command failed: ${String(error)}`;
+    const sanitizedError = sanitizeDiscordAuditText(String(error)) ?? "unknown error";
+    await inbox.fail(result.command_id, { message: sanitizedError });
+    return {
+      content: `Kairon approval command failed: ${sanitizedError}`,
+      command_status: "failed",
+      error: sanitizedError
+    };
   }
 }
 
@@ -788,14 +840,14 @@ async function acknowledgeInteraction(
 async function respondToInteraction(
   interaction: DiscordGatewayInteraction,
   result: NormalizedDiscordCommand,
-  sideEffectContent: string | undefined
+  sideEffect: GatewayInteractionSideEffect | undefined
 ): Promise<void> {
   if (interaction.editReply === undefined) {
     return;
   }
 
-  if (sideEffectContent !== undefined) {
-    await interaction.editReply({ content: sideEffectContent });
+  if (sideEffect?.content !== undefined) {
+    await interaction.editReply({ content: sideEffect.content });
     return;
   }
 

@@ -605,6 +605,161 @@ describe("prepareDiscordGateway", () => {
     expect(channel.messagesById.get("message-1")?.editedPayload).toMatchObject({
       content: "Approval decided: APR-0001"
     });
+    const audit = await readJsonLines<Record<string, unknown>>(
+      path.join(root, ".kairon", "runtime", "discord", "decision-interactions.jsonl")
+    );
+    expect(audit).toEqual([
+      expect.objectContaining({
+        interaction_id: "reject-submit-1",
+        approval_id: "APR-0001",
+        decision: "reject",
+        status: "applied",
+        duplicate: false,
+        command_status: "completed",
+        message_update_status: "updated",
+        message_id: "message-1",
+        decision_reason: "Blocked by operation policy."
+      })
+    ]);
+    expect(JSON.stringify(audit)).not.toContain(discordIds.owner);
+
+    await handle.stop();
+  });
+
+  it("audits duplicate approval interactions without applying twice", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await enableDiscordProvider(root);
+    await writeApproval(root, {
+      id: "APR-0001",
+      status: "pending",
+      title: "Push approval",
+      type: "git_push",
+      discord_nonce: "n42",
+      actions: ["approve"],
+      discord: {
+        channel_id: discordIds.channel,
+        message_id: "message-1",
+        nonce: "n42"
+      }
+    });
+    const client = new FakeDiscordClient("bot-user");
+    const rest = new FakeDiscordRestRegistration();
+    const channel = new FakeApprovalChannel("channel");
+    channel.addMessage("message-1");
+
+    const handlePromise = startDiscordGateway(root, {
+      env: readyEnv(),
+      clientFactory: () => client,
+      restFactory: () => rest,
+      approvalChannelFactory: () => channel,
+      readyTimeoutMs: 50,
+      now: () => new Date("2026-05-25T08:00:00.000Z")
+    });
+    await client.waitForLogin();
+    client.emitReady();
+    const handle = await handlePromise;
+    const interaction = new FakeButtonInteraction(
+      "approve-button-1",
+      "kr:v1:apr:APR-0001:approve:n42"
+    );
+
+    await client.emitInteraction(interaction);
+    await client.emitInteraction(interaction);
+
+    await expect(new CommandInbox(root).list("completed")).resolves.toHaveLength(1);
+    const audit = await readJsonLines<Record<string, unknown>>(
+      path.join(root, ".kairon", "runtime", "discord", "decision-interactions.jsonl")
+    );
+    expect(audit).toEqual([
+      expect.objectContaining({
+        interaction_id: "approve-button-1",
+        approval_id: "APR-0001",
+        decision: "approve",
+        status: "applied",
+        duplicate: false,
+        command_status: "completed",
+        message_update_status: "updated"
+      }),
+      expect.objectContaining({
+        interaction_id: "approve-button-1",
+        approval_id: "APR-0001",
+        decision: "approve",
+        status: "skipped",
+        duplicate: true,
+        reason: "duplicate_interaction"
+      })
+    ]);
+
+    await handle.stop();
+  });
+
+  it("audits message update failures without failing the canonical decision", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await enableDiscordProvider(root);
+    await writeApproval(root, {
+      id: "APR-0001",
+      status: "pending",
+      title: "Push approval",
+      type: "git_push",
+      discord_nonce: "n42",
+      actions: ["request_changes"],
+      discord: {
+        channel_id: discordIds.channel,
+        message_id: "message-1",
+        nonce: "n42"
+      }
+    });
+    const client = new FakeDiscordClient("bot-user");
+    const rest = new FakeDiscordRestRegistration();
+    const channel = new FakeApprovalChannel("channel");
+
+    const handlePromise = startDiscordGateway(root, {
+      env: readyEnv(),
+      clientFactory: () => client,
+      restFactory: () => rest,
+      approvalChannelFactory: () => channel,
+      readyTimeoutMs: 50,
+      now: () => new Date("2026-05-25T08:00:00.000Z")
+    });
+    await client.waitForLogin();
+    client.emitReady();
+    const handle = await handlePromise;
+    const interaction = new FakeModalSubmitInteraction(
+      "changes-submit-1",
+      "kr:v1:apr:APR-0001:changes:n42",
+      "Add tests before merge. token=SHOULD_NOT_LEAK"
+    );
+
+    await client.emitInteraction(interaction);
+
+    expect(interaction.editedReply).toBe("Kairon approval decided: APR-0001");
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "approvals", "APR-0001.json"))
+    ).resolves.toMatchObject({
+      status: "decided",
+      decision: "request_changes"
+    });
+    await expect(new CommandInbox(root).list("completed")).resolves.toHaveLength(1);
+    await expect(new CommandInbox(root).list("failed")).resolves.toHaveLength(0);
+    const audit = await readJsonLines<Record<string, unknown>>(
+      path.join(root, ".kairon", "runtime", "discord", "decision-interactions.jsonl")
+    );
+    expect(audit).toEqual([
+      expect.objectContaining({
+        interaction_id: "changes-submit-1",
+        approval_id: "APR-0001",
+        decision: "request_changes",
+        status: "applied",
+        command_status: "completed",
+        message_update_status: "failed",
+        decision_reason: "Add tests before merge. token=[redacted]"
+      })
+    ]);
+    const auditText = JSON.stringify(audit);
+    expect(auditText).not.toContain("SHOULD_NOT_LEAK");
+    expect(auditText).not.toContain(discordIds.owner);
 
     await handle.stop();
   });
