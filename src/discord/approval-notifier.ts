@@ -5,6 +5,7 @@ import { appendJsonLine } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
 import type { ApprovalAction } from "./interactions.js";
 import type { PreparedDiscordGateway } from "./gateway.js";
+import { sanitizeDiscordAuditText } from "./decision-audit.js";
 import {
   buildApprovalMessage,
   buildApprovalStatusMessage,
@@ -28,6 +29,8 @@ export type DiscordApprovalMessageHandle = {
 export type DiscordApprovalNotificationResult = {
   scanned: number;
   sent: number;
+  resent: number;
+  updated: number;
   skipped: number;
   failed: number;
   audit_path: string;
@@ -40,11 +43,12 @@ export type DiscordApprovalNotificationResult = {
 export type DiscordApprovalNotificationAuditRecord = {
   schema_version: "0.1";
   approval_id: string;
-  status: "sent" | "skipped" | "failed";
+  status: "sent" | "resent" | "updated" | "skipped" | "failed";
   channel_id: string;
   message_id?: string;
   reason?: string;
   sent_at?: string;
+  updated_at?: string;
   recorded_at: string;
 };
 
@@ -106,6 +110,8 @@ export async function notifyPendingDiscordApprovals(
   const result: DiscordApprovalNotificationResult = {
     scanned: approvals.length,
     sent: 0,
+    resent: 0,
+    updated: 0,
     skipped: 0,
     failed: 0,
     audit_path: toProjectPath(projectRoot, discordNotificationAuditPath(projectRoot)),
@@ -113,18 +119,99 @@ export async function notifyPendingDiscordApprovals(
   };
 
   for (const approval of approvals) {
-    const notificationCheck = shouldNotifyApproval(approval, gateway);
-    if (!notificationCheck.ok) {
+    if (shouldRetryApprovalStatusUpdate(approval)) {
+      try {
+        const update = await updateDiscordApprovalMessage(projectRoot, approval.id, channel, options);
+        if (update.status === "updated") {
+          result.updated += 1;
+          await appendDiscordNotificationAudit(projectRoot, {
+            schema_version: "0.1",
+            approval_id: approval.id,
+            status: "updated",
+            channel_id: gateway.approval_channel_id,
+            message_id: update.message_id,
+            reason: "status_reconciled",
+            updated_at: now.toISOString(),
+            recorded_at: now.toISOString()
+          });
+        } else {
+          result.skipped += 1;
+          await appendDiscordNotificationAudit(projectRoot, {
+            schema_version: "0.1",
+            approval_id: approval.id,
+            status: "skipped",
+            channel_id: gateway.approval_channel_id,
+            message_id: approval.discord?.message_id,
+            reason: update.reason,
+            recorded_at: now.toISOString()
+          });
+        }
+      } catch (error) {
+        const reason = sanitizeAuditReason(String(error));
+        result.failed += 1;
+        result.failures.push({
+          approval_id: approval.id,
+          reason
+        });
+        await appendDiscordNotificationAudit(projectRoot, {
+          schema_version: "0.1",
+          approval_id: approval.id,
+          status: "failed",
+          channel_id: gateway.approval_channel_id,
+          message_id: approval.discord?.message_id,
+          reason,
+          recorded_at: now.toISOString()
+        });
+      }
+      continue;
+    }
+
+    if (!isOpenApprovalStatus(approval.status)) {
       result.skipped += 1;
       await appendDiscordNotificationAudit(projectRoot, {
         schema_version: "0.1",
         approval_id: approval.id,
         status: "skipped",
         channel_id: gateway.approval_channel_id,
-        reason: notificationCheck.reason,
+        reason: "not_pending",
         recorded_at: now.toISOString()
       });
       continue;
+    }
+
+    if (approval.discord?.message_id !== undefined) {
+      const verification = await verifyDiscordApprovalMessage(channel, approval.discord.message_id);
+      if (verification.status === "found") {
+        result.skipped += 1;
+        await appendDiscordNotificationAudit(projectRoot, {
+          schema_version: "0.1",
+          approval_id: approval.id,
+          status: "skipped",
+          channel_id: gateway.approval_channel_id,
+          message_id: approval.discord.message_id,
+          reason: "already_sent",
+          recorded_at: now.toISOString()
+        });
+        continue;
+      }
+
+      if (verification.status === "failed") {
+        result.failed += 1;
+        result.failures.push({
+          approval_id: approval.id,
+          reason: verification.reason
+        });
+        await appendDiscordNotificationAudit(projectRoot, {
+          schema_version: "0.1",
+          approval_id: approval.id,
+          status: "failed",
+          channel_id: gateway.approval_channel_id,
+          message_id: approval.discord.message_id,
+          reason: verification.reason,
+          recorded_at: now.toISOString()
+        });
+        continue;
+      }
     }
 
     try {
@@ -132,6 +219,7 @@ export async function notifyPendingDiscordApprovals(
       const message = buildApprovalMessage(input);
       const sent = await channel.send(message);
       const sentAt = now.toISOString();
+      const resent = approval.discord?.message_id !== undefined;
       await updateApprovalDiscordMetadata(projectRoot, approval, {
         channel_id: gateway.approval_channel_id,
         message_id: sent.id,
@@ -143,13 +231,18 @@ export async function notifyPendingDiscordApprovals(
       await appendDiscordNotificationAudit(projectRoot, {
         schema_version: "0.1",
         approval_id: approval.id,
-        status: "sent",
+        status: resent ? "resent" : "sent",
         channel_id: gateway.approval_channel_id,
         message_id: sent.id,
+        reason: resent ? "message_missing_reposted" : undefined,
         sent_at: sentAt,
         recorded_at: sentAt
       });
-      result.sent += 1;
+      if (resent) {
+        result.resent += 1;
+      } else {
+        result.sent += 1;
+      }
     } catch (error) {
       const reason = sanitizeAuditReason(String(error));
       result.failed += 1;
@@ -267,23 +360,52 @@ async function readApprovalRecord(
   }
 }
 
-function shouldNotifyApproval(
-  approval: ApprovalRecord,
-  gateway: PreparedDiscordGateway & { status: "ready" }
-): { ok: true } | { ok: false; reason: string } {
-  if (approval.status !== "pending") {
-    return { ok: false, reason: "not_pending" };
+type DiscordApprovalMessageVerification =
+  | { status: "found" }
+  | { status: "missing"; reason: string }
+  | { status: "failed"; reason: string };
+
+async function verifyDiscordApprovalMessage(
+  channel: DiscordApprovalChannel,
+  messageId: string
+): Promise<DiscordApprovalMessageVerification> {
+  if (channel.messages?.fetch === undefined) {
+    return { status: "found" };
   }
 
-  if (approval.discord?.message_id !== undefined) {
-    return { ok: false, reason: "already_sent" };
+  try {
+    await channel.messages.fetch(messageId);
+    return { status: "found" };
+  } catch (error) {
+    if (isDiscordUnknownMessageError(error)) {
+      return { status: "missing", reason: "message_missing_reposted" };
+    }
+
+    return { status: "failed", reason: sanitizeAuditReason(String(error)) };
+  }
+}
+
+function isOpenApprovalStatus(status: unknown): boolean {
+  return status === "pending" || status === "snoozed";
+}
+
+function shouldRetryApprovalStatusUpdate(approval: ApprovalRecord): boolean {
+  return (
+    approval.discord?.message_id !== undefined &&
+    approval.discord.updated_at === undefined &&
+    (approval.status === "decided" || approval.status === "snoozed")
+  );
+}
+
+function isDiscordUnknownMessageError(error: unknown): boolean {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const code = (error as { code?: unknown }).code;
+    if (code === 10008 || code === "10008") {
+      return true;
+    }
   }
 
-  if (approval.discord?.channel_id === gateway.approval_channel_id) {
-    return { ok: false, reason: "already_sent" };
-  }
-
-  return { ok: true };
+  return /unknown message|message not found/i.test(String(error));
 }
 
 function toApprovalMessageInput(approval: ApprovalRecord): ApprovalMessageInput {
@@ -353,10 +475,9 @@ function toProjectPath(projectRoot: string, filePath: string): string {
 }
 
 function sanitizeAuditReason(value: string): string {
+  const sanitized = sanitizeDiscordAuditText(value) ?? "unknown discord approval notification error";
   return truncate(
-    value
-      .replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
-      .replace(/-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----/g, "[redacted-private-key]")
+    sanitized
       .replace(/\s+/g, " ")
       .trim(),
     500
