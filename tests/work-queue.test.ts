@@ -158,6 +158,49 @@ describe("WorkQueue", () => {
     ]);
   });
 
+  it("keeps excluded ready test items during operation isolation", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const queue = new WorkQueue(root);
+    const target = await queue.enqueue({
+      type: "review.run",
+      priority: 100,
+      test_scope: {
+        kind: "operation_test",
+        tags: ["operation-test", "runtime-review"],
+        expires_at: "2026-05-25T03:00:00.000Z"
+      }
+    });
+    const leftover = await queue.enqueue({
+      type: "agent.run",
+      priority: 90,
+      test_scope: {
+        kind: "operation_test",
+        tags: ["operation-test", "runtime-review"],
+        expires_at: "2026-05-25T03:00:00.000Z"
+      }
+    });
+
+    await expect(
+      queue.expireReadyTestItems({
+        now: new Date("2026-05-25T02:00:00.000Z"),
+        kinds: ["operation_test"],
+        tags: ["runtime-review"],
+        excludeIds: [target.id],
+        code: "runtime_review_test_isolation"
+      })
+    ).resolves.toMatchObject([
+      {
+        id: leftover.id,
+        status: "failed",
+        error: { code: "runtime_review_test_isolation" }
+      }
+    ]);
+    await expect(queue.list("ready")).resolves.toMatchObject([
+      { id: target.id, status: "ready" }
+    ]);
+  });
+
   it("completes and fails claimed items", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

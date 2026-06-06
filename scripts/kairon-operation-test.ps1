@@ -7,7 +7,7 @@ param(
 
   [string]$OutputRoot,
 
-  [ValidateSet("All", "Build", "Doctor", "AgentSmoke", "TaskRun", "ReviewLoop", "RuntimeActive")]
+  [ValidateSet("All", "Build", "Doctor", "AgentSmoke", "TaskRun", "ReviewLoop", "RuntimeActive", "RuntimeReview")]
   [string[]]$Test = @("All"),
 
   [int]$TimeoutMs = 120000,
@@ -252,21 +252,76 @@ console.log(item.id);
   }
 }
 
-function Clear-ReadyTestQueueItems {
+function Add-KaironReviewQueueItem {
+  param(
+    [string]$ScheduleMode = "active_work",
+    [int]$Priority = 2147483647,
+    [string]$LoopId = ""
+  )
+
   $code = @"
 import { WorkQueue } from './dist/queue/work-queue.js';
 const root = process.argv[1];
+const scheduleMode = process.argv[2] || undefined;
+const priority = Number(process.argv[3] || '2147483647');
+const testRunId = process.argv[4] || 'manual';
+const loopId = process.argv[5] || '';
+const payload = {
+  tags: ['operation-test', 'runtime-review'],
+  test_run_id: testRunId
+};
+if (loopId) payload.loop_id = loopId;
+const input = {
+  type: 'review.run',
+  priority,
+  payload,
+  test_scope: {
+    kind: 'operation_test',
+    tags: ['operation-test', 'runtime-review', testRunId],
+    expires_at: new Date(Date.now() + 2 * 60 * 60 * 1000).toISOString()
+  }
+};
+if (scheduleMode) input.schedule_mode = scheduleMode;
+const item = await new WorkQueue(root).enqueue(input);
+console.log(item.id);
+"@
+
+  Invoke-External -WorkingDirectory $script:KaironRoot -Script {
+    node --input-type=module -e $code $script:TargetJs $ScheduleMode $Priority $script:RunId $LoopId
+  }
+}
+
+function Clear-ReadyTestQueueItems {
+  param(
+    [string[]]$ExcludeIds = @(),
+    [string]$Message = "Ready test queue item isolated before operation test dispatch.",
+    [string]$Code = "operation_test_isolation"
+  )
+
+  $excludeIdsJson = if ($ExcludeIds.Count -eq 0) {
+    "[]"
+  } else {
+    @($ExcludeIds) | ConvertTo-Json -Compress
+  }
+
+  $code = @"
+import { WorkQueue } from './dist/queue/work-queue.js';
+const root = process.argv[1];
+const excludeIds = JSON.parse(process.argv[2] || '[]');
+const message = process.argv[3] || 'Ready test queue item isolated before operation test dispatch.';
+const code = process.argv[4] || 'operation_test_isolation';
 const expired = await new WorkQueue(root).expireReadyTestItems({
   kinds: ['operation_test', 'manual_test'],
   tags: ['operation-test', 'manual-test'],
-  message: 'Ready test queue item isolated before RuntimeActive operation test.',
-  code: 'runtime_active_test_isolation'
+  excludeIds,
+  message,
+  code
 });
 console.log(expired.map((item) => item.id).join(','));
 "@
 
   Invoke-External -WorkingDirectory $script:KaironRoot -Script {
-    node --input-type=module -e $code $script:TargetJs
+    node --input-type=module -e $code $script:TargetJs $excludeIdsJson $Message $Code
   }
 }
 
@@ -457,7 +512,9 @@ try {
 
       Invoke-External -WorkingDirectory $script:TargetRoot -Script { kairon stop }
       Set-KaironScheduleMode active_work
-      $isolatedItems = (Clear-ReadyTestQueueItems).Trim()
+      $isolatedItems = (Clear-ReadyTestQueueItems `
+        -Message "Ready test queue item isolated before RuntimeActive operation test." `
+        -Code "runtime_active_test_isolation").Trim()
       $itemId = (Add-KaironQueueItem -Type "maintenance.run" -ScheduleMode "active_work" -Priority 2147483647).Trim()
       $startText = Invoke-External -WorkingDirectory $script:TargetRoot -Script { kairon start }
       $tickPath = Join-Path $script:TargetRoot ".kairon\runtime\last-tick.json"
@@ -486,6 +543,61 @@ try {
       if ($Evidence -notmatch "tick\.action=processed-item") { return "runtime action was not processed-item" }
       if ($Evidence -notmatch "tick\.item_type=maintenance\.run") { return "runtime item_type was not maintenance.run" }
       if ($actualItemId -ne $expectedItemId) { return "runtime processed $actualItemId instead of expected $expectedItemId" }
+      return $true
+    }
+  }
+
+  if (Should-Run "RuntimeReview") {
+    Invoke-Step -Id "RUNTIME_REVIEW" -Name "Runtime review.run target tick" -Script {
+      $overridePath = Join-Path $script:TargetRoot ".kairon\state\schedule_override.json"
+      if (Test-Path -LiteralPath $overridePath) {
+        Remove-Item -LiteralPath $overridePath -Force
+      }
+
+      Invoke-External -WorkingDirectory $script:TargetRoot -Script { kairon stop }
+      Set-KaironScheduleMode active_work
+      $isolatedItems = (Clear-ReadyTestQueueItems `
+        -Message "Ready test queue item isolated before RuntimeReview operation test." `
+        -Code "runtime_review_test_isolation").Trim()
+      $itemId = (Add-KaironReviewQueueItem -Priority 2147483647).Trim()
+      $startText = Invoke-External -WorkingDirectory $script:TargetRoot -Script { kairon start }
+      $tickPath = Join-Path $script:TargetRoot ".kairon\runtime\last-tick.json"
+      $tick = Get-Content -LiteralPath $tickPath -Raw | ConvertFrom-Json
+      $queueResult = $tick.queue_result
+      $actualItemId = if ($null -eq $queueResult) { "" } else { $queueResult.item_id }
+      $actualItemType = if ($null -eq $queueResult) { "" } else { $queueResult.item_type }
+      $queuePath = Join-Path $script:TargetRoot ".kairon\state\queue.json"
+      $queue = Get-Content -LiteralPath $queuePath -Raw | ConvertFrom-Json
+      $targetItem = @($queue.items | Where-Object { $_.id -eq $itemId } | Select-Object -First 1)
+      $itemStatus = if ($targetItem.Count -eq 0) { "" } else { $targetItem[0].status }
+      $itemErrorCode = if ($targetItem.Count -eq 0 -or $null -eq $targetItem[0].error) { "" } else { $targetItem[0].error.code }
+      Invoke-External -WorkingDirectory $script:TargetRoot -Script { kairon stop }
+      @(
+        "isolated_test_items=$isolatedItems",
+        "expected_item_id=$itemId",
+        $startText,
+        "tick.mode=$($tick.mode)",
+        "tick.base_mode=$($tick.base_mode)",
+        "tick.active_work_closed=$($tick.active_work_closed)",
+        "tick.action=$($tick.action)",
+        "tick.item_id=$actualItemId",
+        "tick.item_type=$actualItemType",
+        "queue.item_status=$itemStatus",
+        "queue.item_error_code=$itemErrorCode"
+      ) -join [Environment]::NewLine
+    } -Assert {
+      param($Evidence)
+      $expectedItemId = Get-KaironStatusValue -Text $Evidence -Key "expected_item_id"
+      $actualItemId = Get-KaironStatusValue -Text $Evidence -Key "tick.item_id"
+      if ($Evidence -notmatch "tick\.base_mode=active_work") { return "base_mode was not active_work" }
+      if ($Evidence -notmatch "tick\.active_work_closed=False") { return "active_work_closed was not False" }
+      if ($Evidence -notmatch "tick\.action=processed-item") { return "runtime action was not processed-item" }
+      if ($Evidence -notmatch "tick\.item_type=review\.run") { return "runtime item_type was not review.run" }
+      if ($actualItemId -ne $expectedItemId) { return "runtime processed $actualItemId instead of expected $expectedItemId" }
+      if ($Evidence -notmatch "queue\.item_status=failed") { return "review.run item was not failed as expected" }
+      if ($Evidence -notmatch "queue\.item_error_code=handler\.review\.run\.failed") {
+        return "review.run failure code was not handler.review.run.failed"
+      }
       return $true
     }
   }
