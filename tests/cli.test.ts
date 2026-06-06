@@ -61,4 +61,13 @@ describe("createProgram", () => {
     ).toBe(false);
     expect(resolveAllowInteractiveAgents({})).toBeUndefined();
   });
+
+  it("registers maintenance RAG build option", () => {
+    const maintenance = createProgram().commands.find(
+      (command) => command.name() === "maintenance"
+    );
+    const run = maintenance?.commands.find((command) => command.name() === "run");
+
+    expect(run?.options.map((option) => option.long)).toContain("--build-rag");
+  });
 });

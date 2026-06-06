@@ -61,7 +61,44 @@ describe("runDailyMaintenance", () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
 
-    await expect(runMaintenance(root)).resolves.toContain("Kairon maintenance completed");
+    const output = await runMaintenance(root);
+    expect(output).toContain("Kairon maintenance completed");
+    expect(output).toContain("rag_index=skipped");
+    expect(output).toContain("rag_skip_reason=disabled");
+  });
+
+  it("forces the RAG index refresh during maintenance when requested", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    await writeFile(
+      path.join(root, "docs", "forced-maintenance-rag.md"),
+      "Forced maintenance should refresh local RAG memory.",
+      "utf8"
+    );
+
+    const result = await runDailyMaintenance(root, {
+      date: "2026-05-25",
+      forceRagIndex: true
+    });
+
+    expect(result.rag_index).toMatchObject({
+      index_path: ".kairon/rag/index.json",
+      chunk_count: expect.any(Number)
+    });
+    expect(result.rag_index_skipped).toBeUndefined();
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "rag", "index.json"))
+    ).resolves.toMatchObject({
+      kind: "rag_lexical_index",
+      sources: expect.arrayContaining([
+        expect.objectContaining({ path: "docs/forced-maintenance-rag.md" })
+      ])
+    });
+
+    const output = await runMaintenance(root, { buildRag: true });
+    expect(output).toContain("rag_index=.kairon/rag/index.json");
+    expect(output).toContain("rag_chunks=");
   });
 
   it("refreshes the RAG index during maintenance when enabled", async () => {

@@ -1,7 +1,29 @@
 import { runDailyMaintenance } from "../../maintenance/run.js";
 
-export async function runMaintenance(projectRoot: string): Promise<string> {
-  const result = await runDailyMaintenance(projectRoot);
+export type RunMaintenanceOptions = {
+  buildRag?: boolean;
+};
+
+export async function runMaintenance(
+  projectRoot: string,
+  options: RunMaintenanceOptions = {}
+): Promise<string> {
+  const result = await runDailyMaintenance(projectRoot, {
+    forceRagIndex: options.buildRag === true
+  });
+  const ragLines =
+    result.rag_index === undefined
+      ? result.rag_index_skipped === undefined
+        ? []
+        : [
+            "rag_index=skipped",
+            `rag_skip_reason=${result.rag_index_skipped.reason}`
+          ]
+      : [
+          `rag_index=${result.rag_index.index_path}`,
+          `rag_chunks=${result.rag_index.chunk_count}`
+        ];
+
   return [
     `Kairon maintenance completed for ${result.date}.`,
     `daily_report=${result.daily_report_path}`,
@@ -11,11 +33,7 @@ export async function runMaintenance(projectRoot: string): Promise<string> {
     `recovery_artifact=${result.recovery.artifact_path}`,
     `recovery_requeued=${result.recovery.summary.requeued_items}`,
     `recovery_approvals=${result.recovery.summary.approvals_requested}`,
-    result.rag_index === undefined ? null : `rag_index=${result.rag_index.index_path}`,
-    result.rag_index === undefined
-      ? null
-      : `rag_chunks=${result.rag_index.chunk_count}`
+    ...ragLines
   ]
-    .filter((line): line is string => line !== null)
     .join("\n");
 }

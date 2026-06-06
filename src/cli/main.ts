@@ -282,8 +282,14 @@ export function createProgram(): Command {
   maintenance
     .command("run")
     .description("Run daily maintenance manually.")
-    .action(async () => {
-      console.log(await runMaintenance(process.cwd()));
+    .option(
+      "--build-rag",
+      "Build the local RAG index even when rag.json disables automatic maintenance indexing."
+    )
+    .action(async (options: { buildRag?: boolean }) => {
+      console.log(
+        await runMaintenance(process.cwd(), { buildRag: options.buildRag })
+      );
     });
 
   return program;
