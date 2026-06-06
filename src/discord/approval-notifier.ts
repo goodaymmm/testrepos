@@ -1,7 +1,8 @@
 import path from "node:path";
 import { readdir } from "node:fs/promises";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
-import { getKaironPaths } from "../core/fs/paths.js";
+import { appendJsonLine } from "../core/fs/jsonl-file.js";
+import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
 import type { ApprovalAction } from "./interactions.js";
 import type { PreparedDiscordGateway } from "./gateway.js";
 import {
@@ -29,10 +30,22 @@ export type DiscordApprovalNotificationResult = {
   sent: number;
   skipped: number;
   failed: number;
+  audit_path: string;
   failures: Array<{
     approval_id: string;
     reason: string;
   }>;
+};
+
+export type DiscordApprovalNotificationAuditRecord = {
+  schema_version: "0.1";
+  approval_id: string;
+  status: "sent" | "skipped" | "failed";
+  channel_id: string;
+  message_id?: string;
+  reason?: string;
+  sent_at?: string;
+  recorded_at: string;
 };
 
 export type DiscordApprovalMessageUpdateResult =
@@ -95,12 +108,22 @@ export async function notifyPendingDiscordApprovals(
     sent: 0,
     skipped: 0,
     failed: 0,
+    audit_path: toProjectPath(projectRoot, discordNotificationAuditPath(projectRoot)),
     failures: []
   };
 
   for (const approval of approvals) {
-    if (!shouldNotifyApproval(approval, gateway)) {
+    const notificationCheck = shouldNotifyApproval(approval, gateway);
+    if (!notificationCheck.ok) {
       result.skipped += 1;
+      await appendDiscordNotificationAudit(projectRoot, {
+        schema_version: "0.1",
+        approval_id: approval.id,
+        status: "skipped",
+        channel_id: gateway.approval_channel_id,
+        reason: notificationCheck.reason,
+        recorded_at: now.toISOString()
+      });
       continue;
     }
 
@@ -108,20 +131,39 @@ export async function notifyPendingDiscordApprovals(
       const input = toApprovalMessageInput(approval);
       const message = buildApprovalMessage(input);
       const sent = await channel.send(message);
+      const sentAt = now.toISOString();
       await updateApprovalDiscordMetadata(projectRoot, approval, {
         channel_id: gateway.approval_channel_id,
         message_id: sent.id,
         nonce: message.nonce,
-        notified_at: now.toISOString(),
+        notified_at: sentAt,
         nonce_expires_at: defaultNonceExpiresAt(now),
         unsafe_fields_omitted: containsUnsafeApprovalMessageData(input)
       });
+      await appendDiscordNotificationAudit(projectRoot, {
+        schema_version: "0.1",
+        approval_id: approval.id,
+        status: "sent",
+        channel_id: gateway.approval_channel_id,
+        message_id: sent.id,
+        sent_at: sentAt,
+        recorded_at: sentAt
+      });
       result.sent += 1;
     } catch (error) {
+      const reason = sanitizeAuditReason(String(error));
       result.failed += 1;
       result.failures.push({
         approval_id: approval.id,
-        reason: String(error)
+        reason
+      });
+      await appendDiscordNotificationAudit(projectRoot, {
+        schema_version: "0.1",
+        approval_id: approval.id,
+        status: "failed",
+        channel_id: gateway.approval_channel_id,
+        reason,
+        recorded_at: now.toISOString()
       });
     }
   }
@@ -228,12 +270,20 @@ async function readApprovalRecord(
 function shouldNotifyApproval(
   approval: ApprovalRecord,
   gateway: PreparedDiscordGateway & { status: "ready" }
-): boolean {
-  return (
-    approval.status === "pending" &&
-    approval.discord?.message_id === undefined &&
-    approval.discord?.channel_id !== gateway.approval_channel_id
-  );
+): { ok: true } | { ok: false; reason: string } {
+  if (approval.status !== "pending") {
+    return { ok: false, reason: "not_pending" };
+  }
+
+  if (approval.discord?.message_id !== undefined) {
+    return { ok: false, reason: "already_sent" };
+  }
+
+  if (approval.discord?.channel_id === gateway.approval_channel_id) {
+    return { ok: false, reason: "already_sent" };
+  }
+
+  return { ok: true };
 }
 
 function toApprovalMessageInput(approval: ApprovalRecord): ApprovalMessageInput {
@@ -281,6 +331,40 @@ async function writeApprovalRecord(
 
 function approvalPath(projectRoot: string, approvalId: string): string {
   return path.join(getKaironPaths(projectRoot).approvalsDir, `${approvalId}.json`);
+}
+
+function discordNotificationAuditPath(projectRoot: string): string {
+  return path.join(
+    getKaironPaths(projectRoot).runtimeDir,
+    "discord",
+    "approval-notifications.jsonl"
+  );
+}
+
+async function appendDiscordNotificationAudit(
+  projectRoot: string,
+  record: DiscordApprovalNotificationAuditRecord
+): Promise<void> {
+  await appendJsonLine(discordNotificationAuditPath(projectRoot), record);
+}
+
+function toProjectPath(projectRoot: string, filePath: string): string {
+  return toPosixPath(path.relative(projectRoot, filePath));
+}
+
+function sanitizeAuditReason(value: string): string {
+  return truncate(
+    value
+      .replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
+      .replace(/-----BEGIN [A-Z ]+PRIVATE KEY-----[\s\S]*?-----END [A-Z ]+PRIVATE KEY-----/g, "[redacted-private-key]")
+      .replace(/\s+/g, " ")
+      .trim(),
+    500
+  );
+}
+
+function truncate(value: string, maxLength: number): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
 }
 
 function defaultNonceExpiresAt(now: Date): string {

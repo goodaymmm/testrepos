@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
+import { readJsonLines } from "../src/core/fs/jsonl-file.js";
 import {
   buildKaironSlashCommands,
   prepareDiscordGateway,
@@ -391,9 +392,110 @@ describe("prepareDiscordGateway", () => {
     ).resolves.toMatchObject({
       approval_notifications: {
         sent: 1,
-        failed: 0
+        failed: 0,
+        audit_path: ".kairon/runtime/discord/approval-notifications.jsonl"
       }
     });
+    const audit = await readJsonLines<Record<string, unknown>>(
+      path.join(root, ".kairon", "runtime", "discord", "approval-notifications.jsonl")
+    );
+    expect(audit).toEqual([
+      expect.objectContaining({
+        approval_id: "APR-0001",
+        status: "sent",
+        channel_id: discordIds.channel,
+        message_id: "message-1",
+        sent_at: "2026-05-25T08:00:00.000Z"
+      })
+    ]);
+    expect(JSON.stringify(audit)).not.toContain("diff --git");
+
+    await handle.stop();
+  });
+
+  it("audits skipped and failed approval notifications without unsafe fields", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await enableDiscordProvider(root);
+    await writeApproval(root, {
+      id: "APR-SKIP-DONE",
+      status: "decided",
+      decision: "approve"
+    });
+    await writeApproval(root, {
+      id: "APR-SKIP-SENT",
+      status: "pending",
+      discord: {
+        channel_id: discordIds.channel,
+        message_id: "message-existing"
+      }
+    });
+    await writeApproval(root, {
+      id: "APR-FAIL",
+      status: "pending",
+      title: "API_TOKEN=SHOULD_NOT_LEAK",
+      diff: "diff --git should not be audited",
+      stdout: "password=SHOULD_NOT_LEAK"
+    });
+    const client = new FakeDiscordClient("bot-user");
+    const rest = new FakeDiscordRestRegistration();
+    const channel = new FailingApprovalChannel("send failed: token=SHOULD_NOT_LEAK");
+
+    const handlePromise = startDiscordGateway(root, {
+      env: readyEnv(),
+      clientFactory: () => client,
+      restFactory: () => rest,
+      approvalChannelFactory: () => channel,
+      readyTimeoutMs: 50,
+      now: () => new Date("2026-05-25T08:00:00.000Z")
+    });
+    await client.waitForLogin();
+    client.emitReady();
+    const handle = await handlePromise;
+
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runtime", "discord", "gateway.json"))
+    ).resolves.toMatchObject({
+      approval_notifications: {
+        scanned: 3,
+        sent: 0,
+        skipped: 2,
+        failed: 1,
+        audit_path: ".kairon/runtime/discord/approval-notifications.jsonl",
+        failures: [
+          {
+            approval_id: "APR-FAIL",
+            reason: "Error: send failed: token=[redacted]"
+          }
+        ]
+      }
+    });
+    const audit = await readJsonLines<Record<string, unknown>>(
+      path.join(root, ".kairon", "runtime", "discord", "approval-notifications.jsonl")
+    );
+    expect(audit).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          approval_id: "APR-SKIP-DONE",
+          status: "skipped",
+          reason: "not_pending"
+        }),
+        expect.objectContaining({
+          approval_id: "APR-SKIP-SENT",
+          status: "skipped",
+          reason: "already_sent"
+        }),
+        expect.objectContaining({
+          approval_id: "APR-FAIL",
+          status: "failed",
+          reason: "Error: send failed: token=[redacted]"
+        })
+      ])
+    );
+    const auditText = JSON.stringify(audit);
+    expect(auditText).not.toContain("SHOULD_NOT_LEAK");
+    expect(auditText).not.toContain("diff --git");
+    expect(auditText).not.toContain("password=");
 
     await handle.stop();
   });
@@ -733,6 +835,14 @@ class FakeApprovalChannel implements DiscordApprovalChannel {
     const message = new FakeApprovalMessage(id);
     this.messagesById.set(id, message);
     return message;
+  }
+}
+
+class FailingApprovalChannel implements DiscordApprovalChannel {
+  constructor(readonly reason: string) {}
+
+  async send(): Promise<FakeApprovalMessage> {
+    throw new Error(this.reason);
   }
 }
 
