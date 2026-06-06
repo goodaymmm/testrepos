@@ -22,6 +22,9 @@ describe("runDoctor", () => {
     expect(statusById(result, "cli.availability")).toBe("pass");
     expect(statusById(result, "env.api_keys")).toBe("pass");
     expect(statusById(result, "discord.config")).toBe("pass");
+    expect(checkById(result, "discord.config")?.details).toContain(
+      "live_status=setup_required"
+    );
     expect(checkById(result, "config.agents")?.details).toContain(
       "antigravity(gemini): adapter=antigravity_cli, command=agy"
     );
@@ -69,8 +72,74 @@ describe("runDoctor", () => {
     expect(result.ok).toBe(false);
     expect(statusById(result, "cli.availability")).toBe("error");
     expect(statusById(result, "discord.config")).toBe("error");
+    expect(checkById(result, "discord.config")?.details).toContain(
+      "live_status=setup_required"
+    );
     expect(checkById(result, "cli.availability")?.nextAction).toContain(
       "antigravity(gemini):agy"
+    );
+  });
+
+  it("reports Discord live readiness without leaking env values", async () => {
+    const root = await createInitializedGitProject();
+    await enableDiscordProvider(root);
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {
+        KAIRON_DISCORD_BOT_TOKEN: "secret-bot-token",
+        KAIRON_DISCORD_APPLICATION_ID: "app-id",
+        KAIRON_DISCORD_GUILD_ID: "guild-id",
+        KAIRON_DISCORD_APPROVAL_CHANNEL_ID: "approval-channel",
+        KAIRON_DISCORD_OWNER_USER_ID: "owner-user",
+        KAIRON_DISCORD_ALLOWED_USER_IDS: "owner-user,teammate"
+      }
+    });
+    const text = formatDoctorResult(result);
+
+    expect(result.ok).toBe(true);
+    expect(statusById(result, "discord.config")).toBe("pass");
+    expect(checkById(result, "discord.config")?.details).toEqual(
+      expect.arrayContaining([
+        "gateway_status=ready",
+        "live_status=ready",
+        "live_missing_env=none",
+        "KAIRON_DISCORD_BOT_TOKEN=present",
+        "KAIRON_DISCORD_ALLOWED_USER_IDS=present"
+      ])
+    );
+    expect(text).not.toContain("secret-bot-token");
+    expect(text).not.toContain("approval-channel");
+    expect(text).not.toContain("owner-user,teammate");
+  });
+
+  it("warns when Discord gateway env is ready but live approval env is incomplete", async () => {
+    const root = await createInitializedGitProject();
+    await enableDiscordProvider(root);
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {
+        KAIRON_DISCORD_BOT_TOKEN: "secret-bot-token",
+        KAIRON_DISCORD_APPLICATION_ID: "app-id",
+        KAIRON_DISCORD_GUILD_ID: "guild-id",
+        KAIRON_DISCORD_APPROVAL_CHANNEL_ID: "approval-channel",
+        KAIRON_DISCORD_OWNER_USER_ID: "owner-user"
+      }
+    });
+
+    expect(result.ok).toBe(true);
+    expect(statusById(result, "discord.config")).toBe("warning");
+    expect(checkById(result, "discord.config")?.details).toContain(
+      "gateway_status=ready"
+    );
+    expect(checkById(result, "discord.config")?.details).toContain(
+      "live_status=setup_required"
+    );
+    expect(checkById(result, "discord.config")?.details).toContain(
+      "live_missing_env=KAIRON_DISCORD_ALLOWED_USER_IDS"
     );
   });
 
@@ -147,6 +216,15 @@ async function writeLegacyAgentsConfig(root: string): Promise<void> {
   gemini.adapter = "gemini_cli";
   gemini.command = "gemini";
   await writeJsonFileAtomic(agentsPath, agents);
+}
+
+async function enableDiscordProvider(root: string): Promise<void> {
+  const notificationsPath = path.join(root, ".kairon", "config", "notifications.json");
+  const notifications = await readJsonFile<Record<string, unknown>>(notificationsPath);
+  const providers = notifications.providers as Record<string, unknown>;
+  const discord = providers.discord as Record<string, unknown>;
+  discord.enabled = true;
+  await writeJsonFileAtomic(notificationsPath, notifications);
 }
 
 function checkById(result: DoctorResult, id: string) {

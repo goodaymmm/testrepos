@@ -321,20 +321,41 @@ async function checkDiscordConfig(
     discord.owner_user_id_env,
     discord.allowed_user_ids_env
   ].filter((value): value is string => value !== undefined && value.length > 0);
-  const present = envNames.filter((name) => env[name] !== undefined);
-  const missing = envNames.filter((name) => env[name] === undefined);
+  const gatewayEnvNames = [
+    discord.bot_token_env,
+    discord.application_id_env,
+    discord.guild_id_env,
+    discord.approval_channel_id_env,
+    discord.owner_user_id_env
+  ].filter((value): value is string => value !== undefined && value.length > 0);
+  const present = envNames.filter((name) => hasEnvValue(env, name));
+  const missing = envNames.filter((name) => !hasEnvValue(env, name));
+  const gatewayMissing = gatewayEnvNames.filter((name) => !hasEnvValue(env, name));
+  const liveReady = discord.enabled === true && missing.length === 0;
   const details = [
     `enabled=${discord.enabled === true}`,
     `mode=${discord.mode ?? "unknown"}`,
-    ...envNames.map((name) => `${name}=${env[name] === undefined ? "missing" : "present"}`)
+    `gateway_status=${gatewayMissing.length === 0 ? "ready" : "setup_required"}`,
+    `live_status=${liveReady ? "ready" : "setup_required"}`,
+    `live_missing_env=${missing.length === 0 ? "none" : missing.join(",")}`,
+    ...envNames.map((name) => `${name}=${hasEnvValue(env, name) ? "present" : "missing"}`)
   ];
 
-  if (discord.enabled === true && missing.length > 0) {
+  if (discord.enabled === true && gatewayMissing.length > 0) {
     return error(
       "discord.config",
       "Discord notification config",
       details,
-      `Set missing Discord env vars: ${missing.join(", ")}.`
+      `Set missing Discord gateway env vars: ${gatewayMissing.join(", ")}.`
+    );
+  }
+
+  if (discord.enabled === true && missing.length > 0) {
+    return warning(
+      "discord.config",
+      "Discord notification config",
+      details,
+      `Set missing Discord live env vars: ${missing.join(", ")}.`
     );
   }
 
@@ -348,6 +369,10 @@ async function checkDiscordConfig(
   }
 
   return pass("discord.config", "Discord notification config", details);
+}
+
+function hasEnvValue(env: NodeJS.ProcessEnv, name: string): boolean {
+  return (env[name] ?? "").trim().length > 0;
 }
 
 async function checkGitPolicy(projectRoot: string): Promise<DoctorCheck> {
