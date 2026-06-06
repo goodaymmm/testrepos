@@ -20,6 +20,11 @@ import { createDailyHandoffs, type AgentHandoff } from "./handoff.js";
 export type RunDailyMaintenanceRequest = {
   date?: string;
   now?: Date;
+  forceRagIndex?: boolean;
+};
+
+export type RagIndexSkipped = {
+  reason: "disabled";
 };
 
 export type DailyMaintenanceResult = {
@@ -40,6 +45,7 @@ export type DailyMaintenanceResult = {
     BuildRagIndexResult,
     "index_path" | "source_count" | "chunk_count"
   >;
+  rag_index_skipped?: RagIndexSkipped;
 };
 
 type ScheduleConfig = {
@@ -60,10 +66,11 @@ export async function runDailyMaintenance(
     date,
     dailyReport
   });
-  const ragIndex =
-    (await isRagEnabled(projectRoot))
-      ? await buildRagIndex(projectRoot, { now: () => now })
-      : undefined;
+  const ragEnabled = await isRagEnabled(projectRoot);
+  const shouldBuildRag = request.forceRagIndex === true || ragEnabled;
+  const ragIndex = shouldBuildRag
+    ? await buildRagIndex(projectRoot, { now: () => now })
+    : undefined;
 
   return {
     schema_version: "0.1",
@@ -87,7 +94,13 @@ export async function runDailyMaintenance(
             index_path: ragIndex.index_path,
             source_count: ragIndex.source_count,
             chunk_count: ragIndex.chunk_count
+          },
+    rag_index_skipped:
+      ragIndex === undefined
+        ? {
+            reason: "disabled"
           }
+        : undefined
   };
 }
 
