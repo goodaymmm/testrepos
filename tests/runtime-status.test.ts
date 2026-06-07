@@ -33,6 +33,24 @@ describe("runtime status", () => {
         next_action: "Verify token=SHOULD_NOT_LEAK and channel permissions."
       }
     );
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "runtime", "last-tick.json"),
+      {
+        schema_version: "0.1",
+        sessions: {
+          schema_version: "0.1",
+          date: "2026-05-26",
+          initialized: 3,
+          ready: 1,
+          idle: 1,
+          busy: 0,
+          setup_required: 1,
+          closed: 0,
+          agents: [],
+          updated_at: "2026-05-26T00:00:00.000Z"
+        }
+      }
+    );
 
     const status = await getRuntimeStatus(root);
     expect(status.runtimeLock.locked).toBe(true);
@@ -42,6 +60,8 @@ describe("runtime status", () => {
     expect(status.approvals.pending).toBe(1);
     expect(formatRuntimeStatus(status)).toContain("queue.ready=1");
     expect(formatRuntimeStatus(status)).toContain("runtime.mode=daemon");
+    expect(formatRuntimeStatus(status)).toContain("sessions.initialized=3");
+    expect(formatRuntimeStatus(status)).toContain("sessions.setupRequired=1");
     expect(formatRuntimeStatus(status)).toContain("discord.gateway.status=setup_required");
     expect(formatRuntimeStatus(status)).toContain(
       "discord.gateway.errorCode=discord_missing_access_approval_channel"

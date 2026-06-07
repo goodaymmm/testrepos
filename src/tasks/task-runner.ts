@@ -5,7 +5,10 @@ import {
   type CliSessionRunRecord
 } from "../agents/cli-session-runner.js";
 import type { CommandRunner } from "../agents/command-runner.js";
-import { AgentDispatcher } from "../agents/dispatcher.js";
+import {
+  AgentDispatcher,
+  type AgentSessionAvailability
+} from "../agents/dispatcher.js";
 import type { InteractiveSessionRunner } from "../agents/interactive-session-runner.js";
 import type { CommandAvailabilityChecker } from "../agents/session-host.js";
 import type { AgentId } from "../agents/types.js";
@@ -72,12 +75,14 @@ export type RunTaskRequest = {
   workerId?: string;
   date?: string;
   allowInteractiveAgents?: boolean;
+  availableSessions?: AgentSessionAvailability[];
 };
 
 export type RunQueuedTaskRequest = {
   timeoutMs?: number;
   date?: string;
   allowInteractiveAgents?: boolean;
+  availableSessions?: AgentSessionAvailability[];
 };
 
 export type RunTaskResult = {
@@ -221,7 +226,8 @@ export class TaskRunner {
       taskId: item.task_id,
       timeoutMs: request.timeoutMs,
       date: request.date,
-      allowInteractiveAgents: request.allowInteractiveAgents
+      allowInteractiveAgents: request.allowInteractiveAgents,
+      availableSessions: request.availableSessions
     });
   }
 
@@ -250,6 +256,7 @@ export class TaskRunner {
       requiredCapabilities: capabilities,
       tags,
       allowInteractiveAgents,
+      availableSessions: request.availableSessions,
       policy:
         reviewFix === undefined
           ? undefined

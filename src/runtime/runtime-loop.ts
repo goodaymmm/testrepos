@@ -9,6 +9,12 @@ import {
 import { WorkQueue } from "../queue/work-queue.js";
 import { StateApplier, type InternalCommand } from "../state/state-applier.js";
 import { createAntigravityPtySessionRunner } from "../agents/pty-session-runner.js";
+import type { AgentSessionAvailability } from "../agents/dispatcher.js";
+import {
+  initializeSameDaySessions,
+  type CommandAvailabilityChecker,
+  type SameDaySessionSummary
+} from "../agents/session-host.js";
 import { isAgentId } from "../agents/types.js";
 import { TaskRunner } from "../tasks/task-runner.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
@@ -46,6 +52,7 @@ export type RuntimeTickResult = {
   action: RuntimeTickAction;
   worker_id: string;
   created_at: string;
+  sessions?: SameDaySessionSummary;
   queue_result?: QueueWorkerResult;
   maintenance?: {
     date: string;
@@ -70,6 +77,7 @@ export type RuntimeLoopOptions = {
   gitTransactionRunner?: (
     request: RuntimeGitTransactionRequest
   ) => Promise<GitTransactionRecord>;
+  commandAvailability?: CommandAvailabilityChecker;
 };
 
 export type RuntimeGitTransactionRequest =
@@ -86,25 +94,38 @@ export class RuntimeLoop {
     const now = this.now();
     const schedule = await getScheduleStatus(this.projectRoot, now);
     const workerId = this.options.workerId ?? `runtime-${process.pid}`;
+    const date = getLocalDateKey(now, schedule.timezone);
+    const sessions = await initializeSameDaySessions(this.projectRoot, date, {
+      commandAvailability: this.options.commandAvailability,
+      now: () => now
+    });
 
     if (schedule.mode === "maintenance") {
       return this.recordTick(
-        await this.runMaintenanceTick(schedule, workerId, now)
+        await this.runMaintenanceTick(schedule, workerId, now, sessions)
       );
     }
 
-    const queueResult = await this.createQueueWorker(now).processNext(workerId, {
+    const queueResult = await this.createQueueWorker(
+      now,
+      sessionAvailabilityFromSummary(sessions),
+      date
+    ).processNext(workerId, {
       scheduleMode: schedule.mode,
       now
     });
     return this.recordTick({
-      ...this.baseTick(schedule, workerId, now),
+      ...this.baseTick(schedule, workerId, now, sessions),
       action: queueResult.status === "idle" ? "idle" : queueResult.status,
       queue_result: queueResult
     });
   }
 
-  private createQueueWorker(now: Date): QueueWorker {
+  private createQueueWorker(
+    now: Date,
+    availableSessions: AgentSessionAvailability[],
+    date: string
+  ): QueueWorker {
     return new QueueWorker(
       this.projectRoot,
       new WorkQueue(this.projectRoot),
@@ -112,7 +133,9 @@ export class RuntimeLoop {
       mergeHandlers(
         defaultQueueHandlers(this.projectRoot, now, {
           reviewLoopRunner: this.options.reviewLoopRunner,
-          gitTransactionRunner: this.options.gitTransactionRunner
+          gitTransactionRunner: this.options.gitTransactionRunner,
+          availableSessions,
+          date
         }),
         this.options.handlers
       )
@@ -122,14 +145,15 @@ export class RuntimeLoop {
   private async runMaintenanceTick(
     schedule: ScheduleStatus,
     workerId: string,
-    now: Date
+    now: Date,
+    sessions: SameDaySessionSummary
   ): Promise<RuntimeTickResult> {
     const date = getLocalDateKey(now, schedule.timezone);
     const markerPath = maintenanceMarkerPath(this.projectRoot, date);
 
     if (await fileExists(markerPath)) {
       return {
-        ...this.baseTick(schedule, workerId, now),
+        ...this.baseTick(schedule, workerId, now, sessions),
         action: "maintenance-skipped",
         maintenance: {
           date,
@@ -153,7 +177,7 @@ export class RuntimeLoop {
     await writeJsonFileAtomic(markerPath, marker);
 
     return {
-      ...this.baseTick(schedule, workerId, now),
+      ...this.baseTick(schedule, workerId, now, sessions),
       action: "maintenance-run",
       maintenance: {
         date,
@@ -168,7 +192,8 @@ export class RuntimeLoop {
   private baseTick(
     schedule: ScheduleStatus,
     workerId: string,
-    now: Date
+    now: Date,
+    sessions: SameDaySessionSummary
   ): Omit<RuntimeTickResult, "action"> {
     return {
       schema_version: "0.1",
@@ -176,7 +201,8 @@ export class RuntimeLoop {
       base_mode: schedule.baseMode,
       active_work_closed: schedule.activeWorkClosed,
       worker_id: workerId,
-      created_at: now.toISOString()
+      created_at: now.toISOString(),
+      sessions
     };
   }
 
@@ -193,8 +219,13 @@ export class RuntimeLoop {
 function defaultQueueHandlers(
   projectRoot: string,
   now: Date,
-  options: Pick<RuntimeLoopOptions, "reviewLoopRunner" | "gitTransactionRunner"> = {}
+  options: Pick<RuntimeLoopOptions, "reviewLoopRunner" | "gitTransactionRunner"> & {
+    availableSessions?: AgentSessionAvailability[];
+    date?: string;
+  } = {}
 ): QueueWorkerHandlers {
+  const date = options.date ?? localDateKey(now);
+
   return {
     commands: {
       "approval.decide": async (envelope) => {
@@ -227,7 +258,10 @@ function defaultQueueHandlers(
         const result = await new TaskRunner(projectRoot, {
           interactiveSessionRunner: createAntigravityPtySessionRunner(),
           now: () => now
-        }).runQueuedAgentItem(item, { date: localDateKey(now) });
+        }).runQueuedAgentItem(item, {
+          date,
+          availableSessions: options.availableSessions
+        });
         return { ...result };
       },
       "review.run": async (item) => {
@@ -241,7 +275,7 @@ function defaultQueueHandlers(
             }).run(input));
         const result = await runner({
           ...request,
-          date: request.date ?? localDateKey(now)
+          date: request.date ?? date
         });
         return summarizeReviewRun(result);
       },
@@ -275,6 +309,16 @@ function defaultQueueHandlers(
       }
     }
   };
+}
+
+function sessionAvailabilityFromSummary(
+  summary: SameDaySessionSummary
+): AgentSessionAvailability[] {
+  return summary.agents.map((session) => ({
+    agent: session.agent,
+    status: session.dispatcher_status,
+    mode: session.mode
+  }));
 }
 
 function mergeHandlers(

@@ -50,6 +50,54 @@ describe("RuntimeLoop", () => {
     ]);
   });
 
+  it("initializes same-day sessions before processing runtime work", async () => {
+    const root = await createInitializedProject();
+    const queue = new WorkQueue(root);
+    const item = await queue.enqueue({
+      type: "maintenance.run",
+      schedule_mode: "active_work"
+    });
+
+    const result = await new RuntimeLoop(root, {
+      now: () => new Date("2026-05-25T08:00:00.000Z"),
+      commandAvailability: async (command) => command !== "agy",
+      handlers: {
+        items: {
+          "maintenance.run": async () => ({ maintained: true })
+        }
+      }
+    }).runTick();
+
+    expect(result).toMatchObject({
+      action: "processed-item",
+      queue_result: {
+        item_id: item.id
+      },
+      sessions: {
+        date: "2026-05-25",
+        initialized: 3,
+        ready: 2,
+        setup_required: 1,
+        agents: expect.arrayContaining([
+          expect.objectContaining({
+            agent: "gemini",
+            status: "setup_required",
+            dispatcher_status: "missing_cli"
+          })
+        ])
+      }
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runtime", "last-tick.json"))
+    ).resolves.toMatchObject({
+      sessions: {
+        date: "2026-05-25",
+        initialized: 3,
+        setup_required: 1
+      }
+    });
+  });
+
   it("does not let stale operation-test queue items affect the runtime tick", async () => {
     const root = await createInitializedProject();
     const queue = new WorkQueue(root);
