@@ -1,5 +1,5 @@
 import path from "node:path";
-import { loadConfigFile } from "../core/config/load-config.js";
+import { loadConfigFile, type ConfigFileName } from "../core/config/load-config.js";
 import { readJsonFile } from "../core/fs/json-file.js";
 import { getKaironPaths } from "../core/fs/paths.js";
 import { CommandInbox, type KaironCommand } from "../queue/command-inbox.js";
@@ -71,6 +71,8 @@ export type NormalizedDiscordCommand =
 type ApprovalRecord = {
   id: string;
   status?: string;
+  type?: string;
+  risk_level?: string;
   nonce?: string;
   discord_nonce?: string;
   actions?: string[];
@@ -79,6 +81,28 @@ type ApprovalRecord = {
     nonce_expires_at?: string;
   };
 };
+
+type NotificationsPolicyConfig = {
+  approval_policy?: {
+    require_board_reauth_for?: string[];
+  };
+};
+
+type PoliciesConfig = {
+  git?: {
+    require_approval_for?: string[];
+  };
+};
+
+const defaultHighRiskApprovalTypes = [
+  "deploy",
+  "secret_change",
+  "billing_change",
+  "protected_branch_push",
+  "git_protected_branch_push",
+  "force_push",
+  "branch_delete"
+];
 
 export function parseApprovalCustomId(customId: string): ParsedCustomId {
   const parts = customId.split(":");
@@ -156,6 +180,11 @@ export async function validateDiscordApprovalInteraction(
 
   if (!resolveApprovalActions(approval).includes(parsed.action)) {
     return { ok: false, reason: "approval action is not allowed" };
+  }
+
+  const policy = await validateDiscordApprovalPolicy(projectRoot, approval, parsed.action);
+  if (!policy.ok) {
+    return policy;
   }
 
   return { ok: true, parsed };
@@ -457,6 +486,71 @@ function resolveApprovalActions(approval: ApprovalRecord): ApprovalAction[] {
     const parsed = parseAction(action);
     return parsed === null ? [] : [parsed.action];
   });
+}
+
+async function validateDiscordApprovalPolicy(
+  projectRoot: string,
+  approval: ApprovalRecord,
+  action: ApprovalAction
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (action !== "approve") {
+    return { ok: true };
+  }
+
+  if (!(await requiresBoardReauth(projectRoot, approval))) {
+    return { ok: true };
+  }
+
+  return { ok: false, reason: "board_reauth_required" };
+}
+
+async function requiresBoardReauth(
+  projectRoot: string,
+  approval: ApprovalRecord
+): Promise<boolean> {
+  if (approval.risk_level === "high" || approval.risk_level === "critical") {
+    return true;
+  }
+
+  const approvalType = approval.type;
+  if (approvalType === undefined) {
+    return false;
+  }
+
+  const highRiskTypes = await readHighRiskApprovalTypes(projectRoot);
+  return highRiskTypes.has(approvalType);
+}
+
+async function readHighRiskApprovalTypes(projectRoot: string): Promise<Set<string>> {
+  const [notifications, policies] = await Promise.all([
+    readOptionalConfig<NotificationsPolicyConfig>(projectRoot, "notifications.json"),
+    readOptionalConfig<PoliciesConfig>(projectRoot, "policies.json")
+  ]);
+  const configuredBoardReauth = notifications?.approval_policy?.require_board_reauth_for ?? [];
+  const configuredApprovalRequired = (policies?.git?.require_approval_for ?? []).filter(
+    (type) => type !== "merge"
+  );
+
+  return new Set([
+    ...defaultHighRiskApprovalTypes,
+    ...configuredBoardReauth,
+    ...configuredApprovalRequired
+  ]);
+}
+
+async function readOptionalConfig<T>(
+  projectRoot: string,
+  fileName: ConfigFileName
+): Promise<T | null> {
+  try {
+    return await loadConfigFile<T>(projectRoot, fileName);
+  } catch (error) {
+    if (String(error).includes("ENOENT")) {
+      return null;
+    }
+
+    throw error;
+  }
 }
 
 function buildActor(interaction: DiscordInteractionInput): Record<string, string> {

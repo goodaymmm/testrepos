@@ -136,6 +136,32 @@ describe("ApprovalQueue", () => {
     ]);
   });
 
+  it("allows local CLI approval for high-risk approvals", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeApproval(root, {
+      id: "APR-HIGH-LOCAL",
+      status: "pending",
+      type: "deploy",
+      risk_level: "high",
+      actions: ["approve", "reject", "request_changes"]
+    });
+
+    await expect(
+      decideApprovalCommand(root, "APR-HIGH-LOCAL", {
+        action: "approve",
+        reason: "local re-auth completed"
+      })
+    ).resolves.toContain("status=decided");
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "approvals", "APR-HIGH-LOCAL.json"))
+    ).resolves.toMatchObject({
+      status: "decided",
+      decision: "approve",
+      reason: "local re-auth completed"
+    });
+  });
+
   it("records rejected git push approvals on the transaction", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

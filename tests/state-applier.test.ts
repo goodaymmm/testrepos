@@ -119,6 +119,34 @@ describe("StateApplier", () => {
     });
   });
 
+  it("preserves high-risk approval metadata when materializing requests", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const applier = new StateApplier(root);
+
+    await applier.appendEvent({
+      type: "approval.requested",
+      task_id: "TASK-0001",
+      payload: {
+        approval: {
+          id: "APR-HIGH",
+          type: "deploy",
+          risk_level: "high",
+          title: "Deploy approval"
+        }
+      }
+    });
+
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "approvals", "APR-HIGH.json"))
+    ).resolves.toMatchObject({
+      id: "APR-HIGH",
+      status: "pending",
+      type: "deploy",
+      risk_level: "high"
+    });
+  });
+
   it("applies outbox events and approvals", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
