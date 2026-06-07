@@ -176,6 +176,115 @@ describe("Discord interactions", () => {
     });
   });
 
+  it("blocks Discord approve for high-risk approvals while allowing reject and changes", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeApproval(root, {
+      id: "APR-HIGH",
+      status: "pending",
+      type: "deploy",
+      discord_nonce: "n42",
+      actions: ["approve", "reject", "request_changes"]
+    });
+
+    await expect(
+      validateDiscordApprovalInteraction(root, gateway, {
+        interaction_id: "i-high-approve-validate",
+        user_id: "owner",
+        guild_id: "guild",
+        channel_id: "channel",
+        custom_id: "kr:v1:apr:APR-HIGH:approve:n42"
+      })
+    ).resolves.toMatchObject({
+      ok: false,
+      reason: "board_reauth_required"
+    });
+    await expect(
+      normalizeDiscordApprovalInteraction(root, gateway, {
+        interaction_id: "i-high-approve",
+        user_id: "owner",
+        guild_id: "guild",
+        channel_id: "channel",
+        message_id: "m1",
+        custom_id: "kr:v1:apr:APR-HIGH:approve:n42"
+      })
+    ).resolves.toMatchObject({
+      accepted: false,
+      duplicate: false,
+      reason: "board_reauth_required"
+    });
+    await expect(new CommandInbox(root).list()).resolves.toHaveLength(0);
+
+    await expect(
+      normalizeDiscordApprovalInteraction(root, gateway, {
+        interaction_id: "i-high-reject",
+        user_id: "owner",
+        guild_id: "guild",
+        channel_id: "channel",
+        message_id: "m1",
+        custom_id: "kr:v1:apr:APR-HIGH:reject:n42",
+        reason: "Do not deploy yet."
+      })
+    ).resolves.toMatchObject({
+      accepted: true,
+      command: {
+        type: "approval.decide",
+        decision: "reject",
+        reason: "Do not deploy yet."
+      }
+    });
+    await expect(
+      normalizeDiscordApprovalInteraction(root, gateway, {
+        interaction_id: "i-high-changes",
+        user_id: "owner",
+        guild_id: "guild",
+        channel_id: "channel",
+        message_id: "m1",
+        custom_id: "kr:v1:apr:APR-HIGH:changes:n42",
+        reason: "Attach rollout evidence."
+      })
+    ).resolves.toMatchObject({
+      accepted: true,
+      command: {
+        type: "approval.decide",
+        decision: "request_changes",
+        reason: "Attach rollout evidence."
+      }
+    });
+    await expect(new CommandInbox(root).list()).resolves.toHaveLength(2);
+  });
+
+  it("allows low-risk Discord approve interactions", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeApproval(root, {
+      id: "APR-LOW",
+      status: "pending",
+      type: "manual_test",
+      risk_level: "low",
+      discord_nonce: "n42",
+      actions: ["approve"]
+    });
+
+    await expect(
+      normalizeDiscordApprovalInteraction(root, gateway, {
+        interaction_id: "i-low-approve",
+        user_id: "owner",
+        guild_id: "guild",
+        channel_id: "channel",
+        message_id: "m1",
+        custom_id: "kr:v1:apr:APR-LOW:approve:n42"
+      })
+    ).resolves.toMatchObject({
+      accepted: true,
+      command: {
+        type: "approval.decide",
+        approval_id: "APR-LOW",
+        decision: "approve"
+      }
+    });
+  });
+
   it("normalizes reject modal submissions with a reason", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

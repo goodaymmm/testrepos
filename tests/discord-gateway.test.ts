@@ -991,6 +991,71 @@ describe("prepareDiscordGateway", () => {
     await handle.stop();
   });
 
+  it("audits high-risk Discord approve rejections without applying a decision", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await enableDiscordProvider(root);
+    await writeApproval(root, {
+      id: "APR-HIGH",
+      status: "pending",
+      title: "Deploy approval",
+      type: "deploy",
+      discord_nonce: "n42",
+      actions: ["approve", "reject"],
+      discord: {
+        channel_id: discordIds.channel,
+        message_id: "message-1",
+        nonce: "n42"
+      }
+    });
+    const client = new FakeDiscordClient("bot-user");
+    const rest = new FakeDiscordRestRegistration();
+    const channel = new FakeApprovalChannel("channel");
+    channel.addMessage("message-1");
+
+    const handlePromise = startDiscordGateway(root, {
+      env: readyEnv(),
+      clientFactory: () => client,
+      restFactory: () => rest,
+      approvalChannelFactory: () => channel,
+      readyTimeoutMs: 50,
+      now: () => new Date("2026-05-25T08:00:00.000Z")
+    });
+    await client.waitForLogin();
+    client.emitReady();
+    const handle = await handlePromise;
+    const interaction = new FakeButtonInteraction(
+      "approve-high-risk-1",
+      "kr:v1:apr:APR-HIGH:approve:n42"
+    );
+
+    await client.emitInteraction(interaction);
+
+    expect(interaction.editedReply).toBe(
+      "Kairon command was rejected: board_reauth_required"
+    );
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "approvals", "APR-HIGH.json"))
+    ).resolves.toMatchObject({
+      status: "pending"
+    });
+    await expect(new CommandInbox(root).list("completed")).resolves.toHaveLength(0);
+    const audit = await readJsonLines<Record<string, unknown>>(
+      path.join(root, ".kairon", "runtime", "discord", "decision-interactions.jsonl")
+    );
+    expect(audit).toEqual([
+      expect.objectContaining({
+        interaction_id: "approve-high-risk-1",
+        approval_id: "APR-HIGH",
+        decision: "approve",
+        status: "rejected",
+        reason: "board_reauth_required"
+      })
+    ]);
+
+    await handle.stop();
+  });
+
   it("audits message update failures without failing the canonical decision", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
@@ -1217,6 +1282,7 @@ class FakeButtonInteraction implements DiscordGatewayInteraction {
   deferredOptions: { ephemeral: boolean } | undefined;
   modal: unknown;
   replyContent: string | undefined;
+  editedReply: string | undefined;
 
   constructor(
     readonly id: string,
@@ -1233,6 +1299,10 @@ class FakeButtonInteraction implements DiscordGatewayInteraction {
 
   async reply(options: { content: string; ephemeral: boolean }): Promise<void> {
     this.replyContent = options.content;
+  }
+
+  async editReply(options: { content: string }): Promise<void> {
+    this.editedReply = options.content;
   }
 }
 
