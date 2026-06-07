@@ -347,6 +347,50 @@ describe("CliSessionRunner", () => {
     });
   });
 
+  it("classifies provider usage caps as usage_limited with resume hints", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) =>
+        commandResult(invocation, {
+          exitCode: 1,
+          stdout: "Usage limit reached for this billing period."
+        })
+    });
+
+    const record = await runner.runAgentJob({
+      agent: "claude",
+      date: "2026-05-25",
+      runId: "RUN-0016",
+      taskId: "TASK-0016",
+      persona: "smoke"
+    });
+
+    expect(record).toMatchObject({
+      status: "usage_limited",
+      failure_reason: "cli_usage_limited",
+      setup_action: expect.stringContaining("provider usage"),
+      resume_hint: expect.stringContaining("Pause this agent")
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runs", "RUN-0016", "outbox.json"))
+    ).resolves.toMatchObject({
+      status: "usage_limited",
+      events: [
+        {
+          type: "message.created",
+          payload: {
+            message_type: "agent.run.usage_limited",
+            classification_status: "usage_limited",
+            reason: "cli_usage_limited",
+            resume_hint: expect.stringContaining("Pause this agent")
+          }
+        }
+      ]
+    });
+  });
+
   it("classifies permission prompts without auto-approval", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

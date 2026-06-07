@@ -78,6 +78,26 @@ describe("AgentDispatcher", () => {
     });
   });
 
+  it("avoids temporarily limited same-day sessions", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+
+    await expect(
+      new AgentDispatcher(root).decide({
+        persona: "qa",
+        tags: ["google_ecosystem", "multimodal"],
+        allowInteractiveAgents: true,
+        availableSessions: [
+          { agent: "gemini", status: "usage_limited" },
+          { agent: "codex", status: "ready" }
+        ]
+      })
+    ).resolves.toMatchObject({
+      agent: "codex",
+      reason: expect.stringContaining("session ready")
+    });
+  });
+
   it("honors policy, capability, and non-interactive runner constraints", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

@@ -87,6 +87,7 @@ export type ReviewFixRunStatus =
   | "setup_required"
   | "permission_required"
   | "rate_limited"
+  | "usage_limited"
   | "timeout"
   | "no_output";
 

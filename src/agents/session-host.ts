@@ -14,13 +14,19 @@ export type SameDaySessionStatus =
   | "idle"
   | "busy"
   | "setup_required"
+  | "permission_required"
+  | "rate_limited"
+  | "usage_limited"
   | "closed";
 export type DispatcherSessionStatus =
   | "ready"
   | "idle"
   | "busy"
   | "unavailable"
-  | "missing_cli";
+  | "missing_cli"
+  | "permission_required"
+  | "rate_limited"
+  | "usage_limited";
 export type SessionRunStatus =
   | "running"
   | "completed"
@@ -28,6 +34,7 @@ export type SessionRunStatus =
   | "setup_required"
   | "permission_required"
   | "rate_limited"
+  | "usage_limited"
   | "timeout"
   | "no_output";
 
@@ -127,6 +134,9 @@ export type SameDaySessionSummary = {
   idle: number;
   busy: number;
   setup_required: number;
+  permission_required: number;
+  rate_limited: number;
+  usage_limited: number;
   closed: number;
   agents: SameDaySessionSnapshot[];
   updated_at: string;
@@ -563,6 +573,9 @@ export async function initializeSameDaySessions(
     idle: count("idle"),
     busy: count("busy"),
     setup_required: count("setup_required"),
+    permission_required: count("permission_required"),
+    rate_limited: count("rate_limited"),
+    usage_limited: count("usage_limited"),
     closed: count("closed"),
     agents: snapshots,
     updated_at: (options.now?.() ?? new Date()).toISOString()
@@ -615,6 +628,14 @@ export function sameDaySessionStatus(
 
   if (metadata.active_run_id !== null) {
     return "busy";
+  }
+
+  if (
+    metadata.last_status === "permission_required" ||
+    metadata.last_status === "rate_limited" ||
+    metadata.last_status === "usage_limited"
+  ) {
+    return metadata.last_status;
   }
 
   return metadata.last_run_id === null ? "ready" : "idle";

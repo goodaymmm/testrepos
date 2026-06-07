@@ -79,6 +79,7 @@ export type CliSessionRunRecord = {
   classification?: CliRunClassification;
   failure_reason?: string;
   setup_action?: string;
+  resume_hint?: string;
   retry_after?: string;
   matched_pattern?: string;
   prompt_path: string;
@@ -112,6 +113,7 @@ type TerminalState = {
     | "setup_required"
     | "permission_required"
     | "rate_limited"
+    | "usage_limited"
     | "timeout"
     | "no_output";
   updated_at: string;
@@ -619,6 +621,7 @@ export class CliSessionRunner {
             reason: input.classification.reason,
             message: input.classification.message,
             setup_action: input.classification.setup_action,
+            resume_hint: input.classification.resume_hint,
             retry_after: input.classification.retry_after,
             matched_pattern: input.classification.matched_pattern,
             exit_code: input.result?.exitCode ?? null,
@@ -653,6 +656,7 @@ export class CliSessionRunner {
             reason: input.classification.reason,
             message: input.classification.message,
             setup_action: input.classification.setup_action,
+            resume_hint: input.classification.resume_hint,
             retry_after: input.classification.retry_after,
             matched_pattern: input.classification.matched_pattern,
             exit_code: input.result?.exitCode ?? null,
@@ -763,6 +767,7 @@ export class CliSessionRunner {
       classification: input.classification,
       failure_reason: input.classification?.reason,
       setup_action: input.classification?.setup_action,
+      resume_hint: input.classification?.resume_hint,
       retry_after: input.classification?.retry_after,
       matched_pattern: input.classification?.matched_pattern,
       prompt_path: toProjectPath(this.projectRoot, input.paths.promptPath),
@@ -795,6 +800,7 @@ function terminalStatusFromRunStatus(
     status === "setup_required" ||
     status === "permission_required" ||
     status === "rate_limited" ||
+    status === "usage_limited" ||
     status === "timeout" ||
     status === "no_output"
   ) {
@@ -843,6 +849,10 @@ function messageTypeForClassification(status: CliSessionRunStatus): string {
 
   if (status === "rate_limited") {
     return "agent.run.rate_limited";
+  }
+
+  if (status === "usage_limited") {
+    return "agent.run.usage_limited";
   }
 
   if (status === "timeout") {
@@ -974,6 +984,7 @@ function runStatusFromOutbox(
     status === "setup_required" ||
     status === "permission_required" ||
     status === "rate_limited" ||
+    status === "usage_limited" ||
     status === "timeout" ||
     status === "no_output"
   ) {
