@@ -110,6 +110,15 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
     status.sessions?.setup_required === undefined
       ? null
       : `sessions.setupRequired=${status.sessions.setup_required}`,
+    status.sessions?.permission_required === undefined
+      ? null
+      : `sessions.permissionRequired=${status.sessions.permission_required}`,
+    status.sessions?.rate_limited === undefined
+      ? null
+      : `sessions.rateLimited=${status.sessions.rate_limited}`,
+    status.sessions?.usage_limited === undefined
+      ? null
+      : `sessions.usageLimited=${status.sessions.usage_limited}`,
     status.discordGateway?.status === undefined
       ? null
       : `discord.gateway.status=${status.discordGateway.status}`,

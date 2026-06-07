@@ -7,6 +7,7 @@ export type CliRunClassificationStatus =
   | "setup_required"
   | "permission_required"
   | "rate_limited"
+  | "usage_limited"
   | "timeout"
   | "no_output";
 
@@ -15,6 +16,7 @@ export type CliRunClassification = {
   reason: string;
   message: string;
   setup_action?: string;
+  resume_hint?: string;
   retry_after?: string;
   matched_pattern?: string;
 };
@@ -72,9 +74,6 @@ export function classifyCliRunResult(
     '"error": "rate_limit"',
     "rate_limit",
     "rate limit",
-    "usage limit",
-    "you've hit your limit",
-    "quota exceeded",
     "too many requests",
     "http 429",
     "status 429",
@@ -86,8 +85,38 @@ export function classifyCliRunResult(
       reason: "cli_rate_limited",
       message:
         "Agent CLI is rate limited. Do not retry automatically; retry after the provider reset window.",
+      resume_hint:
+        "Defer this agent until the provider reset window or retry_after has passed.",
       retry_after: extractRetryAfter(output),
       matched_pattern: rateLimit.pattern
+    };
+  }
+
+  const usageLimit = firstMatch(normalized, [
+    "usage limit",
+    "usage limit reached",
+    "you've hit your limit",
+    "quota exceeded",
+    "quota exhausted",
+    "monthly limit",
+    "weekly limit",
+    "daily limit",
+    "usage cap",
+    "spending limit",
+    "billing limit",
+    "credit balance"
+  ]);
+  if (usageLimit !== undefined) {
+    return {
+      status: "usage_limited",
+      reason: "cli_usage_limited",
+      message:
+        "Agent CLI usage is limited by provider quota or billing. Do not retry automatically.",
+      setup_action:
+        "Check provider usage, billing, or subscription limits, then retry after capacity is restored.",
+      resume_hint:
+        "Pause this agent for automated dispatch until quota or billing capacity is restored.",
+      matched_pattern: usageLimit.pattern
     };
   }
 
@@ -110,6 +139,8 @@ export function classifyCliRunResult(
         "Agent CLI is waiting for a permission or trust prompt. Kairon will not auto-approve it.",
       setup_action:
         "Complete the CLI permission prompt in an interactive trusted session, then retry.",
+      resume_hint:
+        "Retry only after the provider UI permission prompt has been handled by a human.",
       matched_pattern: permission.pattern
     };
   }
@@ -135,6 +166,7 @@ export function classifyCliRunResult(
       reason: "cli_login_required",
       message: "Agent CLI authentication is not configured.",
       setup_action: setupActionFor(agent, "login"),
+      resume_hint: "Retry after CLI authentication has been completed.",
       matched_pattern: login.pattern
     };
   }
@@ -172,7 +204,8 @@ export function classificationForSetupRequired(input: {
       status: "setup_required",
       reason: input.reason,
       message: `${input.command} is not available.`,
-      setup_action: setupActionFor(input.agent, "command")
+      setup_action: setupActionFor(input.agent, "command"),
+      resume_hint: "Retry after the configured CLI command is available on PATH."
     };
   }
 
@@ -181,7 +214,9 @@ export function classificationForSetupRequired(input: {
     reason: input.reason,
     message: `${input.command} requires an interactive terminal or PTY adapter for Kairon automation.`,
     setup_action:
-      "Configure an interactive session runner or PTY adapter for this CLI, then retry."
+      "Configure an interactive session runner or PTY adapter for this CLI, then retry.",
+    resume_hint:
+      "Retry after an interactive session runner or PTY adapter is configured."
   };
 }
 

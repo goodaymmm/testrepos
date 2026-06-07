@@ -6,7 +6,15 @@ import { agentIds, isAgentId } from "./types.js";
 
 export type AgentSessionAvailability = {
   agent: AgentId;
-  status: "ready" | "idle" | "busy" | "unavailable" | "missing_cli";
+  status:
+    | "ready"
+    | "idle"
+    | "busy"
+    | "unavailable"
+    | "missing_cli"
+    | "permission_required"
+    | "rate_limited"
+    | "usage_limited";
   mode?: RunnerMode;
 };
 

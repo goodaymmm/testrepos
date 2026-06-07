@@ -193,6 +193,43 @@ describe("ReviewLoopExecutor", () => {
     });
   });
 
+  it("pauses review loops when a reviewer CLI usage is limited", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) =>
+        commandResult(invocation, {
+          exitCode: 1,
+          stdout: "Usage limit reached for this billing period."
+        })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "setup_required",
+      decision: {
+        status: "failed",
+        blocking_findings: []
+      },
+      next_action: {
+        action: "setup_required",
+        reviewers: ["claude"]
+      },
+      review_result_ids: []
+    });
+    expect(result.decision.reasons.join("\n")).toContain(
+      "claude: cli_usage_limited for claude"
+    );
+    await expect(new WorkQueue(root).list("ready")).resolves.toEqual([]);
+  });
+
   it("pauses review loops when reviewer outbox is missing review_result", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

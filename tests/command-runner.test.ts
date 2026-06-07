@@ -85,12 +85,26 @@ describe("buildProcessInvocation", () => {
 
     expect(
       classifyCliRunResult(
+        "claude",
+        commandResult({
+          stdout: "Usage limit reached for the current billing period."
+        })
+      )
+    ).toMatchObject({
+      status: "usage_limited",
+      reason: "cli_usage_limited",
+      resume_hint: expect.stringContaining("Pause this agent")
+    });
+
+    expect(
+      classifyCliRunResult(
         "gemini",
         commandResult({ stderr: "Approval required: allow this command?" })
       )
     ).toMatchObject({
       status: "permission_required",
-      reason: "cli_permission_required"
+      reason: "cli_permission_required",
+      resume_hint: expect.stringContaining("permission prompt")
     });
 
     expect(

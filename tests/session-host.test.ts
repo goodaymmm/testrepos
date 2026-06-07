@@ -179,6 +179,45 @@ describe("FileSessionHost", () => {
     ).resolves.toContain("Run: RUN-0001");
   });
 
+  it("marks limited same-day sessions unavailable for automated dispatch", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const host = new FileSessionHost(root, {
+      commandAvailability: async () => true,
+      now: () => new Date("2026-05-25T02:00:00.000Z")
+    });
+
+    await host.openSession("claude", "2026-05-25");
+    await host.markRunFinished("claude", "2026-05-25", {
+      kind: "job",
+      run_id: "RUN-0002",
+      task_id: "TASK-0002",
+      persona: "reviewer",
+      context_path: ".kairon/runs/RUN-0002/context.md",
+      outbox_path: ".kairon/runs/RUN-0002/outbox.json",
+      runner_metadata_path: ".kairon/runs/RUN-0002/runner.json",
+      status: "usage_limited",
+      finished_at: "2026-05-25T02:04:00.000Z"
+    });
+
+    const summary = await initializeSameDaySessions(root, "2026-05-25", {
+      commandAvailability: async () => true,
+      now: () => new Date("2026-05-25T02:05:00.000Z")
+    });
+
+    expect(summary).toMatchObject({
+      usage_limited: 1,
+      agents: expect.arrayContaining([
+        expect.objectContaining({
+          agent: "claude",
+          status: "usage_limited",
+          dispatcher_status: "usage_limited",
+          last_status: "usage_limited"
+        })
+      ])
+    });
+  });
+
   it("exposes all MVP CLI adapter definitions", () => {
     expect(defaultAgentAdapters.codex.command).toBe("codex");
     expect(defaultAgentAdapters.claude.command).toBe("claude");

@@ -123,6 +123,10 @@ function smokeHeadline(status: CliSessionRunRecord["status"]): string {
     return "Kairon agent smoke rate limited.";
   }
 
+  if (status === "usage_limited") {
+    return "Kairon agent smoke usage limited.";
+  }
+
   if (status === "timeout") {
     return "Kairon agent smoke timed out.";
   }

@@ -474,6 +474,7 @@ function isReviewerBlockedStatus(status: CliSessionRunRecord["status"]): boolean
     status === "setup_required" ||
     status === "permission_required" ||
     status === "rate_limited" ||
+    status === "usage_limited" ||
     status === "timeout" ||
     status === "no_output"
   );
@@ -492,6 +493,7 @@ function isBlockedOutboxStatus(status: unknown): boolean {
     status === "setup_required" ||
     status === "permission_required" ||
     status === "rate_limited" ||
+    status === "usage_limited" ||
     status === "timeout" ||
     status === "no_output"
   );

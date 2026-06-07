@@ -445,6 +445,10 @@ function taskRunHeadline(status: CliSessionRunRecord["status"]): string {
     return "Kairon task run rate limited.";
   }
 
+  if (status === "usage_limited") {
+    return "Kairon task run usage limited.";
+  }
+
   if (status === "timeout") {
     return "Kairon task run timed out.";
   }
