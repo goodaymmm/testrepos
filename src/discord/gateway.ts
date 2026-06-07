@@ -59,6 +59,10 @@ export type DiscordGatewayConfig = {
       max_backoff_seconds?: number;
     };
   };
+  board?: {
+    enabled?: boolean;
+    base_url?: string;
+  };
 };
 
 export type PreparedDiscordGateway =

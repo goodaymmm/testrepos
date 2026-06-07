@@ -446,6 +446,7 @@ describe("prepareDiscordGateway", () => {
 
     expect(channel.sent).toHaveLength(1);
     expect(JSON.stringify(channel.sent[0]?.payload)).not.toContain("diff --git");
+    expect(JSON.stringify(channel.sent[0]?.payload)).not.toContain("Open Board");
     await expect(
       readJsonFile(path.join(root, ".kairon", "approvals", "APR-0001.json"))
     ).resolves.toMatchObject({
@@ -478,6 +479,46 @@ describe("prepareDiscordGateway", () => {
       })
     ]);
     expect(JSON.stringify(audit)).not.toContain("diff --git");
+
+    await handle.stop();
+  });
+
+  it("adds a local board link to pending approval messages when board links are enabled", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await enableDiscordProvider(root);
+    const notificationsPath = path.join(root, ".kairon", "config", "notifications.json");
+    const notifications = await readJsonFile<DiscordGatewayConfig>(notificationsPath);
+    notifications.board = {
+      enabled: true,
+      base_url: "http://localhost:9999"
+    };
+    await writeJsonFileAtomic(notificationsPath, notifications);
+    await writeApproval(root, {
+      id: "APR-BOARD",
+      status: "pending",
+      title: "Board approval",
+      type: "manual_test"
+    });
+    const client = new FakeDiscordClient("bot-user");
+    const rest = new FakeDiscordRestRegistration();
+    const channel = new FakeApprovalChannel("channel");
+
+    const handlePromise = startDiscordGateway(root, {
+      env: readyEnv(),
+      clientFactory: () => client,
+      restFactory: () => rest,
+      approvalChannelFactory: () => channel,
+      readyTimeoutMs: 50
+    });
+    await client.waitForLogin();
+    client.emitReady();
+    const handle = await handlePromise;
+
+    expect(channel.sent).toHaveLength(1);
+    const payloadText = JSON.stringify(channel.sent[0]?.payload);
+    expect(payloadText).toContain("Open Board");
+    expect(payloadText).toContain("http://127.0.0.1:9999/#approval-APR-BOARD");
 
     await handle.stop();
   });

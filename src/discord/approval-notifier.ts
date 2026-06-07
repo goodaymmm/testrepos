@@ -99,6 +99,13 @@ type ApprovalRecord = {
   [key: string]: unknown;
 };
 
+type NotificationsBoardConfig = {
+  board?: {
+    enabled?: boolean;
+    base_url?: string;
+  };
+};
+
 export async function notifyPendingDiscordApprovals(
   projectRoot: string,
   gateway: PreparedDiscordGateway & { status: "ready" },
@@ -117,6 +124,7 @@ export async function notifyPendingDiscordApprovals(
     audit_path: toProjectPath(projectRoot, discordNotificationAuditPath(projectRoot)),
     failures: []
   };
+  const boardBaseUrl = await readConfiguredBoardBaseUrl(projectRoot);
 
   for (const approval of approvals) {
     if (shouldRetryApprovalStatusUpdate(approval)) {
@@ -215,7 +223,7 @@ export async function notifyPendingDiscordApprovals(
     }
 
     try {
-      const input = toApprovalMessageInput(approval);
+      const input = toApprovalMessageInput(approval, boardBaseUrl);
       const message = buildApprovalMessage(input);
       const sent = await channel.send(message);
       const sentAt = now.toISOString();
@@ -408,7 +416,11 @@ function isDiscordUnknownMessageError(error: unknown): boolean {
   return /unknown message|message not found/i.test(String(error));
 }
 
-function toApprovalMessageInput(approval: ApprovalRecord): ApprovalMessageInput {
+function toApprovalMessageInput(
+  approval: ApprovalRecord,
+  boardBaseUrl: string | undefined
+): ApprovalMessageInput {
+  const actions = approval.actions ?? approval.allowed_actions;
   return {
     id: approval.id,
     task_id: approval.task_id,
@@ -420,13 +432,69 @@ function toApprovalMessageInput(approval: ApprovalRecord): ApprovalMessageInput 
     checks: approval.checks,
     branch: approval.branch,
     commit_sha: approval.commit_sha,
-    actions: approval.actions ?? approval.allowed_actions,
+    board_url: boardBaseUrl === undefined ? undefined : approvalBoardUrl(boardBaseUrl, approval.id),
+    actions: boardBaseUrl === undefined ? actions : appendOpenBoardAction(actions),
     nonce: approval.discord?.nonce ?? approval.discord_nonce ?? approval.nonce,
     diff: approval.diff,
     log: approval.log,
     stdout: approval.stdout,
     stderr: approval.stderr
   };
+}
+
+async function readConfiguredBoardBaseUrl(projectRoot: string): Promise<string | undefined> {
+  const configPath = path.join(getKaironPaths(projectRoot).configDir, "notifications.json");
+  let config: NotificationsBoardConfig;
+
+  try {
+    config = await readJsonFile<NotificationsBoardConfig>(configPath);
+  } catch (error) {
+    if (String(error).includes("ENOENT")) {
+      return undefined;
+    }
+
+    throw error;
+  }
+
+  if (config.board?.enabled !== true) {
+    return undefined;
+  }
+
+  return normalizeBoardBaseUrl(config.board.base_url ?? "http://127.0.0.1:8787");
+}
+
+function normalizeBoardBaseUrl(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+
+    if (url.protocol !== "http:" || (host !== "127.0.0.1" && host !== "localhost")) {
+      return undefined;
+    }
+
+    url.hostname = "127.0.0.1";
+    url.search = "";
+    url.hash = "";
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return undefined;
+  }
+}
+
+function approvalBoardUrl(boardBaseUrl: string, approvalId: string): string {
+  return `${boardBaseUrl}/#approval-${approvalId.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+}
+
+function appendOpenBoardAction(
+  actions: ApprovalAction[] | undefined
+): NonNullable<ApprovalMessageInput["actions"]> {
+  const baseActions = actions ?? [
+    "approve",
+    "reject",
+    "request_changes",
+    "snooze"
+  ];
+  return [...baseActions, "open_board"];
 }
 
 async function updateApprovalDiscordMetadata(

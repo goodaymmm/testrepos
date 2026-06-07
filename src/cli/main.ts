@@ -12,7 +12,11 @@ import {
   seedApprovalCommand,
   showApprovalCommand
 } from "./commands/approval.js";
-import { exportBoard } from "./commands/board.js";
+import {
+  exportBoard,
+  formatBoardServeResult,
+  serveBoard
+} from "./commands/board.js";
 import { applyConfig, proposeConfig } from "./commands/config.js";
 import { analyzeDocking } from "./commands/docking.js";
 import { runDoctorCommand } from "./commands/doctor.js";
@@ -157,6 +161,24 @@ export function createProgram(): Command {
     .option("--recent <count>", "Number of recent items to include per section.")
     .action(async (options: { output?: string; recent?: string }) => {
       console.log(await exportBoard(process.cwd(), options));
+    });
+
+  board
+    .command("serve")
+    .description("Serve a read-only local Kairon board over loopback HTTP.")
+    .option("--host <host>", "Loopback host. Defaults to 127.0.0.1.")
+    .option("--port <port>", "Loopback port. Defaults to 8787.")
+    .option("--recent <count>", "Number of recent items to include per section.")
+    .action(async (options: { host?: string; port?: string; recent?: string }) => {
+      const server = await serveBoard(process.cwd(), options);
+      const stop = () => {
+        void server.stop();
+      };
+
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+      console.log(formatBoardServeResult(server));
+      await server.waitUntilClosed();
     });
 
   program
