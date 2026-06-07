@@ -5,6 +5,7 @@ import { getKaironPaths } from "../core/fs/paths.js";
 import { WorkQueue } from "../queue/work-queue.js";
 import { readRuntimeLockStatus } from "./runtime-lock.js";
 import { getScheduleStatus, type ScheduleStatus } from "./schedule-engine.js";
+import type { SameDaySessionSummary } from "../agents/session-host.js";
 
 export type RuntimeStatus = {
   schedule: ScheduleStatus;
@@ -25,6 +26,7 @@ export type RuntimeStatus = {
   approvals: {
     pending: number;
   };
+  sessions?: SameDaySessionSummary;
   discordGateway?: {
     status?: string;
     commands_registered?: boolean;
@@ -36,11 +38,19 @@ export type RuntimeStatus = {
 };
 
 export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStatus> {
-  const [schedule, lock, queueItems, pendingApprovals, discordGateway] = await Promise.all([
+  const [
+    schedule,
+    lock,
+    queueItems,
+    pendingApprovals,
+    sessions,
+    discordGateway
+  ] = await Promise.all([
     getScheduleStatus(projectRoot),
     readRuntimeLockStatus(projectRoot),
     new WorkQueue(projectRoot).list(),
     countPendingApprovals(projectRoot),
+    readLatestSessionSummary(projectRoot),
     readDiscordGatewaySummary(projectRoot)
   ]);
 
@@ -65,6 +75,7 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     approvals: {
       pending: pendingApprovals
     },
+    sessions,
     discordGateway
   };
 }
@@ -89,6 +100,16 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
     `queue.claimed=${status.queue.claimed}`,
     `queue.failed=${status.queue.failed}`,
     `approvals.pending=${status.approvals.pending}`,
+    status.sessions?.date === undefined ? null : `sessions.date=${status.sessions.date}`,
+    status.sessions?.initialized === undefined
+      ? null
+      : `sessions.initialized=${status.sessions.initialized}`,
+    status.sessions?.ready === undefined ? null : `sessions.ready=${status.sessions.ready}`,
+    status.sessions?.idle === undefined ? null : `sessions.idle=${status.sessions.idle}`,
+    status.sessions?.busy === undefined ? null : `sessions.busy=${status.sessions.busy}`,
+    status.sessions?.setup_required === undefined
+      ? null
+      : `sessions.setupRequired=${status.sessions.setup_required}`,
     status.discordGateway?.status === undefined
       ? null
       : `discord.gateway.status=${status.discordGateway.status}`,
@@ -110,6 +131,23 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
+}
+
+async function readLatestSessionSummary(
+  projectRoot: string
+): Promise<SameDaySessionSummary | undefined> {
+  try {
+    const tick = await readJsonFile<{ sessions?: SameDaySessionSummary }>(
+      path.join(getKaironPaths(projectRoot).runtimeDir, "last-tick.json")
+    );
+    return tick.sessions;
+  } catch (error) {
+    if (String(error).includes("ENOENT")) {
+      return undefined;
+    }
+
+    throw error;
+  }
 }
 
 async function readDiscordGatewaySummary(

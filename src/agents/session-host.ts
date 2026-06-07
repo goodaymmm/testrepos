@@ -1,14 +1,26 @@
 import { execFile } from "node:child_process";
-import { access, mkdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { loadConfigFile } from "../core/config/load-config.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import { getAgentAdapter } from "./adapters/index.js";
-import type { AgentId, RunnerMode } from "./types.js";
+import { agentIds, type AgentId, type RunnerMode } from "./types.js";
 
 export type SessionStatus = "ready" | "setup_required" | "closed";
+export type SameDaySessionStatus =
+  | "ready"
+  | "idle"
+  | "busy"
+  | "setup_required"
+  | "closed";
+export type DispatcherSessionStatus =
+  | "ready"
+  | "idle"
+  | "busy"
+  | "unavailable"
+  | "missing_cli";
 export type SessionRunStatus =
   | "running"
   | "completed"
@@ -89,6 +101,37 @@ export type SessionMetadata = {
   updated_at: string;
 };
 
+export type SameDaySessionSnapshot = {
+  agent: AgentId;
+  session_id: string;
+  terminal_id?: string;
+  status: SameDaySessionStatus;
+  dispatcher_status: DispatcherSessionStatus;
+  mode: RunnerMode;
+  command: string;
+  command_available: boolean;
+  active_run_id: string | null;
+  last_run_id: string | null;
+  last_status?: SessionRunStatus | null;
+  resume_hint?: SessionResumeHint;
+  session_path: string;
+  scratch: string;
+  session_context_manifest?: string;
+};
+
+export type SameDaySessionSummary = {
+  schema_version: string;
+  date: string;
+  initialized: number;
+  ready: number;
+  idle: number;
+  busy: number;
+  setup_required: number;
+  closed: number;
+  agents: SameDaySessionSnapshot[];
+  updated_at: string;
+};
+
 export type AgentJobEnvelope = {
   runId: string;
   taskId?: string;
@@ -111,6 +154,7 @@ type AgentsConfig = {
   agents: Record<
     string,
     {
+      enabled?: boolean;
       command?: string;
       adapter?: string;
       mode?: RunnerMode;
@@ -395,6 +439,7 @@ export class FileSessionHost {
       runs,
       updated_at: this.now().toISOString()
     } satisfies SessionContextManifest);
+    await this.updateSessionScratchCheckpoint(agent, date, checkpoint);
   }
 
   private async readSessionContextManifest(
@@ -448,6 +493,146 @@ export class FileSessionHost {
       "session_context_manifest.json"
     );
   }
+
+  private async updateSessionScratchCheckpoint(
+    agent: AgentId,
+    date: string,
+    checkpoint: SessionRunCheckpoint
+  ): Promise<void> {
+    const scratchPath = resolveInside(this.sessionDir(agent, date), "scratch.md");
+    const existing = await readTextIfExists(scratchPath);
+    const withoutCheckpoint = existing
+      .replace(
+        /\n?<!-- KAIRON_SESSION_CHECKPOINT_START -->[\s\S]*?<!-- KAIRON_SESSION_CHECKPOINT_END -->\n?/,
+        ""
+      )
+      .trimEnd();
+    const checkpointBlock = [
+      "<!-- KAIRON_SESSION_CHECKPOINT_START -->",
+      "# Kairon Session Checkpoint",
+      "",
+      `Agent: ${agent}`,
+      `Date: ${date}`,
+      `Run: ${checkpoint.run_id ?? "(bootstrap)"}`,
+      `Task: ${checkpoint.task_id ?? "(none)"}`,
+      `Persona: ${checkpoint.persona ?? "(none)"}`,
+      `Status: ${checkpoint.status}`,
+      `Context: ${checkpoint.context_path}`,
+      checkpoint.outbox_path === undefined ? null : `Outbox: ${checkpoint.outbox_path}`,
+      `Updated: ${checkpoint.updated_at}`,
+      "<!-- KAIRON_SESSION_CHECKPOINT_END -->",
+      ""
+    ]
+      .filter((line): line is string => line !== null)
+      .join("\n");
+
+    await writeFile(
+      scratchPath,
+      `${withoutCheckpoint}${withoutCheckpoint.length === 0 ? "" : "\n\n"}${checkpointBlock}`,
+      "utf8"
+    );
+  }
+}
+
+export async function initializeSameDaySessions(
+  projectRoot: string,
+  date: string,
+  options: {
+    commandAvailability?: CommandAvailabilityChecker;
+    now?: () => Date;
+  } = {}
+): Promise<SameDaySessionSummary> {
+  const config = await loadConfigFile<AgentsConfig>(projectRoot, "agents.json");
+  const host = new FileSessionHost(projectRoot, options);
+  const enabledAgents = agentIds.filter((agent) => {
+    const agentConfig = config.agents[agent];
+    return agentConfig !== undefined && agentConfig.enabled !== false;
+  });
+  const sessions = await Promise.all(
+    enabledAgents.map((agent) => host.openSession(agent, date))
+  );
+  const snapshots = sessions.map((session) => sessionSnapshot(projectRoot, session));
+  const count = (status: SameDaySessionStatus): number =>
+    snapshots.filter((session) => session.status === status).length;
+
+  return {
+    schema_version: "0.1",
+    date,
+    initialized: snapshots.length,
+    ready: count("ready"),
+    idle: count("idle"),
+    busy: count("busy"),
+    setup_required: count("setup_required"),
+    closed: count("closed"),
+    agents: snapshots,
+    updated_at: (options.now?.() ?? new Date()).toISOString()
+  };
+}
+
+export function sessionSnapshot(
+  projectRoot: string,
+  metadata: SessionMetadata
+): SameDaySessionSnapshot {
+  const status = sameDaySessionStatus(metadata);
+
+  return {
+    agent: metadata.agent,
+    session_id: metadata.session_id,
+    terminal_id: metadata.terminal_id,
+    status,
+    dispatcher_status: dispatcherStatusFor(status, metadata),
+    mode: metadata.mode,
+    command: metadata.command,
+    command_available: metadata.command_available,
+    active_run_id: metadata.active_run_id,
+    last_run_id: metadata.last_run_id,
+    last_status: metadata.last_status,
+    resume_hint: metadata.resume_hint,
+    session_path: toArtifactPath(
+      projectRoot,
+      resolveInside(
+        getKaironPaths(projectRoot).sessionsDir,
+        metadata.date,
+        metadata.agent,
+        "session.json"
+      )
+    ),
+    scratch: metadata.scratch,
+    session_context_manifest: metadata.session_context_manifest
+  };
+}
+
+export function sameDaySessionStatus(
+  metadata: SessionMetadata
+): SameDaySessionStatus {
+  if (metadata.status === "closed") {
+    return "closed";
+  }
+
+  if (metadata.status === "setup_required" || !metadata.command_available) {
+    return "setup_required";
+  }
+
+  if (metadata.active_run_id !== null) {
+    return "busy";
+  }
+
+  return metadata.last_run_id === null ? "ready" : "idle";
+}
+
+export function dispatcherStatusFor(
+  status: SameDaySessionStatus,
+  metadata: Pick<SessionMetadata, "command_available">
+): DispatcherSessionStatus {
+  if (status === "setup_required" || !metadata.command_available) {
+    return "missing_cli";
+  }
+
+  if (status === "closed") {
+    return "unavailable";
+  }
+
+  return status;
 }
 
 export async function isCommandAvailable(command: string): Promise<boolean> {
@@ -483,6 +668,18 @@ async function ensureJsonFile(filePath: string, content: unknown): Promise<void>
     }
 
     await writeJsonFileAtomic(filePath, content);
+  }
+}
+
+async function readTextIfExists(filePath: string): Promise<string> {
+  try {
+    return await readFile(filePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return "";
+    }
+
+    throw error;
   }
 }
 
