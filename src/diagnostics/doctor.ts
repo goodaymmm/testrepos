@@ -10,6 +10,7 @@ import { agentIds } from "../agents/types.js";
 import { loadConfigFile, validateAllConfigs } from "../core/config/load-config.js";
 import { getKaironPaths, resolveInside } from "../core/fs/paths.js";
 import { validateDiscordEnvValues } from "../discord/env-validation.js";
+import { inspectRuntimeRecoveryTargets } from "../recovery/runtime-recovery.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -99,6 +100,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkGitPolicy(options.projectRoot));
   checks.push(await checkGitHubBranchProtection(options.projectRoot, env));
   checks.push(await checkConfigBackups(options.projectRoot));
+  checks.push(await checkRuntimeRecovery(options.projectRoot));
 
   const summary = countStatuses(checks);
 
@@ -491,6 +493,29 @@ async function checkConfigBackups(projectRoot: string): Promise<DoctorCheck> {
     "Config backups",
     [`count=${backups.length}`, ...backups.slice(0, 5).map((backup) => `backup=${backup}`)],
     "Run kairon maintenance run and review the cleanup proposal before moving old config backups."
+  );
+}
+
+async function checkRuntimeRecovery(projectRoot: string): Promise<DoctorCheck> {
+  const recovery = await inspectRuntimeRecoveryTargets(projectRoot);
+  const details = [
+    `targets=${recovery.summary.targets}`,
+    `stale_locks=${recovery.summary.stale_locks}`,
+    `expired_claims=${recovery.summary.expired_claims}`,
+    `run_issues=${recovery.summary.run_issues}`,
+    `gateway_issues=${recovery.summary.gateway_issues}`,
+    `git_transaction_issues=${recovery.summary.git_transaction_issues}`
+  ];
+
+  if (recovery.summary.targets === 0) {
+    return pass("runtime.recovery", "Runtime recovery", details);
+  }
+
+  return warning(
+    "runtime.recovery",
+    "Runtime recovery",
+    details,
+    "Run kairon recovery run and review any generated approval requests."
   );
 }
 

@@ -16,6 +16,10 @@ export type RuntimeRecoveryOptions = {
   claimTimeoutMs?: number;
   runnerStaleMs?: number;
   heartbeatStaleMs?: number;
+  gatewayStartingStaleMs?: number;
+  gitTransactionStaleMs?: number;
+  safeOnly?: boolean;
+  writeNoopArtifact?: boolean;
 };
 
 export type RuntimeRecoveryResult = {
@@ -26,12 +30,29 @@ export type RuntimeRecoveryResult = {
   summary: {
     scanned_queue_items: number;
     scanned_runs: number;
+    scanned_git_transactions: number;
     stale_locks_cleared: number;
+    gateway_artifacts_recovered: number;
     requeued_items: number;
     approvals_requested: number;
     approvals_existing: number;
+    git_transaction_issues: number;
   };
   actions: RuntimeRecoveryAction[];
+};
+
+export type RuntimeRecoveryInspection = {
+  schema_version: "0.1";
+  generated_at: string;
+  summary: {
+    targets: number;
+    stale_locks: number;
+    expired_claims: number;
+    run_issues: number;
+    gateway_issues: number;
+    git_transaction_issues: number;
+  };
+  issues: RuntimeRecoveryIssue[];
 };
 
 export type RuntimeRecoveryAction =
@@ -55,22 +76,38 @@ export type RuntimeRecoveryAction =
       type: "approval_existing";
       approval_id: string;
       issue: RuntimeRecoveryIssue;
+    }
+  | {
+      type: "gateway_starting_recovered";
+      gateway_path: string;
+      reason: string;
     };
 
 export type RuntimeRecoveryIssue = {
   kind:
+    | "stale_lock"
     | "claimed_timeout"
     | "running_runner"
     | "missing_outbox"
-    | "partial_outbox";
+    | "partial_outbox"
+    | "discord_gateway_starting"
+    | "git_transaction_mid_state";
   target_id: string;
-  target_type: "queue_item" | "run";
+  target_type:
+    | "runtime_lock"
+    | "queue_item"
+    | "run"
+    | "discord_gateway"
+    | "git_transaction";
   reason: string;
   severity: "medium" | "high";
   run_id?: string;
   task_id?: string;
   item_type?: string;
   outbox_path?: string;
+  gateway_path?: string;
+  transaction_id?: string;
+  transaction_status?: string;
 };
 
 type RunnerMetadata = {
@@ -88,9 +125,28 @@ type OutboxHealth =
   | { status: "missing"; reason: string }
   | { status: "partial"; reason: string };
 
+type GitTransactionRecoveryRecord = {
+  transaction_id?: string;
+  status?: string;
+  task_id?: string;
+  run_id?: string;
+  updated_at?: string;
+  created_at?: string;
+};
+
 const defaultClaimTimeoutMs = 5 * 60 * 1000;
 const defaultRunnerStaleMs = 15 * 60 * 1000;
+const defaultGatewayStartingStaleMs = 5 * 60 * 1000;
+const defaultGitTransactionStaleMs = 15 * 60 * 1000;
 const recoveryApprovalType = "runtime_recovery";
+const gitTransactionMidStates = new Set([
+  "planned",
+  "prepared",
+  "checked",
+  "reviewed",
+  "committing",
+  "pushing"
+]);
 
 export async function runRuntimeRecovery(
   projectRoot: string,
@@ -102,6 +158,7 @@ export async function runRuntimeRecovery(
   const queue = new WorkQueue(projectRoot);
   const queueItems = await queue.list();
   const runs = await readRunnerMetadata(projectRoot);
+  const gitTransactions = await readGitTransactions(projectRoot);
 
   const staleLockAction = await recoverStaleRuntimeLock(projectRoot, now, options);
   if (staleLockAction !== null) {
@@ -128,6 +185,10 @@ export async function runRuntimeRecovery(
       continue;
     }
 
+    if (options.safeOnly === true) {
+      continue;
+    }
+
     actions.push(
       await requestRecoveryApproval(projectRoot, {
         kind: "claimed_timeout",
@@ -141,50 +202,20 @@ export async function runRuntimeRecovery(
     );
   }
 
-  for (const run of runs) {
-    if (isRunnerStale(run, now, options.runnerStaleMs ?? defaultRunnerStaleMs)) {
-      actions.push(
-        await requestRecoveryApproval(projectRoot, {
-          kind: "running_runner",
-          target_id: run.run_id ?? run.directory_name,
-          target_type: "run",
-          run_id: run.run_id ?? run.directory_name,
-          task_id: run.metadata.task_id,
-          severity: "high",
-          reason: "Runner metadata is still running past the recovery threshold."
-        })
-      );
+  if (options.safeOnly !== true) {
+    for (const issue of await findRunIssues(projectRoot, runs, now, options)) {
+      actions.push(await requestRecoveryApproval(projectRoot, issue));
     }
+  }
 
-    const health = await readOutboxHealth(projectRoot, run);
-    if (health.status === "missing" && run.metadata.status === "completed") {
-      actions.push(
-        await requestRecoveryApproval(projectRoot, {
-          kind: "missing_outbox",
-          target_id: run.run_id ?? run.directory_name,
-          target_type: "run",
-          run_id: run.run_id ?? run.directory_name,
-          task_id: run.metadata.task_id,
-          severity: "medium",
-          outbox_path: run.outbox_project_path,
-          reason: health.reason
-        })
-      );
-    }
+  const gatewayAction = await recoverStaleDiscordGateway(projectRoot, now, options);
+  if (gatewayAction !== null) {
+    actions.push(gatewayAction);
+  }
 
-    if (health.status === "partial") {
-      actions.push(
-        await requestRecoveryApproval(projectRoot, {
-          kind: "partial_outbox",
-          target_id: run.run_id ?? run.directory_name,
-          target_type: "run",
-          run_id: run.run_id ?? run.directory_name,
-          task_id: run.metadata.task_id,
-          severity: "high",
-          outbox_path: run.outbox_project_path,
-          reason: health.reason
-        })
-      );
+  if (options.safeOnly !== true) {
+    for (const issue of findStaleGitTransactionIssues(gitTransactions, now, options)) {
+      actions.push(await requestRecoveryApproval(projectRoot, issue));
     }
   }
 
@@ -196,15 +227,27 @@ export async function runRuntimeRecovery(
     summary: {
       scanned_queue_items: queueItems.length,
       scanned_runs: runs.length,
-      stale_locks_cleared: actions.filter((action) => action.type === "stale_lock_cleared").length,
+      scanned_git_transactions: gitTransactions.length,
+      stale_locks_cleared: actions.filter((action) => action.type === "stale_lock_cleared")
+        .length,
+      gateway_artifacts_recovered: actions.filter(
+        (action) => action.type === "gateway_starting_recovered"
+      ).length,
       requeued_items: actions.filter((action) => action.type === "queue_item_requeued").length,
       approvals_requested: actions.filter((action) => action.type === "approval_requested").length,
-      approvals_existing: actions.filter((action) => action.type === "approval_existing").length
+      approvals_existing: actions.filter((action) => action.type === "approval_existing").length,
+      git_transaction_issues: actions.filter(
+        (action) =>
+          (action.type === "approval_requested" || action.type === "approval_existing") &&
+          action.issue.kind === "git_transaction_mid_state"
+      ).length
     },
     actions
   };
 
-  await writeJsonFileAtomic(recoveryArtifactPath(projectRoot, recoveryId), result);
+  if (actions.length > 0 || options.writeNoopArtifact !== false) {
+    await writeJsonFileAtomic(recoveryArtifactPath(projectRoot, recoveryId), result);
+  }
   return result;
 }
 
@@ -214,10 +257,85 @@ export function formatRuntimeRecoveryResult(result: RuntimeRecoveryResult): stri
     `recovery_id=${result.recovery_id}`,
     `artifact=${result.artifact_path}`,
     `stale_locks_cleared=${result.summary.stale_locks_cleared}`,
+    `gateway_artifacts_recovered=${result.summary.gateway_artifacts_recovered}`,
     `requeued_items=${result.summary.requeued_items}`,
     `approvals_requested=${result.summary.approvals_requested}`,
-    `approvals_existing=${result.summary.approvals_existing}`
+    `approvals_existing=${result.summary.approvals_existing}`,
+    `git_transaction_issues=${result.summary.git_transaction_issues}`
   ].join("\n");
+}
+
+export async function inspectRuntimeRecoveryTargets(
+  projectRoot: string,
+  options: RuntimeRecoveryOptions = {}
+): Promise<RuntimeRecoveryInspection> {
+  const now = options.now ?? new Date();
+  const queue = new WorkQueue(projectRoot);
+  const [lock, queueItems, runs, gitTransactions] = await Promise.all([
+    readRuntimeLockStatus(projectRoot, {
+      now,
+      heartbeatStaleMs: options.heartbeatStaleMs
+    }),
+    queue.list(),
+    readRunnerMetadata(projectRoot),
+    readGitTransactions(projectRoot)
+  ]);
+  const issues: RuntimeRecoveryIssue[] = [];
+
+  if (lock.locked && lock.stale) {
+    issues.push({
+      kind: "stale_lock",
+      target_id: "runtime-lock",
+      target_type: "runtime_lock",
+      severity: "medium",
+      reason: "Runtime lock is stale and can be cleared before startup."
+    });
+  }
+
+  for (const item of queueItems.filter((candidate) => candidate.status === "claimed")) {
+    if (!isClaimExpired(item, now, options.claimTimeoutMs ?? defaultClaimTimeoutMs)) {
+      continue;
+    }
+
+    issues.push({
+      kind: "claimed_timeout",
+      target_id: item.id,
+      target_type: "queue_item",
+      item_type: item.type,
+      task_id: item.task_id,
+      severity: isSafeToRequeue(item) ? "medium" : "high",
+      reason: isSafeToRequeue(item)
+        ? "Expired non-code-producing queue claim can be safely requeued."
+        : "Expired claimed item may have side effects and requires manual recovery approval."
+    });
+  }
+
+  issues.push(...(await findRunIssues(projectRoot, runs, now, options)));
+
+  const gatewayIssue = await findStaleDiscordGatewayIssue(projectRoot, now, options);
+  if (gatewayIssue !== null) {
+    issues.push(gatewayIssue.issue);
+  }
+
+  issues.push(...findStaleGitTransactionIssues(gitTransactions, now, options));
+
+  return {
+    schema_version: "0.1",
+    generated_at: now.toISOString(),
+    summary: {
+      targets: issues.length,
+      stale_locks: issues.filter((issue) => issue.kind === "stale_lock").length,
+      expired_claims: issues.filter((issue) => issue.kind === "claimed_timeout").length,
+      run_issues: issues.filter((issue) =>
+        ["running_runner", "missing_outbox", "partial_outbox"].includes(issue.kind)
+      ).length,
+      gateway_issues: issues.filter((issue) => issue.kind === "discord_gateway_starting").length,
+      git_transaction_issues: issues.filter(
+        (issue) => issue.kind === "git_transaction_mid_state"
+      ).length
+    },
+    issues
+  };
 }
 
 async function recoverStaleRuntimeLock(
@@ -331,6 +449,196 @@ async function readRunnerMetadata(projectRoot: string): Promise<Array<{
   return runners.filter((runner): runner is NonNullable<typeof runner> => runner !== null);
 }
 
+async function findRunIssues(
+  projectRoot: string,
+  runs: Array<{
+    directory_name: string;
+    run_id?: string;
+    metadata: RunnerMetadata;
+    outbox_path: string;
+    outbox_project_path: string;
+  }>,
+  now: Date,
+  options: RuntimeRecoveryOptions
+): Promise<RuntimeRecoveryIssue[]> {
+  const issues: RuntimeRecoveryIssue[] = [];
+
+  for (const run of runs) {
+    if (isRunnerStale(run, now, options.runnerStaleMs ?? defaultRunnerStaleMs)) {
+      issues.push({
+        kind: "running_runner",
+        target_id: run.run_id ?? run.directory_name,
+        target_type: "run",
+        run_id: run.run_id ?? run.directory_name,
+        task_id: run.metadata.task_id,
+        severity: "high",
+        reason: "Runner metadata is still running past the recovery threshold."
+      });
+    }
+
+    const health = await readOutboxHealth(projectRoot, run);
+    if (health.status === "missing" && run.metadata.status === "completed") {
+      issues.push({
+        kind: "missing_outbox",
+        target_id: run.run_id ?? run.directory_name,
+        target_type: "run",
+        run_id: run.run_id ?? run.directory_name,
+        task_id: run.metadata.task_id,
+        severity: "medium",
+        outbox_path: run.outbox_project_path,
+        reason: health.reason
+      });
+    }
+
+    if (health.status === "partial") {
+      issues.push({
+        kind: "partial_outbox",
+        target_id: run.run_id ?? run.directory_name,
+        target_type: "run",
+        run_id: run.run_id ?? run.directory_name,
+        task_id: run.metadata.task_id,
+        severity: "high",
+        outbox_path: run.outbox_project_path,
+        reason: health.reason
+      });
+    }
+  }
+
+  return issues;
+}
+
+async function recoverStaleDiscordGateway(
+  projectRoot: string,
+  now: Date,
+  options: RuntimeRecoveryOptions
+): Promise<Extract<RuntimeRecoveryAction, { type: "gateway_starting_recovered" }> | null> {
+  const candidate = await findStaleDiscordGatewayIssue(projectRoot, now, options);
+  if (candidate === null) {
+    return null;
+  }
+
+  await writeJsonFileAtomic(candidate.gateway_path, {
+    ...sanitizeRecord(candidate.gateway),
+    status: "stopped",
+    error_code: "discord_gateway_starting_stale",
+    operation: "runtime_recovery",
+    commands_registered: false,
+    recovered_at: now.toISOString(),
+    updated_at: now.toISOString(),
+    next_action: "Restart Kairon runtime after verifying Discord gateway config."
+  });
+
+  return {
+    type: "gateway_starting_recovered",
+    gateway_path: candidate.issue.gateway_path ?? candidate.issue.target_id,
+    reason: candidate.issue.reason
+  };
+}
+
+async function findStaleDiscordGatewayIssue(
+  projectRoot: string,
+  now: Date,
+  options: RuntimeRecoveryOptions
+): Promise<{
+  issue: RuntimeRecoveryIssue;
+  gateway: Record<string, unknown>;
+  gateway_path: string;
+} | null> {
+  const gatewayPath = resolveInside(
+    getKaironPaths(projectRoot).runtimeDir,
+    "discord",
+    "gateway.json"
+  );
+  const gateway = await readOptionalJson<Record<string, unknown>>(gatewayPath);
+  if (gateway === null || gateway.status !== "starting") {
+    return null;
+  }
+
+  const timestamp = readTimestamp(gateway.updated_at) ?? readTimestamp(gateway.created_at);
+  if (
+    timestamp === undefined ||
+    timestamp + (options.gatewayStartingStaleMs ?? defaultGatewayStartingStaleMs) >
+      now.getTime()
+  ) {
+    return null;
+  }
+
+  const projectPath = toProjectPath(projectRoot, gatewayPath);
+  return {
+    gateway,
+    gateway_path: gatewayPath,
+    issue: {
+      kind: "discord_gateway_starting",
+      target_id: projectPath,
+      target_type: "discord_gateway",
+      severity: "medium",
+      gateway_path: projectPath,
+      reason: "Discord gateway artifact is stuck in starting state past the recovery threshold."
+    }
+  };
+}
+
+async function readGitTransactions(
+  projectRoot: string
+): Promise<Array<{ file_name: string; record: GitTransactionRecoveryRecord }>> {
+  const transactionsDir = resolveInside(
+    getKaironPaths(projectRoot).kaironDir,
+    "git",
+    "transactions"
+  );
+  const entries = await readDirectoryEntries(transactionsDir);
+  const records = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map(async (entry) => ({
+        file_name: entry.name,
+        record: await readJsonFile<GitTransactionRecoveryRecord>(
+          resolveInside(transactionsDir, entry.name)
+        )
+      }))
+  );
+
+  return records;
+}
+
+function findStaleGitTransactionIssues(
+  transactions: Array<{ file_name: string; record: GitTransactionRecoveryRecord }>,
+  now: Date,
+  options: RuntimeRecoveryOptions
+): RuntimeRecoveryIssue[] {
+  return transactions.flatMap(({ file_name, record }) => {
+    if (record.status === undefined || !gitTransactionMidStates.has(record.status)) {
+      return [];
+    }
+
+    const timestamp = readTimestamp(record.updated_at) ?? readTimestamp(record.created_at);
+    if (
+      timestamp === undefined ||
+      timestamp + (options.gitTransactionStaleMs ?? defaultGitTransactionStaleMs) >
+        now.getTime()
+    ) {
+      return [];
+    }
+
+    const transactionId =
+      record.transaction_id ?? file_name.replace(/\.json$/i, "");
+    return [
+      {
+        kind: "git_transaction_mid_state",
+        target_id: transactionId,
+        target_type: "git_transaction",
+        transaction_id: transactionId,
+        transaction_status: record.status,
+        run_id: record.run_id,
+        task_id: record.task_id,
+        severity: ["committing", "pushing"].includes(record.status) ? "high" : "medium",
+        reason:
+          "Git transaction stopped in a mid-state and requires manual recovery to avoid duplicate commit or push."
+      } satisfies RuntimeRecoveryIssue
+    ];
+  });
+}
+
 async function readOutboxHealth(
   projectRoot: string,
   run: {
@@ -416,6 +724,38 @@ function isRunnerStale(
 
   const createdAt = Date.parse(run.metadata.created_at ?? "");
   return Number.isFinite(createdAt) && createdAt + runnerStaleMs <= now.getTime();
+}
+
+function readTimestamp(value: unknown): number | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function sanitizeRecord(record: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(record).map(([key, value]) => [
+      key,
+      /api[_-]?key|token|secret|password/i.test(key)
+        ? "[redacted]"
+        : sanitizeRecordValue(value)
+    ])
+  );
+}
+
+function sanitizeRecordValue(value: unknown): unknown {
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeRecordValue(item));
+  }
+
+  return sanitizeRecord(value as Record<string, unknown>);
 }
 
 async function readDirectoryEntries(directoryPath: string) {

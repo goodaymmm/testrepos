@@ -30,6 +30,7 @@ describe("runDoctor", () => {
     expect(statusById(result, "cli.availability")).toBe("pass");
     expect(statusById(result, "env.api_keys")).toBe("pass");
     expect(statusById(result, "discord.config")).toBe("pass");
+    expect(statusById(result, "runtime.recovery")).toBe("pass");
     expect(checkById(result, "discord.config")?.details).toContain(
       "live_status=setup_required"
     );
@@ -220,6 +221,33 @@ describe("runDoctor", () => {
     );
     expect(checkById(result, "config.backups")?.details).toContain(
       "backup=.kairon/config/project.json.bak-20260601010101"
+    );
+  });
+
+  it("warns when runtime recovery targets are present", async () => {
+    const root = await createInitializedGitProject();
+    await writeJsonFileAtomic(path.join(root, ".kairon", "runtime", "lock.json"), {
+      owner: "kairon-runtime",
+      pid: -1,
+      created_at: "2026-06-01T00:00:00.000Z",
+      expires_at: "2999-01-01T00:00:00.000Z",
+      mode: "daemon",
+      heartbeat_at: "2026-06-01T00:00:00.000Z",
+      updated_at: "2026-06-01T00:00:00.000Z"
+    });
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+
+    expect(result.ok).toBe(true);
+    expect(statusById(result, "runtime.recovery")).toBe("warning");
+    expect(checkById(result, "runtime.recovery")?.details).toContain("targets=1");
+    expect(checkById(result, "runtime.recovery")?.details).toContain("stale_locks=1");
+    expect(checkById(result, "runtime.recovery")?.nextAction).toBe(
+      "Run kairon recovery run and review any generated approval requests."
     );
   });
 

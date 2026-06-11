@@ -168,6 +168,71 @@ describe("runtime recovery", () => {
     });
   });
 
+  it("recovers stale Discord gateway starting artifacts without preserving secrets", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const gatewayPath = path.join(root, ".kairon", "runtime", "discord", "gateway.json");
+    await writeJsonFileAtomic(gatewayPath, {
+      schema_version: "0.1",
+      status: "starting",
+      mode: "gateway",
+      bot_token: "SHOULD_NOT_LEAK",
+      updated_at: "2026-06-01T00:00:00.000Z"
+    });
+
+    const result = await runRuntimeRecovery(root, {
+      now: new Date("2026-06-01T00:10:00.000Z")
+    });
+
+    expect(result.summary.gateway_artifacts_recovered).toBe(1);
+    expect(result.actions).toContainEqual({
+      type: "gateway_starting_recovered",
+      gateway_path: ".kairon/runtime/discord/gateway.json",
+      reason: "Discord gateway artifact is stuck in starting state past the recovery threshold."
+    });
+    await expect(readJsonFile(gatewayPath)).resolves.toMatchObject({
+      status: "stopped",
+      error_code: "discord_gateway_starting_stale",
+      operation: "runtime_recovery",
+      bot_token: "[redacted]"
+    });
+  });
+
+  it("creates approvals for stale git transaction mid-states", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "git", "transactions", "GTX-0001.json"),
+      {
+        schema_version: "0.1",
+        transaction_id: "GTX-0001",
+        task_id: "TASK-0001",
+        run_id: "RUN-0001",
+        status: "pushing",
+        updated_at: "2026-06-01T00:00:00.000Z",
+        api_token: "SHOULD_NOT_LEAK"
+      }
+    );
+
+    const result = await runRuntimeRecovery(root, {
+      now: new Date("2026-06-01T00:20:00.000Z")
+    });
+
+    expect(result.summary.git_transaction_issues).toBe(1);
+    expect(result.actions).toEqual([
+      expect.objectContaining({
+        type: "approval_requested",
+        issue: expect.objectContaining({
+          kind: "git_transaction_mid_state",
+          target_id: "GTX-0001",
+          severity: "high",
+          transaction_status: "pushing"
+        })
+      })
+    ]);
+    expect(JSON.stringify(result)).not.toContain("SHOULD_NOT_LEAK");
+  });
+
   it("exposes recovery through the CLI command handler", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

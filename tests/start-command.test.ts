@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
+import path from "node:path";
 import { initializeProject } from "../src/cli/commands/init.js";
 import {
   RUNTIME_ALREADY_RUNNING_EXIT_CODE,
   startRuntime
 } from "../src/cli/commands/start.js";
 import { stopRuntime } from "../src/cli/commands/stop.js";
+import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import {
   acquireRuntimeLock,
   readRuntimeLockStatus,
@@ -47,6 +49,28 @@ describe("startRuntime", () => {
     await expect(readRuntimeLockStatus(root)).resolves.toMatchObject({
       locked: false
     });
+  });
+
+  it("runs safe runtime recovery before acquiring the runtime lock", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const gatewayPath = path.join(root, ".kairon", "runtime", "discord", "gateway.json");
+    await writeJsonFileAtomic(gatewayPath, {
+      schema_version: "0.1",
+      status: "starting",
+      updated_at: "2026-06-01T00:00:00.000Z"
+    });
+
+    try {
+      await startRuntime(root);
+
+      await expect(readJsonFile(gatewayPath)).resolves.toMatchObject({
+        status: "stopped",
+        error_code: "discord_gateway_starting_stale"
+      });
+    } finally {
+      await releaseRuntimeLock(root);
+    }
   });
 
   it("requests daemon stop without removing an active daemon lock", async () => {
