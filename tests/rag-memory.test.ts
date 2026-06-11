@@ -104,4 +104,128 @@ describe("RAG lexical memory", () => {
       }
     ]);
   });
+
+  it("indexes decision, review, approval, and failure memories with metadata", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await mkdir(path.join(root, ".kairon", "events"), { recursive: true });
+    await mkdir(path.join(root, ".kairon", "approvals"), { recursive: true });
+    await mkdir(path.join(root, ".kairon", "reviews", "results"), {
+      recursive: true
+    });
+    await mkdir(path.join(root, ".kairon", "runs", "RUN-0007"), {
+      recursive: true
+    });
+
+    await writeFile(
+      path.join(root, ".kairon", "events", "2026-05-25.jsonl"),
+      JSON.stringify({
+        type: "approval.decide",
+        approval_id: "APR-0007",
+        task_id: "TASK-0007",
+        decision: "request_changes",
+        created_at: "2026-05-25T01:00:00.000Z"
+      }) + "\n",
+      "utf8"
+    );
+    await writeFile(
+      path.join(root, ".kairon", "approvals", "APR-0007.json"),
+      JSON.stringify({
+        id: "APR-0007",
+        task_id: "TASK-0007",
+        status: "decided",
+        decision: "request_changes",
+        api_token: "SHOULD_NOT_BE_INDEXED",
+        created_at: "2026-05-25T01:00:00.000Z"
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(root, ".kairon", "reviews", "results", "REV-0007.json"),
+      JSON.stringify({
+        review_id: "REV-0007",
+        task_id: "TASK-0007",
+        run_id: "RUN-0007",
+        status: "changes_requested",
+        findings: [{ severity: "high", body: "Retry guard must be added." }],
+        created_at: "2026-05-25T01:10:00.000Z"
+      }),
+      "utf8"
+    );
+    await writeFile(
+      path.join(root, ".kairon", "runs", "RUN-0007", "runner.json"),
+      JSON.stringify({
+        run_id: "RUN-0007",
+        task_id: "TASK-0007",
+        status: "failed",
+        failure_reason: "transient tool failure",
+        finished_at: "2026-05-25T01:20:00.000Z"
+      }),
+      "utf8"
+    );
+
+    const result = await buildRagIndex(root);
+    expect(result.index.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source_type: "decision",
+          metadata: expect.objectContaining({
+            collection: "decisions",
+            task_id: "TASK-0007",
+            approval_id: "APR-0007"
+          })
+        }),
+        expect.objectContaining({
+          source_type: "approval",
+          metadata: expect.objectContaining({
+            collection: "approvals",
+            approval_id: "APR-0007",
+            task_id: "TASK-0007"
+          })
+        }),
+        expect.objectContaining({
+          source_type: "review",
+          metadata: expect.objectContaining({
+            collection: "reviews",
+            task_id: "TASK-0007",
+            run_id: "RUN-0007",
+            severity: "high"
+          })
+        }),
+        expect.objectContaining({
+          source_type: "failure",
+          metadata: expect.objectContaining({
+            collection: "failures",
+            task_id: "TASK-0007",
+            run_id: "RUN-0007",
+            status: "failed"
+          })
+        })
+      ])
+    );
+
+    expect(result.index.chunks.map((chunk) => chunk.text).join("\n")).not.toContain(
+      "SHOULD_NOT_BE_INDEXED"
+    );
+
+    await expect(
+      searchRagIndex(root, {
+        query: "transient tool failure",
+        topK: 1,
+        filters: {
+          task_id: "TASK-0007",
+          source_types: ["failure"]
+        }
+      })
+    ).resolves.toMatchObject([
+      {
+        source_type: "failure",
+        path: ".kairon/runs/RUN-0007/runner.json",
+        metadata: expect.objectContaining({
+          task_id: "TASK-0007",
+          run_id: "RUN-0007"
+        })
+      }
+    ]);
+  });
 });

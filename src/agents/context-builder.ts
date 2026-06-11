@@ -7,6 +7,7 @@ import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js"
 import {
   isRagEnabled,
   searchRagIndex,
+  type RagChunkMetadata,
   type RagSearchResult
 } from "../rag/lexical-index.js";
 import type { AgentId } from "./types.js";
@@ -261,15 +262,43 @@ export class ContextBuilder {
     const existingSourcePaths = new Set(
       sources.map((source) => relativeToProject(this.projectRoot, source.absolutePath))
     );
-    const results = await searchRagIndex(this.projectRoot, {
-      query: buildRagQuery(request, sources),
-      topK: topK * 3
-    });
+    const query = buildRagQuery(request, sources);
+    const [historyResults, generalResults] = await Promise.all([
+      searchRagIndex(this.projectRoot, {
+        query,
+        topK: topK * 3,
+        filters: {
+          task_id: request.taskId,
+          source_types: ["decision", "review", "approval", "failure", "daily_report"]
+        }
+      }),
+      searchRagIndex(this.projectRoot, {
+        query,
+        topK: topK * 3
+      })
+    ]);
+    const results = dedupeRagResults([...historyResults, ...generalResults]);
 
     return results
       .filter((result) => !existingSourcePaths.has(result.path))
       .slice(0, topK);
   }
+}
+
+function dedupeRagResults(results: RagSearchResult[]): RagSearchResult[] {
+  const seen = new Set<string>();
+  const output: RagSearchResult[] = [];
+
+  for (const result of results) {
+    if (seen.has(result.chunk_id)) {
+      continue;
+    }
+
+    seen.add(result.chunk_id);
+    output.push(result);
+  }
+
+  return output;
 }
 
 function createBundle(input: {
@@ -378,6 +407,7 @@ function formatRagResults(results: RagSearchResult[] | undefined): string[] {
       `source_id=${result.source_id}`,
       `path=${result.path}`,
       `source_type=${result.source_type}`,
+      ...formatRagMetadata(result.metadata),
       `hash=${result.content_hash}`,
       `score=${result.score}`,
       "",
@@ -385,6 +415,10 @@ function formatRagResults(results: RagSearchResult[] | undefined): string[] {
       ""
     ])
   ];
+}
+
+function formatRagMetadata(metadata: RagChunkMetadata): string[] {
+  return Object.entries(metadata).map(([key, value]) => `metadata.${key}=${value}`);
 }
 
 async function readOptionalText(filePath: string): Promise<string | null> {
