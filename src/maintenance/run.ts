@@ -16,6 +16,10 @@ import {
 } from "./cleanup-proposals.js";
 import { createDailyReport, type DailyReport } from "./daily-report.js";
 import { createDailyHandoffs, type AgentHandoff } from "./handoff.js";
+import {
+  createNextDayPlan,
+  type NextDayPlan
+} from "./next-day-plan.js";
 
 export type RunDailyMaintenanceRequest = {
   date?: string;
@@ -32,9 +36,11 @@ export type DailyMaintenanceResult = {
   date: string;
   daily_report_path: string;
   cleanup_proposal_path: string;
+  next_day_plan_path: string;
   handoff_paths: string[];
   daily_report: DailyReport;
   cleanup_proposal: CleanupProposal;
+  next_day_plan: NextDayPlan;
   handoffs: AgentHandoff[];
   expired_test_queue_item_ids: string[];
   recovery: Pick<
@@ -62,6 +68,11 @@ export async function runDailyMaintenance(
   const recovery = await runRuntimeRecovery(projectRoot, { now });
   const cleanupProposal = await createCleanupProposals(projectRoot, { date });
   const dailyReport = await createDailyReport(projectRoot, { date });
+  const nextDayPlan = await createNextDayPlan(projectRoot, {
+    date,
+    dailyReport,
+    cleanupProposal
+  });
   const handoffs = await createDailyHandoffs(projectRoot, {
     date,
     dailyReport
@@ -77,9 +88,11 @@ export async function runDailyMaintenance(
     date,
     daily_report_path: dailyReport.report_path,
     cleanup_proposal_path: cleanupProposal.proposal_path,
+    next_day_plan_path: nextDayPlan.plan_path,
     handoff_paths: handoffs.map((handoff) => handoff.handoff_path),
     daily_report: dailyReport,
     cleanup_proposal: cleanupProposal,
+    next_day_plan: nextDayPlan,
     handoffs,
     expired_test_queue_item_ids: expiredTestItems.map((item) => item.id),
     recovery: {

@@ -19,6 +19,25 @@ describe("createCleanupProposals", () => {
       "{}\n",
       "utf8"
     );
+    await writeFile(
+      path.join(root, ".kairon", "runtime", "discord", "approval-notifications.jsonl"),
+      "{}\n",
+      "utf8"
+    );
+    await mkdir(path.join(root, ".kairon", "worktrees", "TASK-0001"), {
+      recursive: true
+    });
+    await writeFile(
+      path.join(root, ".kairon", "worktrees", "TASK-0001", "state.txt"),
+      "worktree\n",
+      "utf8"
+    );
+    await mkdir(path.join(root, "operation-test-results"), { recursive: true });
+    await writeFile(
+      path.join(root, "operation-test-results", "result.json"),
+      "{}\n",
+      "utf8"
+    );
     await mkdir(path.join(root, ".kairon", "tmp", "existing"), { recursive: true });
     await writeFile(path.join(root, ".kairon", "tmp", "existing", "keep.txt"), "keep\n", "utf8");
 
@@ -27,11 +46,18 @@ describe("createCleanupProposals", () => {
     expect(proposal.direct_delete).toBe(false);
     expect(proposal.candidates.map((candidate) => candidate.path)).toEqual([
       ".kairon/config/project.json.bak-20260601010101",
+      ".kairon/runtime/discord/approval-notifications.jsonl",
+      ".kairon/worktrees",
       "coverage",
-      "dist"
+      "dist",
+      "operation-test-results"
     ]);
     expect(proposal.candidates[0]).toMatchObject({
-      proposed_action: "move_to_kairon_tmp"
+      proposed_action: "move_to_kairon_tmp",
+      reason: "config backup can be archived after review"
+    });
+    expect(proposal.candidates.find((candidate) => candidate.path === "dist")).toMatchObject({
+      reason: "configured generated path exists after the work day"
     });
     expect(proposal.morning_review_task).toMatchObject({
       type: "cleanup_triage",
