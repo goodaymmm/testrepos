@@ -31,6 +31,41 @@ describe("kairon-operation-test.ps1", () => {
     expect(script).toContain("runtime processed $actualItemId instead of expected $expectedItemId");
   });
 
+  it("includes Discord live/setup and audit-focused operation profiles", async () => {
+    const script = await readFile(
+      path.resolve("scripts", "kairon-operation-test.ps1"),
+      "utf8"
+    );
+
+    expect(script).toContain("DiscordLiveReady");
+    expect(script).toContain("DiscordInvalidEnv");
+    expect(script).toContain("DiscordSetupError");
+    expect(script).toContain("ApprovalNotificationAudit");
+    expect(script).toContain("RuntimeRecovery");
+    expect(script).toContain("SETUP_REQUIRED");
+    expect(script).toContain("OPTIONAL");
+    expect(script).toContain("Assert-NoSecretLeak");
+    expect(script).toContain("approval-notifications.jsonl");
+    expect(script).toContain("decision-interactions.jsonl");
+    expect(script).toContain("kairon recovery run");
+    expect(script).toContain("failed_ids");
+    expect(script).toContain("artifact_paths");
+  });
+
+  it("guards DiscordSetupError evidence from raw Discord errors and raw ids", async () => {
+    const script = await readFile(
+      path.resolve("scripts", "kairon-operation-test.ps1"),
+      "utf8"
+    );
+
+    expect(script).toContain("DiscordAPIError\\[");
+    expect(script).toContain("node_modules\\\\@discordjs");
+    expect(script).toContain("discord\\.gateway\\.status=setup_required");
+    expect(script).toContain("discord\\.gateway\\.next_action=");
+    expect(script).toContain("$DiscordSetupErrorGuildId");
+    expect(script).toContain("$DiscordSetupErrorApprovalChannelId");
+  });
+
   runIfPowerShell("runs external commands without recursive scriptblock capture", async () => {
     const root = await createTempProject();
     const kaironRoot = path.join(root, "kairon");
@@ -78,7 +113,17 @@ describe("kairon-operation-test.ps1", () => {
     const summaryPath = result.stdout.match(/summary\.json=(.+)/)?.[1]?.trim();
     expect(summaryPath).toBeTruthy();
     const summary = JSON.parse(await readFile(summaryPath!, "utf8"));
-    expect(summary.summary).toEqual({ pass: 1, fail: 0, total: 1 });
+    expect(summary.summary).toEqual({
+      pass: 1,
+      fail: 0,
+      setup_required: 0,
+      optional: 0,
+      total: 1
+    });
+    expect(summary.failed_ids).toEqual([]);
+    expect(summary.artifact_paths).toEqual(
+      expect.arrayContaining([expect.stringContaining("summary.json")])
+    );
     expect(summary.results[0]).toMatchObject({
       id: "DOCTOR",
       status: "PASS"

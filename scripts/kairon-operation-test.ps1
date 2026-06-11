@@ -7,10 +7,28 @@ param(
 
   [string]$OutputRoot,
 
-  [ValidateSet("All", "Build", "Doctor", "AgentSmoke", "TaskRun", "ReviewLoop", "RuntimeActive", "RuntimeReview")]
+  [ValidateSet(
+    "All",
+    "Build",
+    "Doctor",
+    "AgentSmoke",
+    "TaskRun",
+    "ReviewLoop",
+    "RuntimeActive",
+    "RuntimeReview",
+    "DiscordLiveReady",
+    "DiscordInvalidEnv",
+    "DiscordSetupError",
+    "ApprovalNotificationAudit",
+    "RuntimeRecovery"
+  )]
   [string[]]$Test = @("All"),
 
   [int]$TimeoutMs = 120000,
+
+  [string]$DiscordSetupErrorGuildId = "111111111111111111",
+
+  [string]$DiscordSetupErrorApprovalChannelId = "222222222222222222",
 
   [switch]$SkipRestore
 )
@@ -54,7 +72,8 @@ function Write-KaironJsonNoBom {
   )
 
   $json = $Value | ConvertTo-Json -Depth 30
-  Write-Utf8NoBom -Path (Resolve-Path -LiteralPath $Path).Path -Content ($json + [Environment]::NewLine)
+  $resolvedPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path)
+  Write-Utf8NoBom -Path $resolvedPath -Content ($json + [Environment]::NewLine)
 }
 
 function Invoke-Captured {
@@ -116,6 +135,48 @@ function Get-KaironStatusValue {
   $match.Groups[1].Value.Trim()
 }
 
+function Get-ObjectPropertyValue {
+  param(
+    $Object,
+    [Parameter(Mandatory = $true)][string]$Name
+  )
+
+  if ($null -eq $Object) {
+    return $null
+  }
+
+  $property = $Object.PSObject.Properties[$Name]
+  if ($null -eq $property) {
+    return $null
+  }
+
+  $property.Value
+}
+
+function Test-HasProperty {
+  param(
+    $Object,
+    [Parameter(Mandatory = $true)][string]$Name
+  )
+
+  return ($null -ne $Object) -and ($null -ne $Object.PSObject.Properties[$Name])
+}
+
+function New-StepResult {
+  param(
+    [Parameter(Mandatory = $true)]
+    [ValidateSet("PASS", "FAIL", "SETUP_REQUIRED", "OPTIONAL")]
+    [string]$Status,
+
+    [Parameter(Mandatory = $true)][string]$Details
+  )
+
+  [PSCustomObject]@{
+    Status = $Status
+    Details = $Details
+  }
+}
+
 function Add-Result {
   param(
     [Parameter(Mandatory = $true)][string]$Id,
@@ -152,6 +213,17 @@ function Invoke-Step {
       return
     }
 
+    if (Test-HasProperty -Object $assertion -Name "Status") {
+      $status = [string](Get-ObjectPropertyValue -Object $assertion -Name "Status")
+      $details = [string](Get-ObjectPropertyValue -Object $assertion -Name "Details")
+      if ([string]::IsNullOrWhiteSpace($details)) {
+        $details = $status
+      }
+      Add-Result -Id $Id -Name $Name -Status $status -Details $details -Evidence $evidence
+      Write-Host "[$Id] $status"
+      return
+    }
+
     Add-Result -Id $Id -Name $Name -Status "FAIL" -Details ([string]$assertion) -Evidence $evidence
     Write-Host "[$Id] FAIL"
   } catch {
@@ -185,6 +257,183 @@ function Restore-StateBackup {
   if ($script:KaironStateExisted) {
     Copy-Item -LiteralPath $script:KaironStateBackup -Destination $statePath -Recurse -Force
   }
+}
+
+function Invoke-KaironCaptured {
+  param(
+    [Parameter(Mandatory = $true)][scriptblock]$Script
+  )
+
+  $global:LASTEXITCODE = 0
+  Invoke-Captured {
+    Invoke-InDirectory -Path $script:TargetRoot -CommandBlock $Script
+  }
+}
+
+function Invoke-WithEnvOverrides {
+  param(
+    [Parameter(Mandatory = $true)][hashtable]$Values,
+    [Parameter(Mandatory = $true)][scriptblock]$Script
+  )
+
+  $previous = @{}
+  foreach ($key in $Values.Keys) {
+    $previous[$key] = [Environment]::GetEnvironmentVariable($key, "Process")
+    [Environment]::SetEnvironmentVariable($key, [string]$Values[$key], "Process")
+  }
+
+  try {
+    & $Script
+  } finally {
+    foreach ($key in $Values.Keys) {
+      [Environment]::SetEnvironmentVariable($key, $previous[$key], "Process")
+    }
+  }
+}
+
+function Get-DiscordEnvNames {
+  $defaults = @(
+    "KAIRON_DISCORD_BOT_TOKEN",
+    "KAIRON_DISCORD_APPLICATION_ID",
+    "KAIRON_DISCORD_GUILD_ID",
+    "KAIRON_DISCORD_APPROVAL_CHANNEL_ID",
+    "KAIRON_DISCORD_OWNER_USER_ID",
+    "KAIRON_DISCORD_ALLOWED_USER_IDS"
+  )
+
+  $notificationsPath = Join-Path $script:TargetRoot ".kairon\config\notifications.json"
+  if (-not (Test-Path -LiteralPath $notificationsPath)) {
+    return $defaults
+  }
+
+  try {
+    $notifications = Get-Content -LiteralPath $notificationsPath -Raw | ConvertFrom-Json
+    $discord = Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $notifications "providers") "discord"
+    $envObject = Get-ObjectPropertyValue -Object $discord "env"
+    if ($null -eq $envObject) {
+      return $defaults
+    }
+
+    $names = @()
+    foreach ($property in $envObject.PSObject.Properties) {
+      if (-not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+        $names += [string]$property.Value
+      }
+    }
+
+    if ($names.Count -eq 0) {
+      return $defaults
+    }
+
+    return @($names | Select-Object -Unique)
+  } catch {
+    return $defaults
+  }
+}
+
+function Get-MissingEnvNames {
+  param([Parameter(Mandatory = $true)][string[]]$Names)
+
+  @($Names | Where-Object {
+    [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_, "Process"))
+  })
+}
+
+function Get-DiscordSecretValues {
+  param([string[]]$AdditionalValues = @())
+
+  $values = @()
+  foreach ($name in Get-DiscordEnvNames) {
+    $value = [Environment]::GetEnvironmentVariable($name, "Process")
+    if (-not [string]::IsNullOrWhiteSpace($value) -and $value.Length -ge 6) {
+      $values += $value
+    }
+  }
+
+  foreach ($value in $AdditionalValues) {
+    if (-not [string]::IsNullOrWhiteSpace($value) -and $value.Length -ge 6) {
+      $values += $value
+    }
+  }
+
+  @($values | Select-Object -Unique)
+}
+
+function Format-DiscordEnvSnapshot {
+  $lines = @()
+  foreach ($name in Get-DiscordEnvNames) {
+    $value = [Environment]::GetEnvironmentVariable($name, "Process")
+    $state = if ([string]::IsNullOrWhiteSpace($value)) { "missing" } else { "present" }
+    $lines += "$name=$state"
+  }
+
+  $lines -join [Environment]::NewLine
+}
+
+function Assert-NoSecretLeak {
+  param(
+    [Parameter(Mandatory = $true)][string]$Text,
+    [string[]]$SecretValues = @()
+  )
+
+  foreach ($value in $SecretValues) {
+    if (-not [string]::IsNullOrWhiteSpace($value) -and $Text.Contains($value)) {
+      return "secret-like value leaked into evidence"
+    }
+  }
+
+  return $true
+}
+
+function Set-DiscordProviderEnabled {
+  param([Parameter(Mandatory = $true)][bool]$Enabled)
+
+  $notificationsPath = Join-Path $script:TargetRoot ".kairon\config\notifications.json"
+  $notifications = Get-Content -LiteralPath $notificationsPath -Raw | ConvertFrom-Json
+  $notifications.providers.discord.enabled = $Enabled
+  Write-KaironJsonNoBom -Path $notificationsPath -Value $notifications
+}
+
+function Get-DiscordGatewaySummary {
+  $gatewayPath = Join-Path $script:TargetRoot ".kairon\runtime\discord\gateway.json"
+  if (-not (Test-Path -LiteralPath $gatewayPath)) {
+    return "discord.gateway.status=missing"
+  }
+
+  try {
+    $gateway = Get-Content -LiteralPath $gatewayPath -Raw | ConvertFrom-Json
+    $keys = @(
+      "status",
+      "mode",
+      "error_code",
+      "operation",
+      "commands_registered",
+      "updated_at",
+      "next_action"
+    )
+    $lines = @("discord.gateway.path=.kairon/runtime/discord/gateway.json")
+    foreach ($key in $keys) {
+      $value = Get-ObjectPropertyValue -Object $gateway -Name $key
+      if ($null -ne $value) {
+        $lines += "discord.gateway.$key=$value"
+      }
+    }
+    return $lines -join [Environment]::NewLine
+  } catch {
+    return "discord.gateway.status=unreadable"
+  }
+}
+
+function Get-AuditFileSummary {
+  param([Parameter(Mandatory = $true)][string]$RelativePath)
+
+  $filePath = Join-Path $script:TargetRoot ($RelativePath -replace "/", "\")
+  if (-not (Test-Path -LiteralPath $filePath)) {
+    return "$RelativePath exists=false"
+  }
+
+  $lineCount = @(Get-Content -LiteralPath $filePath -ErrorAction SilentlyContinue).Count
+  return "$RelativePath exists=true lines=$lineCount path=$RelativePath"
 }
 
 function Set-KaironScheduleMode {
@@ -351,7 +600,17 @@ console.log(state.loop_id);
 
 function Write-Reports {
   $passed = @($script:Results | Where-Object { $_.status -eq "PASS" }).Count
-  $failed = @($script:Results | Where-Object { $_.status -ne "PASS" }).Count
+  $failed = @($script:Results | Where-Object { $_.status -eq "FAIL" }).Count
+  $setupRequired = @($script:Results | Where-Object { $_.status -eq "SETUP_REQUIRED" }).Count
+  $optional = @($script:Results | Where-Object { $_.status -eq "OPTIONAL" }).Count
+  $failedIds = @($script:Results | Where-Object { $_.status -eq "FAIL" } | ForEach-Object { $_.id })
+  $jsonPath = Join-Path $script:RunOutputRoot "summary.json"
+  $mdPath = Join-Path $script:RunOutputRoot "summary.md"
+  $artifactPaths = @(
+    $script:RunOutputRoot,
+    $jsonPath,
+    $mdPath
+  )
   $summary = [PSCustomObject]@{
     schema_version = "0.1"
     run_id = $script:RunId
@@ -362,14 +621,16 @@ function Write-Reports {
     summary = [PSCustomObject]@{
       pass = $passed
       fail = $failed
+      setup_required = $setupRequired
+      optional = $optional
       total = $script:Results.Count
     }
+    failed_ids = $failedIds
+    artifact_paths = $artifactPaths
     results = $script:Results
     created_at = (Get-Date).ToUniversalTime().ToString("o")
   }
 
-  $jsonPath = Join-Path $script:RunOutputRoot "summary.json"
-  $mdPath = Join-Path $script:RunOutputRoot "summary.md"
   Write-Utf8NoBom -Path $jsonPath -Content (($summary | ConvertTo-Json -Depth 30) + [Environment]::NewLine)
 
   $lines = @(
@@ -381,6 +642,10 @@ function Write-Reports {
     "- restore_enabled: $(-not $SkipRestore.IsPresent)",
     "- pass: $passed",
     "- fail: $failed",
+    "- setup_required: $setupRequired",
+    "- optional: $optional",
+    "- failed_ids: $($failedIds -join ',')",
+    "- artifact_paths: $($artifactPaths -join ',')",
     "",
     "| ID | Name | Status | Details |",
     "|---|---|---|---|"
@@ -601,12 +866,214 @@ try {
       return $true
     }
   }
+
+  if (Should-Run "DiscordLiveReady") {
+    Invoke-Step -Id "DISCORD_LIVE_READY" -Name "Discord live configuration readiness" -Script {
+      Set-DiscordProviderEnabled -Enabled $true
+      $doctor = Invoke-KaironCaptured { kairon doctor }
+      @(
+        "discord.env.snapshot",
+        (Format-DiscordEnvSnapshot),
+        "doctor.exit_code=$($doctor.ExitCode)",
+        $doctor.Output
+      ) -join [Environment]::NewLine
+    } -Assert {
+      param($Evidence)
+      $missing = Get-MissingEnvNames -Names (Get-DiscordEnvNames)
+      if ($missing.Count -gt 0) {
+        return New-StepResult -Status "SETUP_REQUIRED" -Details "missing Discord env names: $($missing -join ',')"
+      }
+
+      $leak = Assert-NoSecretLeak -Text $Evidence -SecretValues (Get-DiscordSecretValues)
+      if ($leak -ne $true) { return $leak }
+      if ($Evidence -notmatch "gateway_status=ready") { return "gateway_status=ready was not found" }
+      if ($Evidence -notmatch "live_status=ready") { return "live_status=ready was not found" }
+      if ($Evidence -notmatch "PASS discord\.config") { return "discord.config did not pass" }
+      return $true
+    }
+  }
+
+  if (Should-Run "DiscordInvalidEnv") {
+    Invoke-Step -Id "DISCORD_INVALID_ENV" -Name "Discord invalid env diagnostics" -Script {
+      Set-DiscordProviderEnabled -Enabled $true
+      $invalidValues = @{
+        KAIRON_DISCORD_BOT_TOKEN = "secret-bot-token-for-operation-test"
+        KAIRON_DISCORD_APPLICATION_ID = "not-a-snowflake-application"
+        KAIRON_DISCORD_GUILD_ID = "not-a-snowflake-guild"
+        KAIRON_DISCORD_APPROVAL_CHANNEL_ID = "not-a-snowflake-channel"
+        KAIRON_DISCORD_OWNER_USER_ID = "not-a-snowflake-owner"
+        KAIRON_DISCORD_ALLOWED_USER_IDS = "not-a-snowflake-allowed"
+      }
+      Invoke-WithEnvOverrides -Values $invalidValues -Script {
+        $doctor = Invoke-KaironCaptured { kairon doctor }
+        @(
+          "discord.env.snapshot",
+          (Format-DiscordEnvSnapshot),
+          "doctor.exit_code=$($doctor.ExitCode)",
+          $doctor.Output
+        ) -join [Environment]::NewLine
+      }
+    } -Assert {
+      param($Evidence)
+      $rawInvalidValues = @(
+        "secret-bot-token-for-operation-test",
+        "not-a-snowflake-application",
+        "not-a-snowflake-guild",
+        "not-a-snowflake-channel",
+        "not-a-snowflake-owner",
+        "not-a-snowflake-allowed"
+      )
+      $leak = Assert-NoSecretLeak -Text $Evidence -SecretValues $rawInvalidValues
+      if ($leak -ne $true) { return $leak }
+      if ($Evidence -notmatch "gateway_status=setup_required") { return "gateway_status=setup_required was not found" }
+      if ($Evidence -notmatch "live_status=setup_required") { return "live_status=setup_required was not found" }
+      if ($Evidence -notmatch "KAIRON_DISCORD_APPLICATION_ID") { return "invalid application env name was not reported" }
+      if ($Evidence -notmatch "KAIRON_DISCORD_GUILD_ID") { return "invalid guild env name was not reported" }
+      if ($Evidence -notmatch "KAIRON_DISCORD_APPROVAL_CHANNEL_ID") { return "invalid channel env name was not reported" }
+      return $true
+    }
+  }
+
+  if (Should-Run "DiscordSetupError") {
+    Invoke-Step -Id "DISCORD_SETUP_ERROR" -Name "Discord live setup error classification" -Script {
+      $required = @(
+        "KAIRON_DISCORD_BOT_TOKEN",
+        "KAIRON_DISCORD_APPLICATION_ID",
+        "KAIRON_DISCORD_OWNER_USER_ID"
+      )
+      $missing = Get-MissingEnvNames -Names $required
+      if ($missing.Count -gt 0) {
+        "setup_required.missing_env=$($missing -join ',')"
+        return
+      }
+
+      Set-DiscordProviderEnabled -Enabled $true
+      $overrides = @{
+        KAIRON_DISCORD_GUILD_ID = $DiscordSetupErrorGuildId
+        KAIRON_DISCORD_APPROVAL_CHANNEL_ID = $DiscordSetupErrorApprovalChannelId
+      }
+      if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable("KAIRON_DISCORD_ALLOWED_USER_IDS", "Process"))) {
+        $ownerId = [Environment]::GetEnvironmentVariable("KAIRON_DISCORD_OWNER_USER_ID", "Process")
+        if (-not [string]::IsNullOrWhiteSpace($ownerId)) {
+          $overrides["KAIRON_DISCORD_ALLOWED_USER_IDS"] = $ownerId
+        }
+      }
+
+      Invoke-WithEnvOverrides -Values $overrides -Script {
+        Invoke-KaironCaptured { kairon stop } | Out-Null
+        $start = Invoke-KaironCaptured { kairon start --daemon --interval-ms 1000 --max-ticks 1 }
+        Invoke-KaironCaptured { kairon stop } | Out-Null
+        @(
+          "discord.env.snapshot",
+          (Format-DiscordEnvSnapshot),
+          "start.exit_code=$($start.ExitCode)",
+          $start.Output,
+          (Get-DiscordGatewaySummary)
+        ) -join [Environment]::NewLine
+      }
+    } -Assert {
+      param($Evidence)
+      if ($Evidence -match "^setup_required\.missing_env=(.+)$") {
+        return New-StepResult -Status "SETUP_REQUIRED" -Details "missing Discord env names: $($Matches[1])"
+      }
+
+      $leak = Assert-NoSecretLeak -Text $Evidence -SecretValues (Get-DiscordSecretValues -AdditionalValues @($DiscordSetupErrorGuildId, $DiscordSetupErrorApprovalChannelId))
+      if ($leak -ne $true) { return $leak }
+      if ($Evidence -match "DiscordAPIError\[") { return "raw DiscordAPIError stack was printed" }
+      if ($Evidence -match "node_modules\\@discordjs") { return "discord.js stack path was printed" }
+      if ($Evidence -notmatch "discord\.gateway\.status=setup_required") { return "gateway status was not setup_required" }
+      if ($Evidence -match "discord\.gateway\.status=starting") { return "gateway artifact remained starting" }
+      if ($Evidence -notmatch "discord\.gateway\.next_action=") { return "setup guidance next_action was not recorded" }
+      return $true
+    }
+  }
+
+  if (Should-Run "ApprovalNotificationAudit") {
+    Invoke-Step -Id "APPROVAL_NOTIFICATION_AUDIT" -Name "Discord approval notification audit artifacts" -Script {
+      $approvalAudit = ".kairon/runtime/discord/approval-notifications.jsonl"
+      $decisionAudit = ".kairon/runtime/discord/decision-interactions.jsonl"
+      @(
+        (Get-AuditFileSummary -RelativePath $approvalAudit),
+        (Get-AuditFileSummary -RelativePath $decisionAudit)
+      ) -join [Environment]::NewLine
+    } -Assert {
+      param($Evidence)
+      $approvalAuditPath = Join-Path $script:TargetRoot ".kairon\runtime\discord\approval-notifications.jsonl"
+      $decisionAuditPath = Join-Path $script:TargetRoot ".kairon\runtime\discord\decision-interactions.jsonl"
+      $existing = @($approvalAuditPath, $decisionAuditPath) | Where-Object { Test-Path -LiteralPath $_ }
+      if ($existing.Count -eq 0) {
+        return New-StepResult -Status "OPTIONAL" -Details "Discord audit artifacts do not exist yet"
+      }
+
+      $auditText = ""
+      foreach ($filePath in $existing) {
+        $auditText += [Environment]::NewLine
+        $auditText += Get-Content -LiteralPath $filePath -Raw
+      }
+
+      $leak = Assert-NoSecretLeak -Text $auditText -SecretValues (Get-DiscordSecretValues)
+      if ($leak -ne $true) { return $leak }
+      foreach ($needle in @("SHOULD_NOT_LEAK", "SHOULD_BE_REDACTED", "api_token", "bot_token")) {
+        if ($auditText -match [regex]::Escape($needle)) {
+          return "sensitive marker was found in audit artifacts: $needle"
+        }
+      }
+      return $true
+    }
+  }
+
+  if (Should-Run "RuntimeRecovery") {
+    Invoke-Step -Id "RUNTIME_RECOVERY" -Name "Runtime recovery for gateway and git transaction state" -Script {
+      $oldTimestamp = "2026-01-01T00:00:00.000Z"
+      $gatewayDir = Join-Path $script:TargetRoot ".kairon\runtime\discord"
+      $transactionsDir = Join-Path $script:TargetRoot ".kairon\git\transactions"
+      New-Directory -Path $gatewayDir
+      New-Directory -Path $transactionsDir
+
+      $gatewayPath = Join-Path $gatewayDir "gateway.json"
+      Write-KaironJsonNoBom -Path $gatewayPath -Value ([PSCustomObject]@{
+        schema_version = "0.1"
+        status = "starting"
+        mode = "gateway"
+        bot_token = "SHOULD_NOT_LEAK"
+        updated_at = $oldTimestamp
+      })
+
+      $transactionId = "GTX-HARNESS-$($script:RunId)"
+      $transactionPath = Join-Path $transactionsDir "$transactionId.json"
+      Write-KaironJsonNoBom -Path $transactionPath -Value ([PSCustomObject]@{
+        schema_version = "0.1"
+        transaction_id = $transactionId
+        task_id = "TASK-HARNESS"
+        run_id = "RUN-HARNESS"
+        status = "pushing"
+        updated_at = $oldTimestamp
+        api_token = "SHOULD_NOT_LEAK"
+      })
+
+      $recovery = Invoke-KaironCaptured { kairon recovery run }
+      @(
+        "recovery.exit_code=$($recovery.ExitCode)",
+        $recovery.Output,
+        (Get-DiscordGatewaySummary)
+      ) -join [Environment]::NewLine
+    } -Assert {
+      param($Evidence)
+      if ($Evidence -match "SHOULD_NOT_LEAK") { return "secret fixture leaked into recovery evidence" }
+      if ($Evidence -notmatch "gateway_artifacts_recovered=[1-9][0-9]*") { return "gateway_artifacts_recovered was not incremented" }
+      if ($Evidence -notmatch "git_transaction_issues=[1-9][0-9]*") { return "git_transaction_issues was not incremented" }
+      if ($Evidence -notmatch "approvals_(requested|existing)=[1-9][0-9]*") { return "runtime recovery approval was not requested or detected" }
+      if ($Evidence -notmatch "discord\.gateway\.status=stopped") { return "gateway artifact was not recovered to stopped" }
+      if ($Evidence -match "discord\.gateway\.status=starting") { return "gateway artifact remained starting" }
+      return $true
+    }
+  }
 } finally {
   Restore-StateBackup
   Write-Reports
 }
 
-$failed = @($script:Results | Where-Object { $_.status -ne "PASS" }).Count
+$failed = @($script:Results | Where-Object { $_.status -eq "FAIL" }).Count
 if ($failed -gt 0) {
   exit 1
 }
