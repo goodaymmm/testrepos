@@ -117,4 +117,53 @@ describe("ContextBuilder", () => {
       ]
     });
   });
+
+  it("prioritizes task-related failure memory in RAG context", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const taskDir = path.join(root, ".kairon", "tasks", "TASK-0042");
+    await mkdir(taskDir, { recursive: true });
+    await writeJsonFileAtomic(path.join(taskDir, "task.json"), {
+      schema_version: "0.1",
+      id: "TASK-0042",
+      title: "Fix runtime recovery retry"
+    });
+    await mkdir(path.join(root, ".kairon", "runs", "RUN-0042"), {
+      recursive: true
+    });
+    await writeJsonFileAtomic(path.join(root, ".kairon", "runs", "RUN-0042", "runner.json"), {
+      schema_version: "0.1",
+      run_id: "RUN-0042",
+      task_id: "TASK-0042",
+      status: "failed",
+      failure_reason: "runtime recovery retry loop failed after partial outbox",
+      finished_at: "2026-05-25T03:00:00.000Z"
+    });
+    await buildRagIndex(root);
+
+    const bundle = await new ContextBuilder(root, {
+      rag: { enabled: true, topK: 1 }
+    }).buildRunContext({
+      runId: "RUN-0099",
+      taskId: "TASK-0042",
+      agent: "codex",
+      persona: "implementer",
+      date: "2026-05-25"
+    });
+
+    expect(bundle.rag_results).toMatchObject([
+      {
+        source_type: "failure",
+        path: ".kairon/runs/RUN-0042/runner.json",
+        metadata: expect.objectContaining({
+          collection: "failures",
+          task_id: "TASK-0042",
+          run_id: "RUN-0042"
+        })
+      }
+    ]);
+    const context = await readFile(path.join(root, bundle.context_path), "utf8");
+    expect(context).toContain("metadata.collection=failures");
+    expect(context).toContain("runtime recovery retry loop failed");
+  });
 });
