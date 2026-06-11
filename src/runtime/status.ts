@@ -3,6 +3,7 @@ import path from "node:path";
 import { readJsonFile } from "../core/fs/json-file.js";
 import { getKaironPaths } from "../core/fs/paths.js";
 import { WorkQueue } from "../queue/work-queue.js";
+import { inspectRuntimeRecoveryTargets } from "../recovery/runtime-recovery.js";
 import { readRuntimeLockStatus } from "./runtime-lock.js";
 import { getScheduleStatus, type ScheduleStatus } from "./schedule-engine.js";
 import type { SameDaySessionSummary } from "../agents/session-host.js";
@@ -26,6 +27,14 @@ export type RuntimeStatus = {
   approvals: {
     pending: number;
   };
+  recovery: {
+    targets: number;
+    stale_locks: number;
+    expired_claims: number;
+    run_issues: number;
+    gateway_issues: number;
+    git_transaction_issues: number;
+  };
   sessions?: SameDaySessionSummary;
   discordGateway?: {
     status?: string;
@@ -43,6 +52,7 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     lock,
     queueItems,
     pendingApprovals,
+    recovery,
     sessions,
     discordGateway
   ] = await Promise.all([
@@ -50,6 +60,7 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     readRuntimeLockStatus(projectRoot),
     new WorkQueue(projectRoot).list(),
     countPendingApprovals(projectRoot),
+    inspectRuntimeRecoveryTargets(projectRoot),
     readLatestSessionSummary(projectRoot),
     readDiscordGatewaySummary(projectRoot)
   ]);
@@ -75,6 +86,7 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     approvals: {
       pending: pendingApprovals
     },
+    recovery: recovery.summary,
     sessions,
     discordGateway
   };
@@ -100,6 +112,12 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
     `queue.claimed=${status.queue.claimed}`,
     `queue.failed=${status.queue.failed}`,
     `approvals.pending=${status.approvals.pending}`,
+    `recovery.targets=${status.recovery.targets}`,
+    `recovery.staleLocks=${status.recovery.stale_locks}`,
+    `recovery.expiredClaims=${status.recovery.expired_claims}`,
+    `recovery.runIssues=${status.recovery.run_issues}`,
+    `recovery.gatewayIssues=${status.recovery.gateway_issues}`,
+    `recovery.gitTransactionIssues=${status.recovery.git_transaction_issues}`,
     status.sessions?.date === undefined ? null : `sessions.date=${status.sessions.date}`,
     status.sessions?.initialized === undefined
       ? null

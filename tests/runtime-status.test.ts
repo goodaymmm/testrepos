@@ -63,6 +63,8 @@ describe("runtime status", () => {
     expect(status.approvals.pending).toBe(1);
     expect(formatRuntimeStatus(status)).toContain("queue.ready=1");
     expect(formatRuntimeStatus(status)).toContain("runtime.mode=daemon");
+    expect(formatRuntimeStatus(status)).toContain("recovery.targets=1");
+    expect(formatRuntimeStatus(status)).toContain("recovery.staleLocks=1");
     expect(formatRuntimeStatus(status)).toContain("sessions.initialized=3");
     expect(formatRuntimeStatus(status)).toContain("sessions.setupRequired=1");
     expect(formatRuntimeStatus(status)).toContain("sessions.usageLimited=1");

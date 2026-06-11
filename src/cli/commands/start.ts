@@ -7,6 +7,7 @@ import {
 import { RuntimeDaemon } from "../../runtime/runtime-daemon.js";
 import { RuntimeLoop } from "../../runtime/runtime-loop.js";
 import { startDiscordGateway } from "../../discord/gateway.js";
+import { runRuntimeRecovery } from "../../recovery/runtime-recovery.js";
 
 export const RUNTIME_ALREADY_RUNNING_EXIT_CODE = 3;
 
@@ -22,6 +23,10 @@ export async function startRuntime(
   options: StartRuntimeOptions = {}
 ): Promise<string> {
   try {
+    await runRuntimeRecovery(projectRoot, {
+      safeOnly: true,
+      writeNoopArtifact: false
+    });
     const status = await acquireRuntimeLock(projectRoot, {
       mode: options.daemon === true ? "daemon" : "single_tick"
     });
