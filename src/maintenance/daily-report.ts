@@ -1,6 +1,7 @@
-import { mkdir, readdir } from "node:fs/promises";
+import { access, mkdir, readdir } from "node:fs/promises";
 import path from "node:path";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
+import { readJsonLines } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import type { AgentId } from "../agents/types.js";
 
@@ -22,6 +23,16 @@ export type DailyReport = {
   schema_version: string;
   date: string;
   report_path: string;
+  summary: {
+    completed_runs: number;
+    failed_runs: number;
+    setup_required_runs: number;
+    pending_approvals: number;
+    failed_notifications: number;
+    review_loops_by_status: Record<string, number>;
+    git_transactions_by_status: Record<string, number>;
+    recovery_approvals_requested: number;
+  };
   runs: {
     total: number;
     by_status: Record<string, number>;
@@ -50,6 +61,16 @@ export type DailyReport = {
     total: number;
     items: Record<string, unknown>[];
   };
+  notifications: {
+    discord: {
+      audit_total: number;
+      failed: number;
+      skipped: number;
+      sent: number;
+      gateway_status?: string;
+      last_error_code?: string;
+    };
+  };
   created_at: string;
 };
 
@@ -63,20 +84,44 @@ export async function createDailyReport(
 ): Promise<DailyReport> {
   const paths = getKaironPaths(projectRoot);
   const reportPath = resolveInside(paths.reportsDir, "daily", `${request.date}.json`);
-  const [runs, approvals, reviews, git, recovery] = await Promise.all([
+  const [runs, approvals, reviews, git, recovery, notifications] = await Promise.all([
     collectRuns(projectRoot, request.date),
     collectApprovals(projectRoot, request.date),
     collectReviews(projectRoot, request.date),
     collectGit(projectRoot, request.date),
-    collectRecovery(projectRoot, request.date)
+    collectRecovery(projectRoot, request.date),
+    collectNotifications(projectRoot, request.date)
   ]);
+  const runStatusCounts = countBy(runs, (run) => run.status);
+  const reviewLoopStatusCounts = countBy(
+    reviews.loops,
+    (loop) => String(loop.status ?? "unknown")
+  );
+  const gitTransactionStatusCounts = countBy(
+    git.transactions,
+    (transaction) => String(transaction.status ?? "unknown")
+  );
   const report: DailyReport = {
     schema_version: "0.1",
     date: request.date,
     report_path: toProjectPath(paths.root, reportPath),
+    summary: {
+      completed_runs: runStatusCounts.completed ?? 0,
+      failed_runs: runStatusCounts.failed ?? 0,
+      setup_required_runs:
+        (runStatusCounts.setup_required ?? 0) +
+        (runStatusCounts.permission_required ?? 0) +
+        (runStatusCounts.rate_limited ?? 0) +
+        (runStatusCounts.usage_limited ?? 0),
+      pending_approvals: approvals.filter((approval) => approval.status === "pending").length,
+      failed_notifications: notifications.discord.failed,
+      review_loops_by_status: reviewLoopStatusCounts,
+      git_transactions_by_status: gitTransactionStatusCounts,
+      recovery_approvals_requested: sumRecoveryApprovalsRequested(recovery)
+    },
     runs: {
       total: runs.length,
-      by_status: countBy(runs, (run) => run.status),
+      by_status: runStatusCounts,
       items: runs
     },
     approvals: {
@@ -102,6 +147,7 @@ export async function createDailyReport(
       total: recovery.length,
       items: recovery
     },
+    notifications,
     created_at: new Date().toISOString()
   };
 
@@ -260,6 +306,46 @@ async function collectRecovery(
     .sort(compareUnknownByUpdatedAt);
 }
 
+async function collectNotifications(
+  projectRoot: string,
+  date: string
+): Promise<DailyReport["notifications"]> {
+  const runtimeDiscordDir = resolveInside(
+    getKaironPaths(projectRoot).runtimeDir,
+    "discord"
+  );
+  const auditPath = resolveInside(runtimeDiscordDir, "approval-notifications.jsonl");
+  const gatewayPath = resolveInside(runtimeDiscordDir, "gateway.json");
+  const [audit, gateway] = await Promise.all([
+    readOptionalJsonLines(auditPath),
+    readOptionalJson(gatewayPath)
+  ]);
+  const dailyAudit = audit.filter((record) =>
+    matchesDate(
+      [
+        optionalString(record.created_at),
+        optionalString(record.updated_at),
+        optionalString(record.notified_at)
+      ],
+      date
+    )
+  );
+  const byStatus = countBy(dailyAudit, (record) =>
+    String(record.status ?? record.result ?? "unknown")
+  );
+
+  return {
+    discord: {
+      audit_total: dailyAudit.length,
+      failed: byStatus.failed ?? 0,
+      skipped: byStatus.skipped ?? 0,
+      sent: (byStatus.sent ?? 0) + (byStatus.updated ?? 0),
+      gateway_status: optionalString(gateway?.status),
+      last_error_code: optionalString(gateway?.error_code)
+    }
+  };
+}
+
 async function readJsonFilesInDir(
   dirPath: string
 ): Promise<Record<string, unknown>[]> {
@@ -270,6 +356,36 @@ async function readJsonFilesInDir(
       .map((entry) => readJsonFile<Record<string, unknown>>(path.join(dirPath, entry.name)))
   );
   return files;
+}
+
+async function readOptionalJson(
+  filePath: string
+): Promise<Record<string, unknown> | null> {
+  try {
+    await access(filePath);
+    return await readJsonFile<Record<string, unknown>>(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+async function readOptionalJsonLines(
+  filePath: string
+): Promise<Record<string, unknown>[]> {
+  try {
+    await access(filePath);
+    return await readJsonLines<Record<string, unknown>>(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
 }
 
 async function readDirectoryEntries(dirPath: string) {
@@ -316,6 +432,18 @@ function compareUnknownByUpdatedAt(
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function sumRecoveryApprovalsRequested(recovery: Record<string, unknown>[]): number {
+  return recovery.reduce((total, item) => {
+    const summary = item.summary;
+    if (typeof summary !== "object" || summary === null) {
+      return total;
+    }
+
+    const approvals = (summary as Record<string, unknown>).approvals_requested;
+    return total + (typeof approvals === "number" ? approvals : 0);
+  }, 0);
 }
 
 function toProjectPath(projectRoot: string, filePath: string): string {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
+import { writeFile } from "node:fs/promises";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { writeJsonFileAtomic, readJsonFile } from "../src/core/fs/json-file.js";
 import { createDailyReport } from "../src/maintenance/daily-report.js";
@@ -24,6 +25,28 @@ describe("createDailyReport", () => {
       stderr_log: ".kairon/runs/RUN-0001/stderr.log",
       created_at: "2026-05-25T01:00:00.000Z",
       finished_at: "2026-05-25T01:01:00.000Z"
+    });
+    await writeJsonFileAtomic(path.join(root, ".kairon", "runs", "RUN-0002", "runner.json"), {
+      schema_version: "0.1",
+      kind: "job",
+      run_id: "RUN-0002",
+      task_id: "TASK-0002",
+      agent: "claude",
+      persona: "reviewer",
+      status: "failed",
+      created_at: "2026-05-25T01:10:00.000Z",
+      finished_at: "2026-05-25T01:11:00.000Z"
+    });
+    await writeJsonFileAtomic(path.join(root, ".kairon", "runs", "RUN-0003", "runner.json"), {
+      schema_version: "0.1",
+      kind: "job",
+      run_id: "RUN-0003",
+      task_id: "TASK-0003",
+      agent: "gemini",
+      persona: "qa",
+      status: "setup_required",
+      created_at: "2026-05-25T01:20:00.000Z",
+      finished_at: "2026-05-25T01:21:00.000Z"
     });
     await writeJsonFileAtomic(path.join(root, ".kairon", "approvals", "APR-0001.json"), {
       schema_version: "0.1",
@@ -64,15 +87,40 @@ describe("createDailyReport", () => {
       created_at: "2026-05-25T07:00:00.000Z",
       summary: {
         requeued_items: 1,
-        approvals_requested: 0
+        approvals_requested: 2
       }
+    });
+    await writeFile(
+      path.join(root, ".kairon", "runtime", "discord", "approval-notifications.jsonl"),
+      JSON.stringify({
+        status: "failed",
+        approval_id: "APR-0001",
+        created_at: "2026-05-25T08:00:00.000Z"
+      }) + "\n",
+      "utf8"
+    );
+    await writeJsonFileAtomic(path.join(root, ".kairon", "runtime", "discord", "gateway.json"), {
+      schema_version: "0.1",
+      status: "setup_required",
+      error_code: "discord_missing_access",
+      updated_at: "2026-05-25T08:01:00.000Z"
     });
 
     const report = await createDailyReport(root, { date: "2026-05-25" });
 
     expect(report.runs).toMatchObject({
-      total: 1,
-      by_status: { completed: 1 }
+      total: 3,
+      by_status: { completed: 1, failed: 1, setup_required: 1 }
+    });
+    expect(report.summary).toMatchObject({
+      completed_runs: 1,
+      failed_runs: 1,
+      setup_required_runs: 1,
+      pending_approvals: 1,
+      failed_notifications: 1,
+      recovery_approvals_requested: 2,
+      git_transactions_by_status: { completed: 1 },
+      review_loops_by_status: { running: 1 }
     });
     expect(report.approvals).toMatchObject({
       total: 1,
@@ -90,12 +138,19 @@ describe("createDailyReport", () => {
       total: 1,
       items: [expect.objectContaining({ recovery_id: "REC-20260525070000000" })]
     });
+    expect(report.notifications.discord).toMatchObject({
+      audit_total: 1,
+      failed: 1,
+      gateway_status: "setup_required",
+      last_error_code: "discord_missing_access"
+    });
     await expect(
       readJsonFile(path.join(root, ".kairon", "reports", "daily", "2026-05-25.json"))
     ).resolves.toMatchObject({
       date: "2026-05-25",
-      runs: { total: 1 },
-      recovery: { total: 1 }
+      runs: { total: 3 },
+      recovery: { total: 1 },
+      summary: { failed_runs: 1 }
     });
   });
 });

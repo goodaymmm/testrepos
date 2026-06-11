@@ -42,6 +42,11 @@ type ProjectConfig = {
   };
 };
 
+type CandidateRoot = {
+  absolutePath: string;
+  reason: string;
+};
+
 export async function createCleanupProposals(
   projectRoot: string,
   request: CreateCleanupProposalsRequest
@@ -54,8 +59,8 @@ export async function createCleanupProposals(
   );
   const candidateRoots = await resolveCandidateRoots(projectRoot, request);
   const candidates = await Promise.all(
-    candidateRoots.map((candidatePath, index) =>
-      buildCandidate(projectRoot, request.date, candidatePath, index + 1)
+    candidateRoots.map((candidate, index) =>
+      buildCandidate(projectRoot, request.date, candidate, index + 1)
     )
   );
   const proposal: CleanupProposal = {
@@ -86,7 +91,7 @@ export async function createCleanupProposals(
 async function resolveCandidateRoots(
   projectRoot: string,
   request: CreateCleanupProposalsRequest
-): Promise<string[]> {
+): Promise<CandidateRoot[]> {
   const paths = getKaironPaths(projectRoot);
   const config = await loadConfigFile<ProjectConfig>(projectRoot, "project.json");
   const configured = [
@@ -97,13 +102,18 @@ async function resolveCandidateRoots(
     .map((pattern) => patternRoot(pattern))
     .filter((candidate) => candidate.length > 0)
     .map((candidate) => resolveInside(paths.root, candidate))
-    .filter((candidate) => !isInside(candidate, paths.kaironDir));
-  const unique = [...new Set([...roots, ...(await resolveConfigBackupCandidates(paths.configDir))])];
-  const existing: string[] = [];
+    .filter((candidate) => !isInside(candidate, paths.kaironDir))
+    .map((absolutePath) => ({
+      absolutePath,
+      reason: "configured generated path exists after the work day"
+    }));
+  const internalCandidates = await resolveOperationalArtifactCandidates(paths);
+  const unique = dedupeCandidateRoots([...roots, ...internalCandidates]);
+  const existing: CandidateRoot[] = [];
 
   for (const candidate of unique) {
     try {
-      await access(candidate);
+      await access(candidate.absolutePath);
       existing.push(candidate);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -113,16 +123,48 @@ async function resolveCandidateRoots(
   }
 
   return existing.sort((left, right) =>
-    toProjectPath(paths.root, left).localeCompare(toProjectPath(paths.root, right))
+    toProjectPath(paths.root, left.absolutePath).localeCompare(
+      toProjectPath(paths.root, right.absolutePath)
+    )
   );
 }
 
-async function resolveConfigBackupCandidates(configDir: string): Promise<string[]> {
+async function resolveOperationalArtifactCandidates(
+  paths: ReturnType<typeof getKaironPaths>
+): Promise<CandidateRoot[]> {
+  return [
+    ...(await resolveConfigBackupCandidates(paths.configDir)),
+    ...(await resolveDiscordAuditCandidates(paths.runtimeDir)),
+    ...(await resolveExistingCandidate(
+      paths.root,
+      "operation-test-results",
+      "operation test result directory is local-only evidence",
+      true
+    )),
+    ...(await resolveExistingCandidate(
+      paths.kaironDir,
+      "worktrees",
+      "temporary Kairon worktree root should be triaged",
+      true
+    )),
+    ...(await resolveExistingCandidate(
+      paths.root,
+      "tmp",
+      "root tmp directory exists after the work day",
+      true
+    ))
+  ];
+}
+
+async function resolveConfigBackupCandidates(configDir: string): Promise<CandidateRoot[]> {
   try {
     const entries = await readdir(configDir, { withFileTypes: true });
     return entries
-      .filter((entry) => entry.isFile() && /\.json\.bak-\d{14}$/.test(entry.name))
-      .map((entry) => resolveInside(configDir, entry.name));
+      .filter((entry) => entry.isFile() && /\.bak-\d{14}$/.test(entry.name))
+      .map((entry) => ({
+        absolutePath: resolveInside(configDir, entry.name),
+        reason: "config backup can be archived after review"
+      }));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return [];
@@ -132,12 +174,85 @@ async function resolveConfigBackupCandidates(configDir: string): Promise<string[
   }
 }
 
+async function resolveDiscordAuditCandidates(runtimeDir: string): Promise<CandidateRoot[]> {
+  const discordDir = resolveInside(runtimeDir, "discord");
+  try {
+    const entries = await readdir(discordDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
+      .map((entry) => ({
+        absolutePath: resolveInside(discordDir, entry.name),
+        reason: "Discord audit JSONL should be reviewed before archival"
+      }));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
+async function resolveExistingCandidate(
+  root: string,
+  relativePath: string,
+  reason: string,
+  requireNonEmpty = false
+): Promise<CandidateRoot[]> {
+  const absolutePath = resolveInside(root, relativePath);
+  if (requireNonEmpty && !(await hasAnyEntry(absolutePath))) {
+    return [];
+  }
+
+  return [
+    {
+      absolutePath,
+      reason
+    }
+  ];
+}
+
+async function hasAnyEntry(directoryPath: string): Promise<boolean> {
+  try {
+    const stats = await stat(directoryPath);
+    if (!stats.isDirectory()) {
+      return true;
+    }
+
+    return (await readdir(directoryPath)).length > 0;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+function dedupeCandidateRoots(candidates: CandidateRoot[]): CandidateRoot[] {
+  const seen = new Set<string>();
+  const output: CandidateRoot[] = [];
+
+  for (const candidate of candidates) {
+    const key = candidate.absolutePath.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    output.push(candidate);
+  }
+
+  return output;
+}
+
 async function buildCandidate(
   projectRoot: string,
   date: string,
-  candidatePath: string,
+  candidate: CandidateRoot,
   index: number
 ): Promise<CleanupCandidate | null> {
+  const candidatePath = candidate.absolutePath;
   const stats = await stat(candidatePath);
   const projectPath = toProjectPath(projectRoot, candidatePath);
   const id = `CLEAN-${date.replaceAll("-", "")}-${String(index).padStart(3, "0")}`;
@@ -146,7 +261,7 @@ async function buildCandidate(
     id,
     path: projectPath,
     kind: stats.isDirectory() ? "directory" : "file",
-    reason: "configured generated path exists after the work day",
+    reason: candidate.reason,
     proposed_action: "move_to_kairon_tmp",
     destination: toPosixPath(path.join(".kairon", "tmp", date, slug(projectPath))),
     size_bytes: await sizeBytes(candidatePath)

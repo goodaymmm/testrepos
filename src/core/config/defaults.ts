@@ -243,6 +243,7 @@ export const kaironDirectories = [
   "board",
   "reports",
   "reports/daily",
+  "reports/next-day",
   "cleanup",
   "cleanup/proposals",
   "tmp"
