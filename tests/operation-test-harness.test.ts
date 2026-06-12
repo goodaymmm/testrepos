@@ -213,13 +213,16 @@ describe("kairon-operation-test.ps1", () => {
       `${JSON.stringify({
         schema_version: "0.1",
         approval_id: "APR-TEST",
-        status: "sent"
+        status: "sent",
+        channel_id: "222222222222222222"
       })}\n`,
       "utf8"
     );
 
     const result = runHarness(kaironRoot, targetRoot, outputRoot, "ApprovalNotificationAudit", {
-      ...process.env
+      ...process.env,
+      KAIRON_DISCORD_BOT_TOKEN: "secret-token-for-test",
+      KAIRON_DISCORD_APPROVAL_CHANNEL_ID: "222222222222222222"
     });
 
     expect(result.status).toBe(0);
