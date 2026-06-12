@@ -1,7 +1,7 @@
-import { access, mkdir, readdir, stat } from "node:fs/promises";
+import { access, mkdir, readdir, rename, stat } from "node:fs/promises";
 import path from "node:path";
 import { loadConfigFile } from "../core/config/load-config.js";
-import { writeJsonFileAtomic } from "../core/fs/json-file.js";
+import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 
 export type CleanupCandidate = {
@@ -31,6 +31,60 @@ export type CleanupProposal = {
   created_at: string;
 };
 
+export type CleanupProposalSummary = {
+  date: string;
+  proposal_path: string;
+  candidates: number;
+  size_bytes: number;
+  created_at: string;
+};
+
+export type CleanupApplyOptions = {
+  projectRoot: string;
+  proposalId: string;
+  dryRun?: boolean;
+  now?: Date;
+};
+
+export type CleanupArchiveOptions = {
+  projectRoot: string;
+  proposalId: string;
+  now?: Date;
+};
+
+export type CleanupCandidateApplyResult = {
+  id: string;
+  path: string;
+  destination: string;
+  status:
+    | "planned"
+    | "moved"
+    | "missing"
+    | "blocked_protected_path"
+    | "blocked_invalid_action"
+    | "blocked_invalid_destination";
+  reason?: string;
+};
+
+export type CleanupApplyResult = {
+  dry_run: boolean;
+  proposal_date: string;
+  proposal_path: string;
+  applied: boolean;
+  moved: number;
+  planned: number;
+  missing: number;
+  blocked: number;
+  artifact_path?: string;
+  candidates: CleanupCandidateApplyResult[];
+};
+
+export type CleanupArchiveResult = {
+  proposal_date: string;
+  proposal_path: string;
+  archived_path: string;
+};
+
 export type CreateCleanupProposalsRequest = {
   date: string;
   candidatePaths?: string[];
@@ -38,7 +92,14 @@ export type CreateCleanupProposalsRequest = {
 
 type ProjectConfig = {
   paths?: {
+    protected?: string[];
     generated?: string[];
+  };
+};
+
+type PoliciesConfig = {
+  security?: {
+    protected_paths?: string[];
   };
 };
 
@@ -86,6 +147,147 @@ export async function createCleanupProposals(
 
   await writeJsonFileAtomic(proposalPath, proposal);
   return proposal;
+}
+
+export async function listCleanupProposals(
+  projectRoot: string
+): Promise<CleanupProposalSummary[]> {
+  const paths = getKaironPaths(projectRoot);
+  const proposalsDir = resolveInside(paths.cleanupDir, "proposals");
+
+  try {
+    const entries = await readdir(proposalsDir, { withFileTypes: true });
+    const proposals = await Promise.all(
+      entries
+        .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+        .map((entry) =>
+          readJsonFile<CleanupProposal>(resolveInside(proposalsDir, entry.name))
+        )
+    );
+
+    return proposals
+      .map((proposal) => ({
+        date: proposal.date,
+        proposal_path: proposal.proposal_path,
+        candidates: proposal.candidates.length,
+        size_bytes: proposal.candidates.reduce(
+          (total, candidate) => total + candidate.size_bytes,
+          0
+        ),
+        created_at: proposal.created_at
+      }))
+      .sort((left, right) => left.date.localeCompare(right.date));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
+}
+
+export async function readCleanupProposalById(
+  projectRoot: string,
+  proposalId: string
+): Promise<CleanupProposal> {
+  return readJsonFile<CleanupProposal>(cleanupProposalPath(projectRoot, proposalId));
+}
+
+export async function applyCleanupProposal(
+  options: CleanupApplyOptions
+): Promise<CleanupApplyResult> {
+  const projectRoot = path.resolve(options.projectRoot);
+  const dryRun = options.dryRun === true;
+  const now = options.now ?? new Date();
+  const proposalPath = cleanupProposalPath(projectRoot, options.proposalId);
+  const proposal = await readJsonFile<CleanupProposal>(proposalPath);
+  validateCleanupProposal(proposal);
+
+  const paths = getKaironPaths(projectRoot);
+  const protectedPatterns = await loadProtectedPatterns(projectRoot);
+  const candidates = await Promise.all(
+    proposal.candidates.map((candidate) =>
+      evaluateCleanupCandidate({
+        projectRoot,
+        tmpDir: paths.tmpDir,
+        candidate,
+        dryRun,
+        protectedPatterns
+      })
+    )
+  );
+
+  for (const candidate of candidates) {
+    if (dryRun || candidate.status !== "planned") {
+      continue;
+    }
+
+    const sourcePath = resolveInside(projectRoot, candidate.path);
+    const destinationPath = resolveInside(projectRoot, candidate.destination);
+    await mkdir(path.dirname(destinationPath), { recursive: true });
+    await rename(sourcePath, destinationPath);
+    candidate.status = "moved";
+  }
+
+  const moved = candidates.filter((candidate) => candidate.status === "moved").length;
+  const planned = candidates.filter((candidate) => candidate.status === "planned").length;
+  const missing = candidates.filter((candidate) => candidate.status === "missing").length;
+  const blocked = candidates.filter((candidate) => candidate.status.startsWith("blocked_")).length;
+  const artifactPath =
+    dryRun
+      ? undefined
+      : resolveInside(
+          paths.cleanupDir,
+          "applied",
+          `${proposal.date}-${formatTimestamp(now)}.json`
+        );
+  const result: CleanupApplyResult = {
+    dry_run: dryRun,
+    proposal_date: proposal.date,
+    proposal_path: toProjectPath(projectRoot, proposalPath),
+    applied: !dryRun && moved > 0,
+    moved,
+    planned,
+    missing,
+    blocked,
+    artifact_path: artifactPath === undefined ? undefined : toProjectPath(projectRoot, artifactPath),
+    candidates
+  };
+
+  if (artifactPath !== undefined) {
+    await writeJsonFileAtomic(artifactPath, {
+      schema_version: "0.1",
+      ...result,
+      created_at: now.toISOString()
+    });
+  }
+
+  return result;
+}
+
+export async function archiveCleanupProposal(
+  options: CleanupArchiveOptions
+): Promise<CleanupArchiveResult> {
+  const projectRoot = path.resolve(options.projectRoot);
+  const now = options.now ?? new Date();
+  const proposalPath = cleanupProposalPath(projectRoot, options.proposalId);
+  const proposal = await readJsonFile<CleanupProposal>(proposalPath);
+  validateCleanupProposal(proposal);
+  const paths = getKaironPaths(projectRoot);
+  const archivedPath = resolveInside(
+    paths.cleanupDir,
+    "archived",
+    `${proposal.date}-${formatTimestamp(now)}.json`
+  );
+
+  await mkdir(path.dirname(archivedPath), { recursive: true });
+  await rename(proposalPath, archivedPath);
+
+  return {
+    proposal_date: proposal.date,
+    proposal_path: toProjectPath(projectRoot, proposalPath),
+    archived_path: toProjectPath(projectRoot, archivedPath)
+  };
 }
 
 async function resolveCandidateRoots(
@@ -300,4 +502,183 @@ function slug(value: string): string {
 
 function toProjectPath(projectRoot: string, filePath: string): string {
   return toPosixPath(path.relative(projectRoot, filePath));
+}
+
+function cleanupProposalPath(projectRoot: string, proposalId: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(proposalId)) {
+    throw new Error("Invalid cleanup proposal id. Use a YYYY-MM-DD proposal date.");
+  }
+
+  return resolveInside(getKaironPaths(projectRoot).cleanupDir, "proposals", `${proposalId}.json`);
+}
+
+function validateCleanupProposal(proposal: CleanupProposal): void {
+  if (proposal.schema_version !== "0.1") {
+    throw new Error("Unsupported cleanup proposal schema version.");
+  }
+
+  if (proposal.direct_delete !== false) {
+    throw new Error("Cleanup proposal direct_delete must be false.");
+  }
+
+  for (const candidate of proposal.candidates) {
+    if (candidate.proposed_action !== "move_to_kairon_tmp") {
+      throw new Error(`Unsupported cleanup action for ${candidate.id}.`);
+    }
+  }
+}
+
+async function loadProtectedPatterns(projectRoot: string): Promise<string[]> {
+  const project = await loadConfigFile<ProjectConfig>(projectRoot, "project.json");
+  const policies = await loadConfigFile<PoliciesConfig>(projectRoot, "policies.json");
+
+  return [
+    ...(project.paths?.protected ?? []),
+    ...(policies.security?.protected_paths ?? [])
+  ];
+}
+
+async function evaluateCleanupCandidate(options: {
+  projectRoot: string;
+  tmpDir: string;
+  candidate: CleanupCandidate;
+  dryRun: boolean;
+  protectedPatterns: string[];
+}): Promise<CleanupCandidateApplyResult> {
+  const candidate = options.candidate;
+  const baseResult = {
+    id: candidate.id,
+    path: candidate.path,
+    destination: candidate.destination
+  };
+
+  if (candidate.proposed_action !== "move_to_kairon_tmp") {
+    return {
+      ...baseResult,
+      status: "blocked_invalid_action",
+      reason: `unsupported action: ${candidate.proposed_action}`
+    };
+  }
+
+  if (matchesProtectedPath(candidate.path, options.protectedPatterns)) {
+    return {
+      ...baseResult,
+      status: "blocked_protected_path",
+      reason: "candidate path matches protected path policy"
+    };
+  }
+
+  let sourcePath: string;
+  let destinationPath: string;
+  try {
+    sourcePath = resolveInside(options.projectRoot, candidate.path);
+    destinationPath = resolveInside(options.projectRoot, candidate.destination);
+  } catch {
+    return {
+      ...baseResult,
+      status: "blocked_invalid_destination",
+      reason: "candidate source or destination escapes project root"
+    };
+  }
+
+  if (!isInside(destinationPath, options.tmpDir)) {
+    return {
+      ...baseResult,
+      status: "blocked_invalid_destination",
+      reason: "destination is not inside .kairon/tmp"
+    };
+  }
+
+  if (!(await pathExists(sourcePath))) {
+    return {
+      ...baseResult,
+      status: "missing",
+      reason: "candidate source path does not exist"
+    };
+  }
+
+  if (await pathExists(destinationPath)) {
+    return {
+      ...baseResult,
+      status: "blocked_invalid_destination",
+      reason: "destination already exists"
+    };
+  }
+
+  return {
+    ...baseResult,
+    status: "planned"
+  };
+}
+
+function matchesProtectedPath(projectPath: string, patterns: string[]): boolean {
+  const normalized = normalizeProjectPath(projectPath);
+  return patterns.some((pattern) => globToRegExp(normalizeProjectPath(pattern)).test(normalized));
+}
+
+function normalizeProjectPath(value: string): string {
+  return toPosixPath(value).replace(/^\/+/, "");
+}
+
+function globToRegExp(pattern: string): RegExp {
+  let regex = "^";
+
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    const next = pattern[index + 1];
+
+    if (char === "*" && next === "*" && pattern[index + 2] === "/") {
+      regex += "(?:.*/)?";
+      index += 2;
+      continue;
+    }
+
+    if (char === "*" && next === "*") {
+      regex += ".*";
+      index += 1;
+      continue;
+    }
+
+    if (char === "*") {
+      regex += "[^/]*";
+      continue;
+    }
+
+    if (char === "?") {
+      regex += "[^/]";
+      continue;
+    }
+
+    regex += escapeRegExp(char ?? "");
+  }
+
+  return new RegExp(`${regex}$`);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[\\^$.*+?()[\]{}|]/g, "\\$&");
+}
+
+async function pathExists(filePath: string): Promise<boolean> {
+  try {
+    await access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function formatTimestamp(date: Date): string {
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate()),
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds())
+  ].join("");
+}
+
+function pad(value: number): string {
+  return value.toString().padStart(2, "0");
 }
