@@ -30,7 +30,13 @@ import { initializeProject } from "./commands/init.js";
 import { closeActiveWork } from "./commands/leave.js";
 import { runMaintenance } from "./commands/maintenance.js";
 import { runMigrations } from "./commands/migrate.js";
-import { runRecovery } from "./commands/recovery.js";
+import {
+  acknowledgeRecoveryTarget,
+  listRecoveryTargets,
+  resolveRecoveryTarget,
+  runRecovery,
+  showRecoveryTarget
+} from "./commands/recovery.js";
 import { runReviewLoopCommand } from "./commands/review.js";
 import { startRuntime } from "./commands/start.js";
 import { getStatusText } from "./commands/status.js";
@@ -297,6 +303,39 @@ export function createProgram(): Command {
   const recovery = program
     .command("recovery")
     .description("Run runtime recovery workflows.");
+
+  recovery
+    .command("list")
+    .description("List unresolved runtime recovery targets.")
+    .action(async () => {
+      console.log(await listRecoveryTargets(process.cwd()));
+    });
+
+  recovery
+    .command("show")
+    .description("Show one unresolved runtime recovery target.")
+    .argument("<targetId>", "Recovery target id or fingerprint.")
+    .action(async (targetId: string) => {
+      console.log(await showRecoveryTarget(process.cwd(), targetId));
+    });
+
+  recovery
+    .command("resolve")
+    .description("Mark a runtime recovery target as resolved.")
+    .argument("<targetId>", "Recovery target id or fingerprint.")
+    .requiredOption("--reason <reason>", "Resolution reason.")
+    .action(async (targetId: string, options: { reason?: string }) => {
+      console.log(await resolveRecoveryTarget(process.cwd(), targetId, options));
+    });
+
+  recovery
+    .command("acknowledge")
+    .description("Acknowledge a runtime recovery target without applying automatic recovery.")
+    .argument("<targetId>", "Recovery target id or fingerprint.")
+    .requiredOption("--reason <reason>", "Acknowledgement reason.")
+    .action(async (targetId: string, options: { reason?: string }) => {
+      console.log(await acknowledgeRecoveryTarget(process.cwd(), targetId, options));
+    });
 
   recovery
     .command("run")

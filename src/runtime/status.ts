@@ -34,6 +34,7 @@ export type RuntimeStatus = {
     run_issues: number;
     gateway_issues: number;
     git_transaction_issues: number;
+    resolved_targets: number;
   };
   sessions?: SameDaySessionSummary;
   discordGateway?: {
@@ -118,6 +119,7 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
     `recovery.runIssues=${status.recovery.run_issues}`,
     `recovery.gatewayIssues=${status.recovery.gateway_issues}`,
     `recovery.gitTransactionIssues=${status.recovery.git_transaction_issues}`,
+    `recovery.resolvedTargets=${status.recovery.resolved_targets}`,
     status.sessions?.date === undefined ? null : `sessions.date=${status.sessions.date}`,
     status.sessions?.initialized === undefined
       ? null

@@ -103,4 +103,23 @@ describe("createProgram", () => {
         ?.options.map((option) => option.long)
     ).toContain("--dry-run");
   });
+
+  it("registers runtime recovery target commands", () => {
+    const recovery = createProgram().commands.find(
+      (command) => command.name() === "recovery"
+    );
+
+    expect(recovery?.commands.map((command) => command.name()).sort()).toEqual([
+      "acknowledge",
+      "list",
+      "resolve",
+      "run",
+      "show"
+    ]);
+    expect(
+      recovery?.commands
+        .find((command) => command.name() === "resolve")
+        ?.options.map((option) => option.long)
+    ).toContain("--reason");
+  });
 });
