@@ -246,5 +246,7 @@ export const kaironDirectories = [
   "reports/next-day",
   "cleanup",
   "cleanup/proposals",
+  "cleanup/applied",
+  "cleanup/archived",
   "tmp"
 ];

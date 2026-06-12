@@ -17,6 +17,12 @@ import {
   formatBoardServeResult,
   serveBoard
 } from "./commands/board.js";
+import {
+  applyCleanupCommand,
+  archiveCleanupCommand,
+  listCleanupCommand,
+  showCleanupCommand
+} from "./commands/cleanup.js";
 import { applyConfig, proposeConfig } from "./commands/config.js";
 import { analyzeDocking } from "./commands/docking.js";
 import { runDoctorCommand } from "./commands/doctor.js";
@@ -179,6 +185,42 @@ export function createProgram(): Command {
       process.once("SIGTERM", stop);
       console.log(formatBoardServeResult(server));
       await server.waitUntilClosed();
+    });
+
+  const cleanup = program
+    .command("cleanup")
+    .description("Inspect and apply reviewed cleanup proposals.");
+
+  cleanup
+    .command("list")
+    .description("List active cleanup proposals.")
+    .action(async () => {
+      console.log(await listCleanupCommand(process.cwd()));
+    });
+
+  cleanup
+    .command("show")
+    .description("Show cleanup proposal details.")
+    .argument("<proposalId>", "Cleanup proposal date, for example 2026-06-01.")
+    .action(async (proposalId: string) => {
+      console.log(await showCleanupCommand(process.cwd(), proposalId));
+    });
+
+  cleanup
+    .command("apply")
+    .description("Move reviewed cleanup candidates to .kairon/tmp.")
+    .argument("<proposalId>", "Cleanup proposal date, for example 2026-06-01.")
+    .option("--dry-run", "Show planned moves without changing files.")
+    .action(async (proposalId: string, options: { dryRun?: boolean }) => {
+      console.log(await applyCleanupCommand(process.cwd(), proposalId, options));
+    });
+
+  cleanup
+    .command("archive")
+    .description("Archive a reviewed cleanup proposal.")
+    .argument("<proposalId>", "Cleanup proposal date, for example 2026-06-01.")
+    .action(async (proposalId: string) => {
+      console.log(await archiveCleanupCommand(process.cwd(), proposalId));
     });
 
   program

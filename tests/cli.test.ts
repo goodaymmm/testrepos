@@ -14,6 +14,7 @@ describe("createProgram", () => {
       "agent",
       "approval",
       "board",
+      "cleanup",
       "config",
       "docking",
       "doctor",
@@ -83,5 +84,23 @@ describe("createProgram", () => {
         .find((command) => command.name() === "serve")
         ?.options.map((option) => option.long)
     ).toEqual(expect.arrayContaining(["--host", "--port", "--recent"]));
+  });
+
+  it("registers cleanup proposal commands", () => {
+    const cleanup = createProgram().commands.find(
+      (command) => command.name() === "cleanup"
+    );
+
+    expect(cleanup?.commands.map((command) => command.name()).sort()).toEqual([
+      "apply",
+      "archive",
+      "list",
+      "show"
+    ]);
+    expect(
+      cleanup?.commands
+        .find((command) => command.name() === "apply")
+        ?.options.map((option) => option.long)
+    ).toContain("--dry-run");
   });
 });
