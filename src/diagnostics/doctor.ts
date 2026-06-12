@@ -32,6 +32,7 @@ export type DoctorOptions = {
   projectRoot: string;
   commandAvailability?: CommandAvailabilityChecker;
   env?: NodeJS.ProcessEnv;
+  githubBranchProtectionClient?: GitHubBranchProtectionClient;
 };
 
 type AgentsConfig = {
@@ -63,6 +64,8 @@ type NotificationsConfig = {
 
 type PoliciesConfig = {
   git?: {
+    default_base_branch?: string;
+    remote?: string;
     allow_auto_push?: boolean;
     require_approval_for?: string[];
     protected_branches?: string[];
@@ -85,6 +88,40 @@ const requiredGitApprovalActions = [
   "protected_branch_push"
 ];
 
+export type GitHubBranchProtectionRequest = {
+  owner: string;
+  repo: string;
+  branch: string;
+  token: string;
+};
+
+export type GitHubBranchProtectionResult =
+  | {
+      kind: "protected";
+      requiredPullRequestReviews: boolean;
+      requiredStatusChecks: boolean;
+      enforceAdmins: boolean | "unknown";
+    }
+  | {
+      kind: "not_found";
+      httpStatus: number;
+    }
+  | {
+      kind: "auth_error";
+      httpStatus: number;
+    }
+  | {
+      kind: "api_error";
+      httpStatus: number;
+    }
+  | {
+      kind: "network_error";
+    };
+
+export type GitHubBranchProtectionClient = (
+  request: GitHubBranchProtectionRequest
+) => Promise<GitHubBranchProtectionResult>;
+
 export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   const env = options.env ?? process.env;
   const commandAvailability = options.commandAvailability ?? isCommandAvailable;
@@ -98,7 +135,13 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(checkApiKeyContamination(env));
   checks.push(await checkDiscordConfig(options.projectRoot, env));
   checks.push(await checkGitPolicy(options.projectRoot));
-  checks.push(await checkGitHubBranchProtection(options.projectRoot, env));
+  checks.push(
+    await checkGitHubBranchProtection(
+      options.projectRoot,
+      env,
+      options.githubBranchProtectionClient ?? fetchGitHubBranchProtection
+    )
+  );
   checks.push(await checkConfigBackups(options.projectRoot));
   checks.push(await checkRuntimeRecovery(options.projectRoot));
 
@@ -446,9 +489,13 @@ async function checkGitPolicy(projectRoot: string): Promise<DoctorCheck> {
 
 async function checkGitHubBranchProtection(
   projectRoot: string,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  client: GitHubBranchProtectionClient
 ): Promise<DoctorCheck> {
-  const remote = await readGitHubRemote(projectRoot);
+  const config = await loadConfigFile<PoliciesConfig>(projectRoot, "policies.json");
+  const branch = config.git?.default_base_branch ?? "main";
+  const configuredRemote = config.git?.remote;
+  const remote = await readGitHubRemote(projectRoot, configuredRemote);
 
   if (remote === undefined) {
     return pass("git.branch_protection", "GitHub branch protection", [
@@ -456,28 +503,88 @@ async function checkGitHubBranchProtection(
     ]);
   }
 
-  const authPresent = env.GITHUB_TOKEN !== undefined || env.GH_TOKEN !== undefined;
-  const details = [
-    `remote=${remote.name}`,
-    `url=${remote.url}`,
-    `auth=${authPresent ? "present" : "missing"}`,
-    "network_check=skipped"
-  ];
+  const repository = parseGitHubRepository(remote.url);
 
-  if (!authPresent) {
+  if (repository === undefined) {
     return warning(
       "git.branch_protection",
       "GitHub branch protection",
-      details,
+      [
+        `remote=${remote.name}`,
+        `branch=${branch}`,
+        "repository=unresolved",
+        "network_check=skipped"
+      ],
+      "Use a supported GitHub remote URL format before relying on branch protection diagnostics."
+    );
+  }
+
+  const tokenEnv = getGitHubTokenEnv(env);
+  const details = [
+    `remote=${remote.name}`,
+    `repository=${repository.owner}/${repository.repo}`,
+    `branch=${branch}`,
+    `auth=${tokenEnv === undefined ? "missing" : "present"}`
+  ];
+
+  if (tokenEnv === undefined) {
+    return warning(
+      "git.branch_protection",
+      "GitHub branch protection",
+      [...details, "network_check=skipped"],
       "Set GH_TOKEN or GITHUB_TOKEN, then verify branch protection with GitHub before unattended protected branch operations."
+    );
+  }
+
+  const apiResult = await client({
+    owner: repository.owner,
+    repo: repository.repo,
+    branch,
+    token: env[tokenEnv] ?? ""
+  });
+  const apiDetails = [...details, "network_check=completed", ...formatGitHubApiDetails(apiResult)];
+
+  if (apiResult.kind === "protected") {
+    const missingProtections = [
+      apiResult.requiredPullRequestReviews ? undefined : "required_pull_request_reviews",
+      apiResult.requiredStatusChecks ? undefined : "required_status_checks"
+    ].filter((value): value is string => value !== undefined);
+
+    if (missingProtections.length === 0) {
+      return pass("git.branch_protection", "GitHub branch protection", apiDetails);
+    }
+
+    return warning(
+      "git.branch_protection",
+      "GitHub branch protection",
+      apiDetails,
+      `Enable GitHub branch protection gates: ${missingProtections.join(", ")}.`
+    );
+  }
+
+  if (apiResult.kind === "auth_error") {
+    return warning(
+      "git.branch_protection",
+      "GitHub branch protection",
+      apiDetails,
+      "Check GH_TOKEN or GITHUB_TOKEN permissions for GitHub branch protection read access."
+    );
+  }
+
+  if (apiResult.kind === "not_found") {
+    return warning(
+      "git.branch_protection",
+      "GitHub branch protection",
+      apiDetails,
+      "Enable branch protection for the default branch or verify the configured GitHub repository and branch."
     );
   }
 
   return warning(
     "git.branch_protection",
     "GitHub branch protection",
-    details,
-    "Branch protection API verification is not available in local doctor yet; verify GitHub settings before protected branch operations."
+    apiDetails,
+    "Retry GitHub branch protection verification after network or GitHub API access is healthy."
   );
 }
 
@@ -520,12 +627,16 @@ async function checkRuntimeRecovery(projectRoot: string): Promise<DoctorCheck> {
 }
 
 async function readGitHubRemote(
-  projectRoot: string
+  projectRoot: string,
+  preferredRemote?: string
 ): Promise<{ name: string; url: string } | undefined> {
   try {
     const config = await readFile(resolveInside(projectRoot, ".git", "config"), "utf8");
     const remotes = parseGitRemotes(config);
-    return remotes.find((remote) => /github\.com[:/]/i.test(remote.url));
+    const githubRemotes = remotes.filter((remote) => isGitHubRemoteUrl(remote.url));
+    return (
+      githubRemotes.find((remote) => remote.name === preferredRemote) ?? githubRemotes[0]
+    );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return undefined;
@@ -559,6 +670,158 @@ function parseGitRemotes(config: string): Array<{ name: string; url: string }> {
 
   return remotes.filter((remote) => remote.url.length > 0);
 }
+
+function isGitHubRemoteUrl(remoteUrl: string): boolean {
+  return /github\.com(?::|\/)/i.test(remoteUrl);
+}
+
+function parseGitHubRepository(
+  remoteUrl: string
+): { owner: string; repo: string } | undefined {
+  const trimmed = remoteUrl.trim();
+
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.hostname.toLowerCase() !== "github.com") {
+      return undefined;
+    }
+
+    return parseGitHubPath(parsed.pathname);
+  } catch {
+    // Fall through to SCP-like SSH URL parsing.
+  }
+
+  const scpLike = /^git@github\.com:([^/]+)\/(.+)$/i.exec(trimmed);
+  if (scpLike !== null) {
+    return normalizeGitHubRepository(scpLike[1] ?? "", scpLike[2] ?? "");
+  }
+
+  return undefined;
+}
+
+function parseGitHubPath(pathname: string): { owner: string; repo: string } | undefined {
+  const segments = pathname.split("/").filter((segment) => segment.length > 0);
+  if (segments.length < 2) {
+    return undefined;
+  }
+
+  return normalizeGitHubRepository(segments[0] ?? "", segments[1] ?? "");
+}
+
+function normalizeGitHubRepository(
+  owner: string,
+  repo: string
+): { owner: string; repo: string } | undefined {
+  const normalizedOwner = owner.trim();
+  const normalizedRepo = repo.trim().replace(/\.git$/i, "");
+
+  if (normalizedOwner.length === 0 || normalizedRepo.length === 0) {
+    return undefined;
+  }
+
+  if (normalizedOwner.includes("/") || normalizedRepo.includes("/")) {
+    return undefined;
+  }
+
+  return { owner: normalizedOwner, repo: normalizedRepo };
+}
+
+function getGitHubTokenEnv(env: NodeJS.ProcessEnv): "GH_TOKEN" | "GITHUB_TOKEN" | undefined {
+  if (hasEnvValue(env, "GH_TOKEN")) {
+    return "GH_TOKEN";
+  }
+
+  if (hasEnvValue(env, "GITHUB_TOKEN")) {
+    return "GITHUB_TOKEN";
+  }
+
+  return undefined;
+}
+
+function formatGitHubApiDetails(result: GitHubBranchProtectionResult): string[] {
+  if (result.kind === "protected") {
+    return [
+      "api_status=ok",
+      "branch_protection=enabled",
+      `required_pull_request_reviews=${result.requiredPullRequestReviews ? "present" : "missing"}`,
+      `required_status_checks=${result.requiredStatusChecks ? "present" : "missing"}`,
+      `enforce_admins=${String(result.enforceAdmins)}`
+    ];
+  }
+
+  if (result.kind === "not_found") {
+    return [
+      "api_status=not_found_or_unprotected",
+      `http_status=${result.httpStatus}`
+    ];
+  }
+
+  if (result.kind === "auth_error") {
+    return ["api_status=auth_error", `http_status=${result.httpStatus}`];
+  }
+
+  if (result.kind === "api_error") {
+    return ["api_status=api_error", `http_status=${result.httpStatus}`];
+  }
+
+  return ["api_status=network_error"];
+}
+
+async function fetchGitHubBranchProtection(
+  request: GitHubBranchProtectionRequest
+): Promise<GitHubBranchProtectionResult> {
+  if (typeof globalThis.fetch !== "function") {
+    return { kind: "network_error" };
+  }
+
+  const url = new URL(
+    `https://api.github.com/repos/${encodeURIComponent(request.owner)}/${encodeURIComponent(request.repo)}/branches/${encodeURIComponent(request.branch)}/protection`
+  );
+
+  try {
+    const response = await globalThis.fetch(url, {
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${request.token}`,
+        "User-Agent": "kairon-doctor",
+        "X-GitHub-Api-Version": "2022-11-28"
+      }
+    });
+
+    if (response.status === 200) {
+      const payload = (await response.json()) as GitHubBranchProtectionPayload;
+      return {
+        kind: "protected",
+        requiredPullRequestReviews: payload.required_pull_request_reviews != null,
+        requiredStatusChecks: payload.required_status_checks != null,
+        enforceAdmins:
+          typeof payload.enforce_admins?.enabled === "boolean"
+            ? payload.enforce_admins.enabled
+            : "unknown"
+      };
+    }
+
+    if (response.status === 401 || response.status === 403) {
+      return { kind: "auth_error", httpStatus: response.status };
+    }
+
+    if (response.status === 404) {
+      return { kind: "not_found", httpStatus: response.status };
+    }
+
+    return { kind: "api_error", httpStatus: response.status };
+  } catch {
+    return { kind: "network_error" };
+  }
+}
+
+type GitHubBranchProtectionPayload = {
+  required_pull_request_reviews?: unknown | null;
+  required_status_checks?: unknown | null;
+  enforce_admins?: {
+    enabled?: boolean;
+  } | null;
+};
 
 async function listConfigBackups(projectRoot: string): Promise<string[]> {
   const configDir = getKaironPaths(projectRoot).configDir;

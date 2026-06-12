@@ -2,7 +2,11 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeProject } from "../src/cli/commands/init.js";
-import { formatDoctorResult, runDoctor } from "../src/diagnostics/doctor.js";
+import {
+  formatDoctorResult,
+  runDoctor,
+  type GitHubBranchProtectionClient
+} from "../src/diagnostics/doctor.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { createTempProject } from "./test-utils.js";
 
@@ -224,6 +228,126 @@ describe("runDoctor", () => {
     );
   });
 
+  it("passes GitHub branch protection when authenticated API verification finds required gates", async () => {
+    const root = await createInitializedGitProject();
+    await writeGitHubRemote(root, "git@github.com:goodaymmm/Kairon.git");
+    const requests: Parameters<GitHubBranchProtectionClient>[0][] = [];
+    const githubBranchProtectionClient: GitHubBranchProtectionClient = async (request) => {
+      requests.push(request);
+      return {
+        kind: "protected",
+        requiredPullRequestReviews: true,
+        requiredStatusChecks: true,
+        enforceAdmins: true
+      };
+    };
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: { GH_TOKEN: "secret-token" },
+      githubBranchProtectionClient
+    });
+    const text = formatDoctorResult(result);
+
+    expect(result.ok).toBe(true);
+    expect(statusById(result, "git.branch_protection")).toBe("pass");
+    expect(requests).toEqual([
+      {
+        owner: "goodaymmm",
+        repo: "Kairon",
+        branch: "main",
+        token: "secret-token"
+      }
+    ]);
+    expect(checkById(result, "git.branch_protection")?.details).toEqual(
+      expect.arrayContaining([
+        "remote=origin",
+        "repository=goodaymmm/Kairon",
+        "branch=main",
+        "auth=present",
+        "network_check=completed",
+        "api_status=ok",
+        "branch_protection=enabled",
+        "required_pull_request_reviews=present",
+        "required_status_checks=present",
+        "enforce_admins=true"
+      ])
+    );
+    expect(text).not.toContain("secret-token");
+    expect(text).not.toContain("git@github.com");
+  });
+
+  it("warns when authenticated GitHub branch protection is missing required gates", async () => {
+    const root = await createInitializedGitProject();
+    await writeGitHubRemote(root, "https://github.com/goodaymmm/Kairon.git");
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: { GITHUB_TOKEN: "secret-token" },
+      githubBranchProtectionClient: async () => ({
+        kind: "protected",
+        requiredPullRequestReviews: false,
+        requiredStatusChecks: true,
+        enforceAdmins: "unknown"
+      })
+    });
+    const check = checkById(result, "git.branch_protection");
+
+    expect(result.ok).toBe(true);
+    expect(check?.status).toBe("warning");
+    expect(check?.details).toEqual(
+      expect.arrayContaining([
+        "auth=present",
+        "network_check=completed",
+        "api_status=ok",
+        "required_pull_request_reviews=missing",
+        "required_status_checks=present"
+      ])
+    );
+    expect(check?.nextAction).toBe(
+      "Enable GitHub branch protection gates: required_pull_request_reviews."
+    );
+  });
+
+  it("normalizes GitHub branch protection auth and not found failures into warnings", async () => {
+    const root = await createInitializedGitProject();
+    await writeGitHubRemote(root, "https://github.com/goodaymmm/Kairon");
+
+    const authError = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: { GH_TOKEN: "secret-token" },
+      githubBranchProtectionClient: async () => ({
+        kind: "auth_error",
+        httpStatus: 403
+      })
+    });
+
+    expect(authError.ok).toBe(true);
+    expect(statusById(authError, "git.branch_protection")).toBe("warning");
+    expect(checkById(authError, "git.branch_protection")?.details).toEqual(
+      expect.arrayContaining(["api_status=auth_error", "http_status=403"])
+    );
+
+    const notFound = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: { GH_TOKEN: "secret-token" },
+      githubBranchProtectionClient: async () => ({
+        kind: "not_found",
+        httpStatus: 404
+      })
+    });
+
+    expect(notFound.ok).toBe(true);
+    expect(statusById(notFound, "git.branch_protection")).toBe("warning");
+    expect(checkById(notFound, "git.branch_protection")?.details).toEqual(
+      expect.arrayContaining(["api_status=not_found_or_unprotected", "http_status=404"])
+    );
+  });
+
   it("warns when runtime recovery targets are present", async () => {
     const root = await createInitializedGitProject();
     await writeJsonFileAtomic(path.join(root, ".kairon", "runtime", "lock.json"), {
@@ -290,6 +414,14 @@ async function writeLegacyAgentsConfig(root: string): Promise<void> {
   gemini.adapter = "gemini_cli";
   gemini.command = "gemini";
   await writeJsonFileAtomic(agentsPath, agents);
+}
+
+async function writeGitHubRemote(root: string, remoteUrl: string): Promise<void> {
+  await writeFile(
+    path.join(root, ".git", "config"),
+    ['[remote "origin"]', `  url = ${remoteUrl}`, ""].join("\n"),
+    "utf8"
+  );
 }
 
 async function enableDiscordProvider(root: string): Promise<void> {
