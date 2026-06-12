@@ -331,6 +331,42 @@ function Get-DiscordEnvNames {
   }
 }
 
+function Get-DiscordSecretEnvNames {
+  $defaults = @("KAIRON_DISCORD_BOT_TOKEN")
+
+  $notificationsPath = Join-Path $script:TargetRoot ".kairon\config\notifications.json"
+  if (-not (Test-Path -LiteralPath $notificationsPath)) {
+    return $defaults
+  }
+
+  try {
+    $notifications = Get-Content -LiteralPath $notificationsPath -Raw | ConvertFrom-Json
+    $discord = Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $notifications "providers") "discord"
+    $names = @()
+
+    $botTokenEnv = Get-ObjectPropertyValue -Object $discord "bot_token_env"
+    if (-not [string]::IsNullOrWhiteSpace([string]$botTokenEnv)) {
+      $names += [string]$botTokenEnv
+    }
+
+    $envObject = Get-ObjectPropertyValue -Object $discord "env"
+    if ($null -ne $envObject) {
+      $legacyBotTokenEnv = Get-ObjectPropertyValue -Object $envObject "bot_token"
+      if (-not [string]::IsNullOrWhiteSpace([string]$legacyBotTokenEnv)) {
+        $names += [string]$legacyBotTokenEnv
+      }
+    }
+
+    if ($names.Count -eq 0) {
+      return $defaults
+    }
+
+    return @($names | Select-Object -Unique)
+  } catch {
+    return $defaults
+  }
+}
+
 function Get-MissingEnvNames {
   param([Parameter(Mandatory = $true)][string[]]$Names)
 
@@ -343,7 +379,7 @@ function Get-DiscordSecretValues {
   param([string[]]$AdditionalValues = @())
 
   $values = @()
-  foreach ($name in Get-DiscordEnvNames) {
+  foreach ($name in Get-DiscordSecretEnvNames) {
     $value = [Environment]::GetEnvironmentVariable($name, "Process")
     if (-not [string]::IsNullOrWhiteSpace($value) -and $value.Length -ge 6) {
       $values += $value
