@@ -879,7 +879,7 @@ try {
       ) -join [Environment]::NewLine
     } -Assert {
       param($Evidence)
-      $missing = Get-MissingEnvNames -Names (Get-DiscordEnvNames)
+      $missing = @(Get-MissingEnvNames -Names (Get-DiscordEnvNames))
       if ($missing.Count -gt 0) {
         return New-StepResult -Status "SETUP_REQUIRED" -Details "missing Discord env names: $($missing -join ',')"
       }
@@ -941,7 +941,7 @@ try {
         "KAIRON_DISCORD_APPLICATION_ID",
         "KAIRON_DISCORD_OWNER_USER_ID"
       )
-      $missing = Get-MissingEnvNames -Names $required
+      $missing = @(Get-MissingEnvNames -Names $required)
       if ($missing.Count -gt 0) {
         "setup_required.missing_env=$($missing -join ',')"
         return
@@ -1000,7 +1000,7 @@ try {
       param($Evidence)
       $approvalAuditPath = Join-Path $script:TargetRoot ".kairon\runtime\discord\approval-notifications.jsonl"
       $decisionAuditPath = Join-Path $script:TargetRoot ".kairon\runtime\discord\decision-interactions.jsonl"
-      $existing = @($approvalAuditPath, $decisionAuditPath) | Where-Object { Test-Path -LiteralPath $_ }
+      $existing = @(@($approvalAuditPath, $decisionAuditPath) | Where-Object { Test-Path -LiteralPath $_ })
       if ($existing.Count -eq 0) {
         return New-StepResult -Status "OPTIONAL" -Details "Discord audit artifacts do not exist yet"
       }
