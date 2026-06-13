@@ -22,6 +22,7 @@ describe("createProgram", () => {
       "leave",
       "maintenance",
       "migrate",
+      "rag",
       "recovery",
       "review",
       "start",
@@ -121,5 +122,33 @@ describe("createProgram", () => {
         .find((command) => command.name() === "resolve")
         ?.options.map((option) => option.long)
     ).toContain("--reason");
+  });
+
+  it("registers RAG index commands and query filters", () => {
+    const rag = createProgram().commands.find((command) => command.name() === "rag");
+
+    expect(rag?.commands.map((command) => command.name()).sort()).toEqual([
+      "query",
+      "refresh",
+      "status"
+    ]);
+    expect(
+      rag?.commands
+        .find((command) => command.name() === "query")
+        ?.options.map((option) => option.long)
+    ).toEqual(
+      expect.arrayContaining([
+        "--type",
+        "--collection",
+        "--limit",
+        "--task-id",
+        "--run-id",
+        "--approval-id",
+        "--review-id",
+        "--review-loop-id",
+        "--date",
+        "--severity"
+      ])
+    );
   });
 });
