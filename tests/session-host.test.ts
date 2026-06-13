@@ -130,6 +130,9 @@ describe("FileSessionHost", () => {
       persona: "implementer",
       context_path: ".kairon/runs/RUN-0001/context.md",
       outbox_path: ".kairon/runs/RUN-0001/outbox.json",
+      prompt_path: ".kairon/runs/RUN-0001/stdin.md",
+      stdout_log: ".kairon/runs/RUN-0001/stdout.log",
+      stderr_log: ".kairon/runs/RUN-0001/stderr.log",
       runner_metadata_path: ".kairon/runs/RUN-0001/runner.json",
       status: "running",
       started_at: "2026-05-25T02:00:00.000Z"
@@ -141,6 +144,9 @@ describe("FileSessionHost", () => {
       persona: "implementer",
       context_path: ".kairon/runs/RUN-0001/context.md",
       outbox_path: ".kairon/runs/RUN-0001/outbox.json",
+      prompt_path: ".kairon/runs/RUN-0001/stdin.md",
+      stdout_log: ".kairon/runs/RUN-0001/stdout.log",
+      stderr_log: ".kairon/runs/RUN-0001/stderr.log",
       runner_metadata_path: ".kairon/runs/RUN-0001/runner.json",
       status: "completed",
       started_at: "2026-05-25T02:00:00.000Z",
@@ -152,6 +158,11 @@ describe("FileSessionHost", () => {
     ).resolves.toMatchObject({
       active_run_id: null,
       last_run_id: "RUN-0001",
+      last_prompt_path: ".kairon/runs/RUN-0001/stdin.md",
+      last_stdout_log: ".kairon/runs/RUN-0001/stdout.log",
+      last_stderr_log: ".kairon/runs/RUN-0001/stderr.log",
+      last_runner_metadata_path: ".kairon/runs/RUN-0001/runner.json",
+      pause: null,
       last_status: "completed"
     });
     await expect(
@@ -170,13 +181,19 @@ describe("FileSessionHost", () => {
       runs: [
         expect.objectContaining({
           run_id: "RUN-0001",
-          status: "completed"
+          status: "completed",
+          prompt_path: ".kairon/runs/RUN-0001/stdin.md",
+          stdout_log: ".kairon/runs/RUN-0001/stdout.log",
+          stderr_log: ".kairon/runs/RUN-0001/stderr.log"
         })
       ]
     });
     await expect(
       readFile(path.join(root, ".kairon", "sessions", "2026-05-25", "codex", "scratch.md"), "utf8")
     ).resolves.toContain("Run: RUN-0001");
+    await expect(
+      readFile(path.join(root, ".kairon", "sessions", "2026-05-25", "codex", "scratch.md"), "utf8")
+    ).resolves.toContain("Prompt: .kairon/runs/RUN-0001/stdin.md");
   });
 
   it("marks limited same-day sessions unavailable for automated dispatch", async () => {
@@ -195,8 +212,14 @@ describe("FileSessionHost", () => {
       persona: "reviewer",
       context_path: ".kairon/runs/RUN-0002/context.md",
       outbox_path: ".kairon/runs/RUN-0002/outbox.json",
+      prompt_path: ".kairon/runs/RUN-0002/stdin.md",
+      stdout_log: ".kairon/runs/RUN-0002/stdout.log",
+      stderr_log: ".kairon/runs/RUN-0002/stderr.log",
       runner_metadata_path: ".kairon/runs/RUN-0002/runner.json",
       status: "usage_limited",
+      failure_reason: "cli_usage_limited",
+      setup_action: "Check provider usage.",
+      resume_hint: "Pause this agent until capacity is restored.",
       finished_at: "2026-05-25T02:04:00.000Z"
     });
 
@@ -212,7 +235,60 @@ describe("FileSessionHost", () => {
           agent: "claude",
           status: "usage_limited",
           dispatcher_status: "usage_limited",
-          last_status: "usage_limited"
+          last_status: "usage_limited",
+          last_prompt_path: ".kairon/runs/RUN-0002/stdin.md",
+          pause: expect.objectContaining({
+            status: "usage_limited",
+            reason: "cli_usage_limited",
+            resume_hint: "Pause this agent until capacity is restored."
+          })
+        })
+      ])
+    });
+  });
+
+  it("keeps setup-required session pauses out of automated dispatch even when the CLI exists", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const host = new FileSessionHost(root, {
+      commandAvailability: async () => true,
+      now: () => new Date("2026-05-25T03:00:00.000Z")
+    });
+
+    await host.openSession("codex", "2026-05-25");
+    await host.markRunFinished("codex", "2026-05-25", {
+      kind: "job",
+      run_id: "RUN-0003",
+      task_id: "TASK-0003",
+      persona: "smoke",
+      context_path: ".kairon/runs/RUN-0003/context.md",
+      outbox_path: ".kairon/runs/RUN-0003/outbox.json",
+      prompt_path: ".kairon/runs/RUN-0003/stdin.md",
+      stdout_log: ".kairon/runs/RUN-0003/stdout.log",
+      stderr_log: ".kairon/runs/RUN-0003/stderr.log",
+      runner_metadata_path: ".kairon/runs/RUN-0003/runner.json",
+      status: "setup_required",
+      failure_reason: "cli_login_required",
+      setup_action: "Run codex login.",
+      resume_hint: "Retry after CLI authentication has been completed."
+    });
+
+    const summary = await initializeSameDaySessions(root, "2026-05-25", {
+      commandAvailability: async () => true,
+      now: () => new Date("2026-05-25T03:01:00.000Z")
+    });
+
+    expect(summary).toMatchObject({
+      setup_required: 1,
+      agents: expect.arrayContaining([
+        expect.objectContaining({
+          agent: "codex",
+          status: "setup_required",
+          dispatcher_status: "setup_required",
+          pause: expect.objectContaining({
+            status: "setup_required",
+            reason: "cli_login_required"
+          })
         })
       ])
     });

@@ -24,6 +24,7 @@ export type DispatcherSessionStatus =
   | "busy"
   | "unavailable"
   | "missing_cli"
+  | "setup_required"
   | "permission_required"
   | "rate_limited"
   | "usage_limited";
@@ -50,6 +51,22 @@ export type SessionResumeHint = {
   updated_at: string;
 };
 
+export type SessionPause = {
+  status:
+    | "setup_required"
+    | "permission_required"
+    | "rate_limited"
+    | "usage_limited";
+  reason?: string;
+  setup_action?: string;
+  resume_hint?: string;
+  retry_after?: string;
+  matched_pattern?: string;
+  run_id?: string;
+  task_id?: string;
+  updated_at: string;
+};
+
 export type SessionRunCheckpoint = {
   kind: "daily_bootstrap" | "job";
   run_id?: string;
@@ -57,8 +74,16 @@ export type SessionRunCheckpoint = {
   persona?: string;
   context_path: string;
   outbox_path?: string;
+  prompt_path?: string;
+  stdout_log?: string;
+  stderr_log?: string;
   runner_metadata_path: string;
   status: SessionRunStatus;
+  failure_reason?: string;
+  setup_action?: string;
+  resume_hint?: string;
+  retry_after?: string;
+  matched_pattern?: string;
   started_at?: string;
   finished_at?: string;
   updated_at: string;
@@ -98,7 +123,12 @@ export type SessionMetadata = {
   last_task_id?: string | null;
   last_persona?: string | null;
   last_context_path?: string | null;
+  last_prompt_path?: string | null;
+  last_stdout_log?: string | null;
+  last_stderr_log?: string | null;
+  last_runner_metadata_path?: string | null;
   last_status?: SessionRunStatus | null;
+  pause?: SessionPause | null;
   terminal_id?: string;
   resume_hint?: SessionResumeHint;
   context_manifest: string;
@@ -120,6 +150,11 @@ export type SameDaySessionSnapshot = {
   active_run_id: string | null;
   last_run_id: string | null;
   last_status?: SessionRunStatus | null;
+  last_prompt_path?: string | null;
+  last_stdout_log?: string | null;
+  last_stderr_log?: string | null;
+  last_runner_metadata_path?: string | null;
+  pause?: SessionPause | null;
   resume_hint?: SessionResumeHint;
   session_path: string;
   scratch: string;
@@ -251,7 +286,18 @@ export class FileSessionHost {
       last_persona: typeof run === "string" ? current.last_persona : (run.persona ?? null),
       last_context_path:
         typeof run === "string" ? current.last_context_path : run.context_path,
+      last_prompt_path:
+        typeof run === "string" ? current.last_prompt_path : (run.prompt_path ?? null),
+      last_stdout_log:
+        typeof run === "string" ? current.last_stdout_log : (run.stdout_log ?? null),
+      last_stderr_log:
+        typeof run === "string" ? current.last_stderr_log : (run.stderr_log ?? null),
+      last_runner_metadata_path:
+        typeof run === "string"
+          ? current.last_runner_metadata_path
+          : run.runner_metadata_path,
       last_status: typeof run === "string" ? "running" : run.status,
+      pause: null,
       updated_at: this.now().toISOString()
     });
 
@@ -284,7 +330,18 @@ export class FileSessionHost {
       last_persona: typeof run === "string" ? current.last_persona : (run.persona ?? null),
       last_context_path:
         typeof run === "string" ? current.last_context_path : run.context_path,
+      last_prompt_path:
+        typeof run === "string" ? current.last_prompt_path : (run.prompt_path ?? null),
+      last_stdout_log:
+        typeof run === "string" ? current.last_stdout_log : (run.stdout_log ?? null),
+      last_stderr_log:
+        typeof run === "string" ? current.last_stderr_log : (run.stderr_log ?? null),
+      last_runner_metadata_path:
+        typeof run === "string"
+          ? current.last_runner_metadata_path
+          : run.runner_metadata_path,
       last_status: typeof run === "string" ? current.last_status : run.status,
+      pause: typeof run === "string" ? current.pause : pauseForRun(run, this.now()),
       updated_at: this.now().toISOString()
     });
 
@@ -311,7 +368,12 @@ export class FileSessionHost {
       last_task_id: run.task_id ?? current.last_task_id ?? null,
       last_persona: run.persona ?? current.last_persona ?? null,
       last_context_path: run.context_path,
+      last_prompt_path: run.prompt_path ?? current.last_prompt_path ?? null,
+      last_stdout_log: run.stdout_log ?? current.last_stdout_log ?? null,
+      last_stderr_log: run.stderr_log ?? current.last_stderr_log ?? null,
+      last_runner_metadata_path: run.runner_metadata_path,
       last_status: run.status,
+      pause: pauseForRun(run, this.now()),
       updated_at: this.now().toISOString()
     });
     await this.upsertSessionRun(agent, date, run);
@@ -381,7 +443,12 @@ export class FileSessionHost {
       last_task_id: null,
       last_persona: null,
       last_context_path: null,
+      last_prompt_path: null,
+      last_stdout_log: null,
+      last_stderr_log: null,
+      last_runner_metadata_path: null,
       last_status: null,
+      pause: null,
       terminal_id: terminalId,
       resume_hint: createResumeHint(agent, command, now),
       context_manifest: toArtifactPath(paths.root, contextManifestPath),
@@ -528,7 +595,15 @@ export class FileSessionHost {
       `Persona: ${checkpoint.persona ?? "(none)"}`,
       `Status: ${checkpoint.status}`,
       `Context: ${checkpoint.context_path}`,
+      checkpoint.prompt_path === undefined ? null : `Prompt: ${checkpoint.prompt_path}`,
       checkpoint.outbox_path === undefined ? null : `Outbox: ${checkpoint.outbox_path}`,
+      checkpoint.stdout_log === undefined ? null : `Stdout: ${checkpoint.stdout_log}`,
+      checkpoint.stderr_log === undefined ? null : `Stderr: ${checkpoint.stderr_log}`,
+      `Runner: ${checkpoint.runner_metadata_path}`,
+      checkpoint.failure_reason === undefined
+        ? null
+        : `Failure: ${checkpoint.failure_reason}`,
+      checkpoint.resume_hint === undefined ? null : `Resume: ${checkpoint.resume_hint}`,
       `Updated: ${checkpoint.updated_at}`,
       "<!-- KAIRON_SESSION_CHECKPOINT_END -->",
       ""
@@ -600,6 +675,11 @@ export function sessionSnapshot(
     active_run_id: metadata.active_run_id,
     last_run_id: metadata.last_run_id,
     last_status: metadata.last_status,
+    last_prompt_path: metadata.last_prompt_path,
+    last_stdout_log: metadata.last_stdout_log,
+    last_stderr_log: metadata.last_stderr_log,
+    last_runner_metadata_path: metadata.last_runner_metadata_path,
+    pause: metadata.pause,
     resume_hint: metadata.resume_hint,
     session_path: toArtifactPath(
       projectRoot,
@@ -631,6 +711,7 @@ export function sameDaySessionStatus(
   }
 
   if (
+    metadata.last_status === "setup_required" ||
     metadata.last_status === "permission_required" ||
     metadata.last_status === "rate_limited" ||
     metadata.last_status === "usage_limited"
@@ -646,7 +727,7 @@ export function dispatcherStatusFor(
   metadata: Pick<SessionMetadata, "command_available">
 ): DispatcherSessionStatus {
   if (status === "setup_required" || !metadata.command_available) {
-    return "missing_cli";
+    return metadata.command_available ? "setup_required" : "missing_cli";
   }
 
   if (status === "closed") {
@@ -754,6 +835,32 @@ function sessionRunKey(
   run: Pick<SessionRunCheckpoint, "kind" | "run_id" | "runner_metadata_path">
 ): string {
   return run.run_id ?? `${run.kind}:${run.runner_metadata_path}`;
+}
+
+function pauseForRun(
+  run: SessionRunUpdate,
+  now: Date
+): SessionPause | null {
+  if (
+    run.status !== "setup_required" &&
+    run.status !== "permission_required" &&
+    run.status !== "rate_limited" &&
+    run.status !== "usage_limited"
+  ) {
+    return null;
+  }
+
+  return {
+    status: run.status,
+    reason: run.failure_reason,
+    setup_action: run.setup_action,
+    resume_hint: run.resume_hint,
+    retry_after: run.retry_after,
+    matched_pattern: run.matched_pattern,
+    run_id: run.run_id,
+    task_id: run.task_id,
+    updated_at: now.toISOString()
+  };
 }
 
 function terminalIdFor(agent: AgentId, date: string): string {
