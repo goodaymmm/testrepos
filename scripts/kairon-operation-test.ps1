@@ -203,6 +203,21 @@ function Add-Result {
   }
 }
 
+function Invoke-StepScript {
+  param([Parameter(Mandatory = $true)][scriptblock]$Script)
+
+  & $Script
+}
+
+function Invoke-StepAssert {
+  param(
+    [Parameter(Mandatory = $true)][scriptblock]$Assert,
+    [Parameter(Mandatory = $true)][string]$Evidence
+  )
+
+  & $Assert $Evidence
+}
+
 function Invoke-Step {
   param(
     [Parameter(Mandatory = $true)][string]$Id,
@@ -213,8 +228,8 @@ function Invoke-Step {
 
   Write-Host "[$Id] $Name"
   try {
-    $evidence = (& $Script | Out-String).Trim()
-    $assertion = & $Assert $evidence
+    $evidence = (Invoke-StepScript -Script $Script | Out-String).Trim()
+    $assertion = Invoke-StepAssert -Assert $Assert -Evidence $evidence
     if ($assertion -eq $true) {
       Add-Result -Id $Id -Name $Name -Status "PASS" -Details "passed" -Evidence $evidence
       Write-Host "[$Id] PASS"
@@ -295,6 +310,129 @@ function Invoke-WithEnvOverrides {
   } finally {
     foreach ($key in $Values.Keys) {
       [Environment]::SetEnvironmentVariable($key, $previous[$key], "Process")
+    }
+  }
+}
+
+function Get-FileTextOrEmpty {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  if (-not (Test-Path -LiteralPath $Path)) {
+    return ""
+  }
+
+  Get-Content -LiteralPath $Path -Raw -ErrorAction SilentlyContinue
+}
+
+function Start-KaironDaemonForManualDiscordDecision {
+  param([Parameter(Mandatory = $true)][int]$TimeoutSeconds)
+
+  $daemonMaxTicks = [Math]::Max(3, $TimeoutSeconds + 10)
+  $stdoutPath = Join-Path $script:RunOutputRoot "discord-decision-audit-daemon.stdout.log"
+  $stderrPath = Join-Path $script:RunOutputRoot "discord-decision-audit-daemon.stderr.log"
+
+  $job = Start-Job -ScriptBlock {
+    param(
+      [Parameter(Mandatory = $true)][string]$TargetRoot,
+      [Parameter(Mandatory = $true)][int]$MaxTicks
+    )
+
+    Set-Location -LiteralPath $TargetRoot
+    $global:LASTEXITCODE = 0
+    $output = kairon start --daemon --interval-ms 1000 --max-ticks $MaxTicks 2>&1 |
+      ForEach-Object { $_.ToString() }
+    $exitCode = if ($null -eq $global:LASTEXITCODE) { 0 } else { $global:LASTEXITCODE }
+    [PSCustomObject]@{
+      ExitCode = $exitCode
+      Output = ($output -join [Environment]::NewLine)
+    }
+  } -ArgumentList $script:TargetRoot, $daemonMaxTicks
+
+  [PSCustomObject]@{
+    Job = $job
+    MaxTicks = $daemonMaxTicks
+    StdoutPath = $stdoutPath
+    StderrPath = $stderrPath
+    ExitCode = $null
+    TimedOut = $false
+  }
+}
+
+function Stop-KaironDaemonForManualDiscordDecision {
+  param($Daemon)
+
+  $stop = Invoke-KaironCaptured { kairon stop }
+  if ($null -ne $Daemon) {
+    try {
+      Wait-Job -Job $Daemon.Job -Timeout 15 | Out-Null
+      if ($Daemon.Job.State -eq "Running") {
+        $Daemon.TimedOut = $true
+        Stop-Job -Job $Daemon.Job -ErrorAction SilentlyContinue
+        Wait-Job -Job $Daemon.Job -Timeout 5 | Out-Null
+      }
+      $received = @(Receive-Job -Job $Daemon.Job -ErrorAction SilentlyContinue)
+      $daemonExitCode = ""
+      $daemonOutput = @()
+      foreach ($item in $received) {
+        if (Test-HasProperty -Object $item -Name "ExitCode") {
+          $daemonExitCode = Get-ObjectPropertyValue -Object $item -Name "ExitCode"
+          $daemonOutput += Get-ObjectPropertyValue -Object $item -Name "Output"
+        } else {
+          $daemonOutput += $item.ToString()
+        }
+      }
+      $Daemon.ExitCode = $daemonExitCode
+      Write-Utf8NoBom -Path $Daemon.StdoutPath -Content (($daemonOutput -join [Environment]::NewLine) + [Environment]::NewLine)
+      Write-Utf8NoBom -Path $Daemon.StderrPath -Content ""
+      Remove-Job -Job $Daemon.Job -Force -ErrorAction SilentlyContinue
+    } catch {
+      # Best-effort cleanup; the stop command above is the canonical shutdown path.
+    }
+  }
+
+  $stop
+}
+
+function Hide-NonTargetApprovalsForDiscordDecisionAudit {
+  param([Parameter(Mandatory = $true)][string]$ApprovalId)
+
+  $approvalsDir = Join-Path $script:TargetRoot ".kairon\approvals"
+  $hiddenDir = Join-Path $script:RunOutputRoot "discord-decision-hidden-approvals"
+  $moved = @()
+  if (-not (Test-Path -LiteralPath $approvalsDir)) {
+    return $moved
+  }
+
+  foreach ($file in Get-ChildItem -LiteralPath $approvalsDir -Filter "*.json" -File -ErrorAction SilentlyContinue) {
+    if ($file.BaseName -eq $ApprovalId) {
+      continue
+    }
+
+    New-Directory -Path $hiddenDir
+    $destination = Join-Path $hiddenDir $file.Name
+    Move-Item -LiteralPath $file.FullName -Destination $destination -Force
+    $moved += [PSCustomObject]@{
+      Source = $file.FullName
+      Destination = $destination
+    }
+  }
+
+  $moved
+}
+
+function Restore-HiddenApprovalsForDiscordDecisionAudit {
+  param($MovedApprovals)
+
+  foreach ($moved in @($MovedApprovals)) {
+    $source = Get-ObjectPropertyValue -Object $moved -Name "Source"
+    $destination = Get-ObjectPropertyValue -Object $moved -Name "Destination"
+    if ([string]::IsNullOrWhiteSpace($source) -or [string]::IsNullOrWhiteSpace($destination)) {
+      continue
+    }
+    if (Test-Path -LiteralPath $destination) {
+      $parent = Split-Path -Parent $source
+      New-Directory -Path $parent
+      Move-Item -LiteralPath $destination -Destination $source -Force
     }
   }
 }
@@ -1213,54 +1351,89 @@ try {
       $missing = @(Get-MissingEnvNames -Names (Get-DiscordEnvNames))
       if ($missing.Count -gt 0) {
         "setup_required.missing_env=$($missing -join ',')"
-        return
-      }
-
-      $approvalId = if ([string]::IsNullOrWhiteSpace($DiscordDecisionAuditApprovalId)) {
-        "APR-T70-LIVE-$($script:RunId)"
       } else {
-        $DiscordDecisionAuditApprovalId
-      }
+        $approvalId = if ([string]::IsNullOrWhiteSpace($DiscordDecisionAuditApprovalId)) {
+          "APR-T70-LIVE-$($script:RunId)"
+        } else {
+          $DiscordDecisionAuditApprovalId
+        }
 
-      if ($DiscordDecisionAuditTimeoutSeconds -le 0) {
-        @(
-          "manual_action.required=true",
-          "manual_action.approval_id=$approvalId",
-          "manual_action.expected_decision=$DiscordDecisionAuditExpectedAction",
-          "manual_action.next=Run this profile with -DiscordDecisionAuditTimeoutSeconds <seconds>, then click the matching Discord approval action before timeout.",
-          "manual_action.skip_restore_recommended=true",
-          (Get-AuditFileSummary -RelativePath ".kairon/runtime/discord/decision-interactions.jsonl")
-        ) -join [Environment]::NewLine
-        return
-      }
+        if ($DiscordDecisionAuditTimeoutSeconds -le 0) {
+          @(
+            "manual_action.required=true",
+            "manual_action.approval_id=$approvalId",
+            "manual_action.expected_decision=$DiscordDecisionAuditExpectedAction",
+            "manual_action.next=Run this profile with -DiscordDecisionAuditTimeoutSeconds <seconds>, then click the matching Discord approval action before timeout.",
+            "manual_action.skip_restore_recommended=true",
+            (Get-AuditFileSummary -RelativePath ".kairon/runtime/discord/decision-interactions.jsonl")
+          ) -join [Environment]::NewLine
+        } else {
+          Set-DiscordProviderEnabled -Enabled $true
+          Invoke-KaironCaptured { kairon stop } | Out-Null
+          $hiddenApprovals = @()
+          $seed = $null
+          $daemon = $null
+          $stop = $null
+          try {
+            $hiddenApprovals = @(Hide-NonTargetApprovalsForDiscordDecisionAudit -ApprovalId $approvalId)
+            $seed = Invoke-KaironCaptured {
+              kairon approval seed $approvalId --redaction-fixture --title "T70 Discord decision audit live"
+            }
+            $daemon = Start-KaironDaemonForManualDiscordDecision -TimeoutSeconds $DiscordDecisionAuditTimeoutSeconds
+            $record = Wait-DiscordDecisionAuditRecord `
+              -ApprovalId $approvalId `
+              -Decision $DiscordDecisionAuditExpectedAction `
+              -TimeoutSeconds $DiscordDecisionAuditTimeoutSeconds
+          } finally {
+            $stop = Stop-KaironDaemonForManualDiscordDecision -Daemon $daemon
+            Restore-HiddenApprovalsForDiscordDecisionAudit -MovedApprovals $hiddenApprovals
+          }
 
-      Set-DiscordProviderEnabled -Enabled $true
-      Invoke-KaironCaptured { kairon stop } | Out-Null
-      $seed = Invoke-KaironCaptured {
-        kairon approval seed $approvalId --redaction-fixture --title "T70 Discord decision audit live"
-      }
-      $start = Invoke-KaironCaptured {
-        kairon start --daemon --interval-ms 1000 --max-ticks 2
-      }
-      $record = Wait-DiscordDecisionAuditRecord `
-        -ApprovalId $approvalId `
-        -Decision $DiscordDecisionAuditExpectedAction `
-        -TimeoutSeconds $DiscordDecisionAuditTimeoutSeconds
-      Invoke-KaironCaptured { kairon stop } | Out-Null
+          $daemonExitCode = ""
+          $daemonStdout = ""
+          $daemonStderr = ""
+          $daemonMaxTicks = ""
+          $daemonJobId = ""
+          $daemonStdoutPath = ""
+          $daemonStderrPath = ""
+          $daemonTimedOut = ""
+          if ($null -ne $daemon) {
+            $daemonExitCode = $daemon.ExitCode
+            $daemonStdout = Get-FileTextOrEmpty -Path $daemon.StdoutPath
+            $daemonStderr = Get-FileTextOrEmpty -Path $daemon.StderrPath
+            $daemonMaxTicks = $daemon.MaxTicks
+            $daemonJobId = $daemon.Job.Id
+            $daemonStdoutPath = $daemon.StdoutPath
+            $daemonStderrPath = $daemon.StderrPath
+            $daemonTimedOut = $daemon.TimedOut
+          }
 
-      @(
-        "discord.env.snapshot",
-        (Format-DiscordEnvSnapshot),
-        "approval_id=$approvalId",
-        "expected_decision=$DiscordDecisionAuditExpectedAction",
-        "timeout_seconds=$DiscordDecisionAuditTimeoutSeconds",
-        "seed.exit_code=$($seed.ExitCode)",
-        $seed.Output,
-        "start.exit_code=$($start.ExitCode)",
-        $start.Output,
-        (Get-AuditFileSummary -RelativePath ".kairon/runtime/discord/decision-interactions.jsonl"),
-        (Format-DiscordDecisionAuditRecord -Record $record)
-      ) -join [Environment]::NewLine
+          @(
+            "discord.env.snapshot",
+            (Format-DiscordEnvSnapshot),
+            "approval_id=$approvalId",
+            "expected_decision=$DiscordDecisionAuditExpectedAction",
+            "timeout_seconds=$DiscordDecisionAuditTimeoutSeconds",
+            "hidden_approval_count=$($hiddenApprovals.Count)",
+            "seed.exit_code=$($seed.ExitCode)",
+            $seed.Output,
+            "daemon.job_id=$daemonJobId",
+            "daemon.max_ticks=$daemonMaxTicks",
+            "daemon.exit_code=$daemonExitCode",
+            "daemon.timed_out=$daemonTimedOut",
+            "daemon.stdout_path=$daemonStdoutPath",
+            "daemon.stderr_path=$daemonStderrPath",
+            "daemon.stdout",
+            $daemonStdout,
+            "daemon.stderr",
+            $daemonStderr,
+            "stop.exit_code=$($stop.ExitCode)",
+            $stop.Output,
+            (Get-AuditFileSummary -RelativePath ".kairon/runtime/discord/decision-interactions.jsonl"),
+            (Format-DiscordDecisionAuditRecord -Record $record)
+          ) -join [Environment]::NewLine
+        }
+      }
     } -Assert {
       param($Evidence)
       if ($Evidence -match "^setup_required\.missing_env=(.+)$") {

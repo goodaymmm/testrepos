@@ -75,6 +75,7 @@ export async function startBoardServer(
   });
 
   await listen(server, requestedPort, host);
+  server.ref();
 
   try {
     const exportResult = await exportBoardProjection(projectRoot, options);
