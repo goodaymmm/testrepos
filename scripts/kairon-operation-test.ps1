@@ -20,6 +20,7 @@ param(
     "DiscordInvalidEnv",
     "DiscordSetupError",
     "ApprovalNotificationAudit",
+    "DiscordDecisionAuditLive",
     "RuntimeRecovery"
   )]
   [string[]]$Test = @("All"),
@@ -29,6 +30,13 @@ param(
   [string]$DiscordSetupErrorGuildId = "111111111111111111",
 
   [string]$DiscordSetupErrorApprovalChannelId = "222222222222222222",
+
+  [string]$DiscordDecisionAuditApprovalId = "",
+
+  [ValidateSet("approve", "reject", "request_changes", "snooze")]
+  [string]$DiscordDecisionAuditExpectedAction = "approve",
+
+  [int]$DiscordDecisionAuditTimeoutSeconds = 0,
 
   [switch]$SkipRestore
 )
@@ -309,15 +317,27 @@ function Get-DiscordEnvNames {
   try {
     $notifications = Get-Content -LiteralPath $notificationsPath -Raw | ConvertFrom-Json
     $discord = Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $notifications "providers") "discord"
-    $envObject = Get-ObjectPropertyValue -Object $discord "env"
-    if ($null -eq $envObject) {
-      return $defaults
+    $names = @()
+    foreach ($propertyName in @(
+      "bot_token_env",
+      "application_id_env",
+      "guild_id_env",
+      "approval_channel_id_env",
+      "owner_user_id_env",
+      "allowed_user_ids_env"
+    )) {
+      $value = Get-ObjectPropertyValue -Object $discord $propertyName
+      if (-not [string]::IsNullOrWhiteSpace([string]$value)) {
+        $names += [string]$value
+      }
     }
 
-    $names = @()
-    foreach ($property in $envObject.PSObject.Properties) {
-      if (-not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
-        $names += [string]$property.Value
+    $envObject = Get-ObjectPropertyValue -Object $discord "env"
+    if ($null -ne $envObject) {
+      foreach ($property in $envObject.PSObject.Properties) {
+        if (-not [string]::IsNullOrWhiteSpace([string]$property.Value)) {
+          $names += [string]$property.Value
+        }
       }
     }
 
@@ -395,6 +415,51 @@ function Get-DiscordSecretValues {
   @($values | Select-Object -Unique)
 }
 
+function Get-DiscordActorValues {
+  $envNames = @(
+    "KAIRON_DISCORD_OWNER_USER_ID",
+    "KAIRON_DISCORD_ALLOWED_USER_IDS"
+  )
+
+  $notificationsPath = Join-Path $script:TargetRoot ".kairon\config\notifications.json"
+  if (Test-Path -LiteralPath $notificationsPath) {
+    try {
+      $notifications = Get-Content -LiteralPath $notificationsPath -Raw | ConvertFrom-Json
+      $discord = Get-ObjectPropertyValue -Object (Get-ObjectPropertyValue -Object $notifications "providers") "discord"
+      foreach ($propertyName in @("owner_user_id_env", "allowed_user_ids_env")) {
+        $value = Get-ObjectPropertyValue -Object $discord $propertyName
+        if (-not [string]::IsNullOrWhiteSpace([string]$value)) {
+          $envNames += [string]$value
+        }
+      }
+
+      $envObject = Get-ObjectPropertyValue -Object $discord "env"
+      if ($null -ne $envObject) {
+        foreach ($propertyName in @("owner_user_id", "allowed_user_ids")) {
+          $value = Get-ObjectPropertyValue -Object $envObject $propertyName
+          if (-not [string]::IsNullOrWhiteSpace([string]$value)) {
+            $envNames += [string]$value
+          }
+        }
+      }
+    } catch {
+      # Defaults are enough for redaction checks when config cannot be read.
+    }
+  }
+
+  $values = @()
+  foreach ($name in @($envNames | Select-Object -Unique)) {
+    $value = [Environment]::GetEnvironmentVariable($name, "Process")
+    if ([string]::IsNullOrWhiteSpace($value)) {
+      continue
+    }
+
+    $values += @($value -split "[,\s]+" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+  }
+
+  @($values | Where-Object { $_.Length -ge 6 } | Select-Object -Unique)
+}
+
 function Format-DiscordEnvSnapshot {
   $lines = @()
   foreach ($name in Get-DiscordEnvNames) {
@@ -470,6 +535,91 @@ function Get-AuditFileSummary {
 
   $lineCount = @(Get-Content -LiteralPath $filePath -ErrorAction SilentlyContinue).Count
   return "$RelativePath exists=true lines=$lineCount path=$RelativePath"
+}
+
+function Get-DiscordDecisionAuditRecord {
+  param(
+    [Parameter(Mandatory = $true)][string]$ApprovalId,
+    [Parameter(Mandatory = $true)][string]$Decision
+  )
+
+  $decisionAuditPath = Join-Path $script:TargetRoot ".kairon\runtime\discord\decision-interactions.jsonl"
+  if (-not (Test-Path -LiteralPath $decisionAuditPath)) {
+    return $null
+  }
+
+  $lines = @(Get-Content -LiteralPath $decisionAuditPath -ErrorAction SilentlyContinue)
+  for ($index = $lines.Count - 1; $index -ge 0; $index--) {
+    $line = [string]$lines[$index]
+    if ([string]::IsNullOrWhiteSpace($line)) {
+      continue
+    }
+
+    try {
+      $record = $line | ConvertFrom-Json
+      if (
+        (Get-ObjectPropertyValue -Object $record -Name "approval_id") -eq $ApprovalId -and
+        (Get-ObjectPropertyValue -Object $record -Name "decision") -eq $Decision
+      ) {
+        return $record
+      }
+    } catch {
+      continue
+    }
+  }
+
+  return $null
+}
+
+function Wait-DiscordDecisionAuditRecord {
+  param(
+    [Parameter(Mandatory = $true)][string]$ApprovalId,
+    [Parameter(Mandatory = $true)][string]$Decision,
+    [Parameter(Mandatory = $true)][int]$TimeoutSeconds
+  )
+
+  $deadline = (Get-Date).AddSeconds([Math]::Max(0, $TimeoutSeconds))
+  do {
+    $record = Get-DiscordDecisionAuditRecord -ApprovalId $ApprovalId -Decision $Decision
+    if ($null -ne $record) {
+      return $record
+    }
+
+    if ((Get-Date) -ge $deadline) {
+      return $null
+    }
+
+    Start-Sleep -Seconds 1
+  } while ($true)
+}
+
+function Format-DiscordDecisionAuditRecord {
+  param($Record)
+
+  if ($null -eq $Record) {
+    return "decision.audit.record=missing"
+  }
+
+  $fields = @(
+    "approval_id",
+    "decision",
+    "status",
+    "duplicate",
+    "actor_hash",
+    "message_update_status",
+    "message_update_reason",
+    "command_status",
+    "recorded_at"
+  )
+  $lines = @("decision.audit.record=found")
+  foreach ($field in $fields) {
+    $value = Get-ObjectPropertyValue -Object $Record -Name $field
+    if ($null -ne $value) {
+      $lines += "decision.audit.$field=$value"
+    }
+  }
+
+  return $lines -join [Environment]::NewLine
 }
 
 function Set-KaironScheduleMode {
@@ -1053,6 +1203,95 @@ try {
         if ($auditText -match [regex]::Escape($needle)) {
           return "sensitive marker was found in audit artifacts: $needle"
         }
+      }
+      return $true
+    }
+  }
+
+  if (Should-Run "DiscordDecisionAuditLive") {
+    Invoke-Step -Id "DISCORD_DECISION_AUDIT_LIVE" -Name "Discord live decision audit" -Script {
+      $missing = @(Get-MissingEnvNames -Names (Get-DiscordEnvNames))
+      if ($missing.Count -gt 0) {
+        "setup_required.missing_env=$($missing -join ',')"
+        return
+      }
+
+      $approvalId = if ([string]::IsNullOrWhiteSpace($DiscordDecisionAuditApprovalId)) {
+        "APR-T70-LIVE-$($script:RunId)"
+      } else {
+        $DiscordDecisionAuditApprovalId
+      }
+
+      if ($DiscordDecisionAuditTimeoutSeconds -le 0) {
+        @(
+          "manual_action.required=true",
+          "manual_action.approval_id=$approvalId",
+          "manual_action.expected_decision=$DiscordDecisionAuditExpectedAction",
+          "manual_action.next=Run this profile with -DiscordDecisionAuditTimeoutSeconds <seconds>, then click the matching Discord approval action before timeout.",
+          "manual_action.skip_restore_recommended=true",
+          (Get-AuditFileSummary -RelativePath ".kairon/runtime/discord/decision-interactions.jsonl")
+        ) -join [Environment]::NewLine
+        return
+      }
+
+      Set-DiscordProviderEnabled -Enabled $true
+      Invoke-KaironCaptured { kairon stop } | Out-Null
+      $seed = Invoke-KaironCaptured {
+        kairon approval seed $approvalId --redaction-fixture --title "T70 Discord decision audit live"
+      }
+      $start = Invoke-KaironCaptured {
+        kairon start --daemon --interval-ms 1000 --max-ticks 2
+      }
+      $record = Wait-DiscordDecisionAuditRecord `
+        -ApprovalId $approvalId `
+        -Decision $DiscordDecisionAuditExpectedAction `
+        -TimeoutSeconds $DiscordDecisionAuditTimeoutSeconds
+      Invoke-KaironCaptured { kairon stop } | Out-Null
+
+      @(
+        "discord.env.snapshot",
+        (Format-DiscordEnvSnapshot),
+        "approval_id=$approvalId",
+        "expected_decision=$DiscordDecisionAuditExpectedAction",
+        "timeout_seconds=$DiscordDecisionAuditTimeoutSeconds",
+        "seed.exit_code=$($seed.ExitCode)",
+        $seed.Output,
+        "start.exit_code=$($start.ExitCode)",
+        $start.Output,
+        (Get-AuditFileSummary -RelativePath ".kairon/runtime/discord/decision-interactions.jsonl"),
+        (Format-DiscordDecisionAuditRecord -Record $record)
+      ) -join [Environment]::NewLine
+    } -Assert {
+      param($Evidence)
+      if ($Evidence -match "^setup_required\.missing_env=(.+)$") {
+        return New-StepResult -Status "SETUP_REQUIRED" -Details "missing Discord env names: $($Matches[1])"
+      }
+
+      $secretValues = @(
+        Get-DiscordSecretValues
+        Get-DiscordActorValues
+      )
+      $leak = Assert-NoSecretLeak -Text $Evidence -SecretValues $secretValues
+      if ($leak -ne $true) { return $leak }
+      if ($Evidence -match "DiscordAPIError\[") { return "raw DiscordAPIError stack was printed" }
+      if ($Evidence -match "node_modules\\@discordjs") { return "discord.js stack path was printed" }
+
+      if ($Evidence -match "manual_action\.required=true") {
+        return New-StepResult -Status "OPTIONAL" -Details "waiting for manual Discord decision; rerun with -DiscordDecisionAuditTimeoutSeconds and click the expected action"
+      }
+
+      if ($Evidence -notmatch "decision\.audit\.record=found") {
+        return New-StepResult -Status "OPTIONAL" -Details "decision audit record was not found before timeout"
+      }
+
+      if ($Evidence -notmatch "decision\.audit\.approval_id=") { return "approval_id was missing from decision audit" }
+      if ($Evidence -notmatch "decision\.audit\.decision=$([regex]::Escape($DiscordDecisionAuditExpectedAction))") {
+        return "expected decision was not found in audit"
+      }
+      if ($Evidence -notmatch "decision\.audit\.status=(applied|rejected|skipped|failed)") { return "decision status was missing from audit" }
+      if ($Evidence -notmatch "decision\.audit\.actor_hash=[a-f0-9]{16}") { return "actor_hash was missing or invalid" }
+      if ($Evidence -notmatch "decision\.audit\.message_update_status=(updated|skipped|failed|unavailable)") {
+        return "message_update_status was missing from audit"
       }
       return $true
     }
