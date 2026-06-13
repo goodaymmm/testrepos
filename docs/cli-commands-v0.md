@@ -15,17 +15,33 @@ kairon approval list
 kairon approval show APR-0001
 kairon approval decide APR-0001 --action approve|reject|request_changes|snooze
 kairon approval seed APR-MANUAL-0001 --actions approve,reject
+kairon board export
+kairon board serve
+kairon cleanup list
+kairon cleanup show <proposal-id>
+kairon cleanup apply <proposal-id> [--dry-run]
+kairon cleanup archive <proposal-id>
 kairon config propose
 kairon config apply <proposal-id> [--dry-run]
 kairon docking analyze
 kairon start
+kairon start --daemon [--interval-ms <ms>] [--max-ticks <count>] [--max-idle-ticks <count>]
 kairon stop
 kairon status
 kairon task create
 kairon task run TASK-0001
 kairon review run REV-0001
+kairon recovery run
+kairon recovery list
+kairon recovery show <target-id-or-fingerprint>
+kairon recovery resolve <target-id-or-fingerprint> --reason <reason>
+kairon recovery acknowledge <target-id-or-fingerprint> --reason <reason>
 kairon leave
 kairon maintenance run
+kairon maintenance run --build-rag
+kairon rag refresh
+kairon rag status
+kairon rag query <query>
 ```
 
 ## kairon init
@@ -91,6 +107,8 @@ kairon doctor
 - CLI availability
 - API key contamination
 - Discord env
+- GitHub branch protection
+- runtime recovery targets
 - protected path policy
 - runtime lock
 
@@ -294,12 +312,61 @@ do not write .kairon/config/project.json
 MVPでは、`.mcp.json`、`.claude/**`、`.gemini/**`、`.antigravitycli/**` を protected 候補に寄せる。
 `tmpclaude-*`、`dist/**`、`build/**`、`coverage/**`、`node_modules/**` は generated 候補に寄せる。
 
+## kairon board
+
+read-only Board projectionを出力またはloopback HTTPで表示する。
+
+```text
+kairon board export
+kairon board export --output .kairon/board/projection.json --recent 20
+kairon board serve --host 127.0.0.1 --port 8787 --recent 20
+```
+
+処理。
+
+```text
+read canonical Kairon state
+redact large output and secret-like fields
+summarize approvals, queue, runs, reviews, recovery, cleanup, Discord decision audit
+write .kairon/board/projection.json
+serve HTML and projection.json on loopback only when requested
+```
+
+`serve` は `127.0.0.1` または `localhost` のようなloopback hostだけを許可する。
+
+## kairon cleanup
+
+maintenanceが作成したcleanup proposalを確認し、人間確認後に安全にapplyまたはarchiveする。
+
+```text
+kairon cleanup list
+kairon cleanup show 2026-06-01
+kairon cleanup apply 2026-06-01 --dry-run
+kairon cleanup apply 2026-06-01
+kairon cleanup archive 2026-06-01
+```
+
+処理。
+
+```text
+list .kairon/cleanup/proposals/*.json
+show candidates and safety classification
+dry-run planned moves
+move reviewed candidates to .kairon/tmp/cleanup-...
+write .kairon/cleanup/applied/*.json
+archive proposal to .kairon/cleanup/archived/*.json
+block protected paths
+```
+
+直接削除は行わない。apply対象はreview済み候補とし、protected pathは常に拒否する。
+
 ## kairon start
 
 Kairon Runtime を起動する。
 
 ```text
 kairon start
+kairon start --daemon --interval-ms 1000 --max-ticks 2
 ```
 
 処理。
@@ -309,6 +376,8 @@ acquire runtime lock
 resolve current schedule mode
 run one runtime tick
 write .kairon/runtime/last-tick.json
+run safe runtime recovery before lock acquisition
+when --daemon is set, repeat ticks and append .kairon/runtime/daemon/YYYY-MM-DD.jsonl
 ```
 
 runtime tick の動作。
@@ -327,7 +396,16 @@ maintenance:
   skip when .kairon/runtime/maintenance-runs/YYYY-MM-DD.json exists
 ```
 
-T15-01時点では、24時間daemonの完成版ではなく、`kairon start` で1 tickを実行してschedule境界を検証する。service化、interval loop、persistent PTY session orchestration は後続scope。
+daemon option。
+
+```text
+--daemon
+--interval-ms <ms>
+--max-ticks <count>
+--max-idle-ticks <count>
+```
+
+`--daemon` は長時間運用の入口であり、heartbeat、last error、stop reasonをruntime lockとdaemon logに記録する。24時間以上の連続運用エビデンス取得は運用テスト側で行う。
 
 ## kairon stop
 
@@ -359,10 +437,12 @@ kairon status
 
 - schedule mode
 - runtime lock
+- runtime last error
 - active sessions
 - queue length
 - active runs
 - pending approvals
+- recovery target counts
 - last daily handoff
 
 ## kairon task create
@@ -477,6 +557,32 @@ review_results=REV-0002
 
 基準未満で最大反復回数未満の場合は `review_fix` 用の `agent.run` queue item を作成する。
 最大反復回数に達した場合は `.kairon/approvals/APR-xxxx.json` に `review_escalation` を作成する。
+`commit_requested` なreview loopがapprovedになり、対象実装runのdiff snapshotが存在する場合は `git.transaction` queue itemを作成する。
+
+## kairon recovery
+
+stale runtime stateを検出し、安全な再queueまたは人間承認に接続する。
+
+```text
+kairon recovery run
+kairon recovery list
+kairon recovery show <target-id-or-fingerprint>
+kairon recovery resolve <target-id-or-fingerprint> --reason "manual cleanup verified"
+kairon recovery acknowledge <target-id-or-fingerprint> --reason "operator will recover manually"
+```
+
+検出対象。
+
+```text
+stale runtime lock
+expired claimed queue item
+stale running runner metadata
+partial outbox
+stale Discord gateway state
+git transaction mid-state
+```
+
+`resolve` と `acknowledge` は `.kairon/recovery/resolutions/*.json` にfingerprint単位で記録し、同一targetが未解決として残り続けることを防ぐ。
 
 ## kairon maintenance run
 
@@ -491,11 +597,49 @@ kairon maintenance run
 ```text
 run QA / review placeholders
 create cleanup proposals
+run runtime recovery
 flush session scratch
 write daily report
 write handoff
 prepare next-day bootstrap
+write next-day plan
+optionally build RAG index
 ```
+
+主なoption。
+
+```text
+--build-rag
+```
+
+`--build-rag` は `rag.json` のautomatic maintenance indexingがdisabledでもlocal RAG indexを作る。
+
+## kairon rag
+
+local lexical RAG indexを作成、状態確認、検索する。
+
+```text
+kairon rag refresh
+kairon rag status
+kairon rag query "approval routing" --type approval --limit 5
+```
+
+主なquery option。
+
+```text
+--type <type>
+--collection <collection>
+--limit <count>
+--task-id <taskId>
+--run-id <runId>
+--approval-id <approvalId>
+--review-id <reviewId>
+--review-loop-id <reviewLoopId>
+--date <YYYY-MM-DD>
+--severity <severity>
+```
+
+RAG indexは `.kairon/rag/index.json` に保存する。secret-like pathとprotected pathはindex対象から除外する。
 
 ## kairon leave
 
@@ -533,8 +677,7 @@ Discord からは `/kairon leave` を同じ command として扱う。
 
 ## MVP Notes
 
-- `kairon start` は最初は foreground でよい。
-- `kairon start` はT15-01時点で1 tickのruntime loopを実行する。
+- `kairon start` はforeground single tickとdaemon modeの両方を持つ。
 - `kairon task run` は現段階では同期実行の最小経路として動く。queue itemの非同期処理はruntime loop経由でも進められる。
 - `kairon stop` は terminal session を閉じる前に handoff を書く。
 - Discord が disabled の場合、approval は `.kairon/approvals` に file として残す。

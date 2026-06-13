@@ -6,7 +6,7 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 
 ## 現在の位置づけ
 
-このリポジトリは MVP の基盤実装です。現在は運用テストで不足を洗い出しながら、実 CLI 接続、タスク投入、レビュー実行経路を順次固めている段階です。
+このリポジトリは MVP の基盤実装です。現在はローカル運用の主要経路を実装し、運用テストで残る外部接続条件や長時間稼働条件を確認している段階です。
 
 現時点で実装済みの主な範囲:
 
@@ -16,21 +16,21 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 - Agent dispatcher、context builder、session host
 - Codex / Claude / AntigravityCLI 公式 CLI へ接続する runner 境界
 - review loop / quality gate の実行経路
-- git workspace / diff snapshot / transaction metadata の実行境界
-- Discord approval gateway の正規化・idempotency・message payload
+- git workspace / diff snapshot / transaction metadata / review承認後の `git.transaction` queue連携
+- GitHub branch protection 診断
+- Discord approval gateway の正規化・idempotency・message payload・live接続・decision audit
 - approval queue CLI
-- runtime loop scheduler の1 tick実行、schedule別queue制御、maintenance重複防止
-- daily report、agent handoff、cleanup proposal
+- runtime loop scheduler、daemon tick、schedule別queue制御、maintenance重複防止、runtime recovery
+- daily report、agent handoff、cleanup proposal、cleanup apply / archive
+- read-only Board projection / loopback Board server
+- local lexical RAG index、RAG query CLI、context builder連携
 
 現時点で未完成または後続作業の範囲:
 
-- 24 時間常駐daemonとしてのloop運用
-- live Discord Gateway 接続と実メッセージ投稿
-- Board UI
-- persistent PTY の本格運用
-- LangGraph / RAG の本実装
-- Git transaction の task runner / review runner 連携
+- 24時間以上の連続daemon運用エビデンス取得と運用手順の固定
+- LangGraph workflow runtime の本格導入
 - merge / deploy の自動実行
+- cloud / public HTTP endpoint でのDiscord Interactions運用
 
 ## 前提
 
@@ -88,6 +88,9 @@ node C:\Users\hikar\Documents\AutoRunner\dist\cli\main.js init
   sessions/
   runtime/
   reports/
+  recovery/
+  rag/
+  board/
   cleanup/
   tmp/
 ```
@@ -140,7 +143,7 @@ kairon migrate
 kairon doctor
 ```
 
-Git、`.gitignore`、config、公式CLI、API key混入、Discord設定、safety policyを確認し、`pass` / `warning` / `error` と次の対応を表示します。
+Git、`.gitignore`、config、公式CLI、API key混入、Discord設定、GitHub branch protection、runtime recovery、safety policyを確認し、`pass` / `warning` / `error` と次の対応を表示します。
 
 ### Agent Smoke
 
@@ -171,7 +174,7 @@ kairon review run REV-0001 --timeout-ms 120000
 
 指定した review loop の reviewer を設定から読み込み、公式CLI runnerへ投入します。reviewer の `outbox.json` に含まれる `review_result` を保存し、`minimum_score`、`block_on_severity`、`max_iterations` を使って quality gate を評価します。
 
-通過した場合は loop を `approved` にし、基準未満の場合は修正用の queue item を作成します。最大反復回数に達した場合は approval queue にエスカレーションします。実行結果は `.kairon/reviews/loops/` と `.kairon/reviews/results/` に残ります。
+通過した場合は loop を `approved` にし、基準未満の場合は修正用の queue item を作成します。最大反復回数に達した場合は approval queue にエスカレーションします。`commit_requested` かつreview承認済みで、対象runのdiff snapshotが存在する場合は `git.transaction` queue itemを作成します。実行結果は `.kairon/reviews/loops/` と `.kairon/reviews/results/` に残ります。
 
 ### 承認待ち確認と決定
 
@@ -207,15 +210,59 @@ kairon config apply CFG-YYYYMMDDHHMMSS-xxxxxxxx
 
 ```powershell
 kairon start
+kairon start --daemon --interval-ms 1000 --max-ticks 2
 ```
 
-runtime lock を取得し、現在のscheduleに基づいて runtime tick を1回実行します。
+runtime lock を取得し、現在のscheduleに基づいて runtime tick を実行します。`--daemon` を付けた場合はintervalごとに複数tickを実行し、heartbeatとdaemon logを `.kairon/runtime/daemon/` に残します。
 
 - `active_work`: ready queue item を処理します。
 - `standby_work`: command inboxを優先し、standby指定または承認済みの安全なqueue itemだけを処理します。
 - `maintenance`: 日次メンテナンスを同一日1回だけ実行し、重複時はskipします。
 
-実行結果は `.kairon/runtime/last-tick.json` に記録されます。現時点では24時間常駐daemonの完成版ではなく、runtime loopのschedule境界を検証可能にした段階です。
+実行結果は `.kairon/runtime/last-tick.json` に記録されます。daemon実行時は `--max-ticks`、`--max-idle-ticks`、`kairon stop` により停止できます。
+
+### Board
+
+```powershell
+kairon board export
+kairon board serve --host 127.0.0.1 --port 8787
+```
+
+approval、queue、run、review、recovery、cleanup、Discord decision auditをredaction済みのread-only projectionとして出力します。`serve` はloopback hostだけを許可し、既定では `http://127.0.0.1:8787/` でHTML dashboardと `projection.json` を提供します。
+
+### Cleanup proposal
+
+```powershell
+kairon cleanup list
+kairon cleanup show 2026-06-01
+kairon cleanup apply 2026-06-01 --dry-run
+kairon cleanup apply 2026-06-01
+kairon cleanup archive 2026-06-01
+```
+
+maintenanceが作成したcleanup proposalを確認し、review済み候補だけを `.kairon/tmp/cleanup-.../` へ移動またはarchiveします。protected pathはapply対象にしません。実行結果は `.kairon/cleanup/applied/` または `.kairon/cleanup/archived/` に残ります。
+
+### Runtime recovery
+
+```powershell
+kairon recovery run
+kairon recovery list
+kairon recovery show <target-id-or-fingerprint>
+kairon recovery resolve <target-id-or-fingerprint> --reason "手動確認済み"
+kairon recovery acknowledge <target-id-or-fingerprint> --reason "手動復旧する"
+```
+
+stale lock、expired claim、partial outbox、Discord gateway mid-state、Git transaction mid-stateを検出します。安全に再queue可能なものだけ自動処理し、ambiguousなものはapprovalへ回します。resolve / acknowledgeはfingerprint単位で記録され、同じtargetを未解決として残し続けないために使います。
+
+### RAG
+
+```powershell
+kairon rag refresh
+kairon rag status
+kairon rag query "approval routing" --type approval --limit 5
+```
+
+local lexical RAG indexを `.kairon/rag/index.json` に作成し、metadata filter付きで検索します。context builderは必要に応じてRAG検索結果をrun contextへ含めます。secret-like pathやprotected pathはindex対象から除外します。
 
 ### 状態確認
 
@@ -237,6 +284,7 @@ kairon leave
 
 ```powershell
 kairon maintenance run
+kairon maintenance run --build-rag
 ```
 
 次の artifact を作成します。
@@ -245,6 +293,9 @@ kairon maintenance run
 - `.kairon/sessions/YYYY-MM-DD/{agent}/handoff.json`
 - `.kairon/sessions/YYYY-MM-DD/{agent}/handoff.md`
 - `.kairon/cleanup/proposals/YYYY-MM-DD.json`
+- `.kairon/recovery/REC-*.json`
+- `.kairon/reports/next-day/YYYY-MM-DD.json`
+- `.kairon/rag/index.json` (`--build-rag` または `rag.json` 有効時)
 
 cleanup は直接削除せず、Morning Review で確認する proposal として作成されます。
 
@@ -291,6 +342,7 @@ CLI が見つからない場合、Kairon は該当 Agent を `setup_required` �
 6. `kairon maintenance run` を実行し、daily report、agent handoff、cleanup proposal が作られることを確認する。
 7. cleanup proposal が直接削除・直接移動をしていないことを確認する。
 8. merge / deploy / protected branch push が approval required のままになっていることを確認する。
+9. 必要に応じて `kairon board export` / `kairon board serve`、`kairon rag refresh`、`kairon recovery run`、`kairon cleanup apply --dry-run` を確認する。
 
 運用テストを再実行する場合は、harnessを使えます。
 
@@ -337,14 +389,16 @@ T11からT15では、初期ドッキング後の運用に必要なCLI経路を�
 | T14-01 | `kairon approval` | list/show/decide、redaction、approve/reject/request_changes/snooze、二重決定拒否、state反映 |
 | T15-01 | `kairon start` runtime tick | Active Work queue処理、Standby Work制限、承認済みitem処理、Maintenance 1日1回実行、`last-tick.json` 記録 |
 
-今回のT11-T15運用テスト対象外:
+T11-T15時点では対象外だったが、後続タスクで実装済みまたは一部実装済みになった範囲:
 
-- T12-03 persistent PTY session reuse
+- T12-03 persistent PTY / same-day session state
 - T12-04 usage limit / permission detector
 - T13-03 GitHub branch protection validation
-- T14-02 live Discord Gateway
-- T15-02 daily maintenance expansion
-- T15-03 backup / tmp proposal management
+- T14-02 live Discord Gateway / Discord decision audit
+- T15-02 daily maintenance expansion / next-day plan / RAG refresh
+- T15-03 backup / tmp proposal management / cleanup apply / archive
+- Board projection / loopback Board server
+- Runtime recovery target list / resolve / acknowledge
 
 ## 推奨する次の進め方
 
@@ -352,8 +406,8 @@ T11からT15では、初期ドッキング後の運用に必要なCLI経路を�
 2. `config/*.json` を確認
 3. `kairon start` / `kairon status` / `kairon leave` / `kairon stop` を確認
 4. `kairon maintenance run` で daily report / handoff / cleanup proposal を確認
-5. 実 CLI 接続と job 投入は、現在の runner 境界を使った小さい smoke から確認
-6. 不足を T11 以降のタスクとして切り出す
+5. 実 CLI 接続、review loop、Git transaction連携は小さい smoke から確認
+6. 不足は次の運用テスト結果から後続タスクとして切り出す
 
 ## 関連ドキュメント
 

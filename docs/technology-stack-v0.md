@@ -31,6 +31,7 @@ Node 24 LTS への移行は、実装が安定した段階で行う。
 | TS execution | `tsx` | dev 実行で build step を省ける |
 | TypeScript compiler | `typescript` | typecheck / build |
 | Discord | `discord.js` | Gateway / interaction / slash command を扱いやすい |
+| PTY | `node-pty` | persistent PTY / same-day sessionの実装境界 |
 
 ## Standard Library First
 
@@ -50,11 +51,11 @@ Git transaction と event 記録を Kairon 側で明示したいためである�
 
 | 用途 | 方針 |
 | --- | --- |
-| pty | `node-pty` は deferred。Windows native build の不確実性があるため、Session Host interface を先に固定する |
 | SQLite | deferred。MVP は file-based state |
 | LangGraph | deferred。Control Protocol 設計は残し、MVP は skeleton |
-| LangChain / RAG | deferred。placeholder interface のみ |
-| Board UI | deferred。MVP では Discord / file projection |
+| LangChain | deferred。MVP は外部chain runtimeを使わず、Kairon native workflowで進める |
+| Vector RAG | deferred。MVP は local lexical RAG index を実装済み |
+| Public Board UI | deferred。MVP は loopback read-only Board server を実装済み |
 
 ## package.json scripts
 
@@ -62,7 +63,7 @@ Git transaction と event 記録を Kairon 側で明示したいためである�
 {
   "scripts": {
     "kairon": "tsx src/cli/main.ts",
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -77,6 +78,7 @@ Git transaction と event 記録を Kairon 側で明示したいためである�
   "dependencies": {
     "commander": "^14.0.0",
     "discord.js": "^14.0.0",
+    "node-pty": "^1.1.0",
     "zod": "^4.0.0"
   },
   "devDependencies": {

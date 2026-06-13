@@ -321,9 +321,16 @@ T13-02 では次の最小実行境界を実装済み。
 - `commit_sha`、`parent_sha`、rollback metadata を transaction に記録する。
 - `allow_auto_push=false` または protected branch push は approval queue へ止める。
 
-未接続の範囲。
+T75 では Review Loop 承認後の runner 連携を追加済み。
 
-- `task run` から自動で Git transaction を開始する runtime wiring。
+- `commit_requested` な review loop が `approved` になった場合だけ `git.transaction` queue item を作成する。
+- 対象 implementation / fix run の `diff-snapshot.json` を読み、`diff_sha256` と `changed_files` を transaction payload へ渡す。
+- `git.transaction` queue id を review loop state、iteration artifact、task artifact に記録する。
+- 未承認、`commit_requested=false`、diff snapshotなしの場合は transaction を開始しない。
+- runtime loop は `git.transaction` queue item を既定handlerで処理できる。
+
+残る範囲。
+
 - 実 worktree での end-to-end smoke。
 - push 承認後の実 push resume。
 - rollback command の自動実行。

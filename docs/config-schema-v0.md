@@ -250,4 +250,4 @@
 - `policies.review.required_for_code` は true。
 - Discord は env が揃わない限り disabled でもよい。
 - Discord Gateway の詳細は `docs/discord-gateway-v0.md` に分離する。
-- RAG は placeholder disabled から開始してよい。
+- RAG は既定disabledで開始してよい。local lexical indexは `kairon rag refresh` または `kairon maintenance run --build-rag` で作成できる。
