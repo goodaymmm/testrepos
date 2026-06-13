@@ -336,6 +336,80 @@ describe("kairon-operation-test.ps1", () => {
     expect(JSON.stringify(summary)).not.toContain("secret-token-for-test");
     expect(JSON.stringify(summary)).not.toContain("444444444444444444");
   });
+
+  runIfPowerShell("records DiscordDecisionAuditLive optional when live decision times out", async () => {
+    const root = await createTempProject();
+    const kaironRoot = path.join(root, "kairon");
+    const targetRoot = path.join(root, "target");
+    const outputRoot = path.join(root, "results");
+    const binRoot = path.join(root, "bin");
+    const approvalId = "APR-T70-LIVE-TIMEOUT";
+    const staleApprovalPath = path.join(
+      targetRoot,
+      ".kairon",
+      "approvals",
+      "APR-STALE-PENDING.json"
+    );
+    await mkdir(kaironRoot, { recursive: true });
+    await mkdir(targetRoot, { recursive: true });
+    await mkdir(binRoot, { recursive: true });
+    await writeFakeKairon(binRoot);
+    await writeMinimalNotifications(targetRoot);
+    await mkdir(path.dirname(staleApprovalPath), { recursive: true });
+    await writeFile(
+      staleApprovalPath,
+      `${JSON.stringify({
+        schema_version: "0.1",
+        id: "APR-STALE-PENDING",
+        status: "pending",
+        title: "Stale pending approval"
+      })}\n`,
+      "utf8"
+    );
+
+    const result = runHarness(
+      kaironRoot,
+      targetRoot,
+      outputRoot,
+      "DiscordDecisionAuditLive",
+      {
+        ...process.env,
+        PATH: `${binRoot}${path.delimiter}${process.env.PATH ?? ""}`,
+        KAIRON_DISCORD_BOT_TOKEN: "secret-token-for-test",
+        KAIRON_DISCORD_APPLICATION_ID: "111111111111111111",
+        KAIRON_DISCORD_GUILD_ID: "222222222222222222",
+        KAIRON_DISCORD_APPROVAL_CHANNEL_ID: "333333333333333333",
+        KAIRON_DISCORD_OWNER_USER_ID: "444444444444444444",
+        KAIRON_DISCORD_ALLOWED_USER_IDS: "444444444444444444"
+      },
+      [
+        "-DiscordDecisionAuditApprovalId",
+        approvalId,
+        "-DiscordDecisionAuditExpectedAction",
+        "approve",
+        "-DiscordDecisionAuditTimeoutSeconds",
+        "1"
+      ]
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("[DISCORD_DECISION_AUDIT_LIVE] OPTIONAL");
+    expect(result.stdout).not.toContain("secret-token-for-test");
+    expect(result.stdout).not.toContain("444444444444444444");
+    const summary = await readSummaryFromStdout(result.stdout);
+    expect(summary.summary).toMatchObject({
+      optional: 1,
+      total: 1
+    });
+    expect(summary.results[0]).toMatchObject({
+      id: "DISCORD_DECISION_AUDIT_LIVE",
+      status: "OPTIONAL"
+    });
+    expect(summary.results[0].evidence).toContain("hidden_approval_count=1");
+    await expect(readFile(staleApprovalPath, "utf8")).resolves.toContain(
+      "APR-STALE-PENDING"
+    );
+  });
 });
 
 function findPowerShell(): string | undefined {

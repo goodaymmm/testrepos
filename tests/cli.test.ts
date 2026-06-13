@@ -84,7 +84,7 @@ describe("createProgram", () => {
       board?.commands
         .find((command) => command.name() === "serve")
         ?.options.map((option) => option.long)
-    ).toEqual(expect.arrayContaining(["--host", "--port", "--recent"]));
+    ).toEqual(expect.arrayContaining(["--host", "--port", "--recent", "--max-seconds"]));
   });
 
   it("registers cleanup proposal commands", () => {

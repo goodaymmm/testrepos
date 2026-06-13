@@ -186,8 +186,11 @@ export function createProgram(): Command {
     .option("--host <host>", "Loopback host. Defaults to 127.0.0.1.")
     .option("--port <port>", "Loopback port. Defaults to 8787.")
     .option("--recent <count>", "Number of recent items to include per section.")
-    .action(async (options: { host?: string; port?: string; recent?: string }) => {
+    .option("--max-seconds <seconds>", "Stop the board server automatically after this many seconds.")
+    .action(async (options: { host?: string; port?: string; recent?: string; maxSeconds?: string }) => {
       const server = await serveBoard(process.cwd(), options);
+      const maxSeconds = parseOptionalPositiveInteger(options.maxSeconds, "--max-seconds");
+      let timer: ReturnType<typeof setTimeout> | undefined;
       const stop = () => {
         void server.stop();
       };
@@ -195,7 +198,19 @@ export function createProgram(): Command {
       process.once("SIGINT", stop);
       process.once("SIGTERM", stop);
       console.log(formatBoardServeResult(server));
-      await server.waitUntilClosed();
+      try {
+        if (maxSeconds !== undefined) {
+          timer = setTimeout(stop, maxSeconds * 1000);
+        }
+
+        await server.waitUntilClosed();
+      } finally {
+        if (timer !== undefined) {
+          clearTimeout(timer);
+        }
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+      }
     });
 
   const cleanup = program
@@ -485,4 +500,20 @@ function parseOptionalNumber(value: string | undefined): number | undefined {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function parseOptionalPositiveInteger(
+  value: string | undefined,
+  optionName: string
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  if (Number.isInteger(parsed) && parsed > 0) {
+    return parsed;
+  }
+
+  throw new Error(`Invalid ${optionName}: ${value}`);
 }
