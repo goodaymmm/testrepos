@@ -12,6 +12,7 @@ export type AgentSessionAvailability = {
     | "busy"
     | "unavailable"
     | "missing_cli"
+    | "setup_required"
     | "permission_required"
     | "rate_limited"
     | "usage_limited";

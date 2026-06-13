@@ -294,6 +294,9 @@ export class CliSessionRunner {
       persona: request.persona,
       context_path: bundle.context_path,
       outbox_path: toProjectPath(this.projectRoot, outboxPath),
+      prompt_path: toProjectPath(this.projectRoot, paths.promptPath),
+      stdout_log: toProjectPath(this.projectRoot, paths.stdoutPath),
+      stderr_log: toProjectPath(this.projectRoot, paths.stderrPath),
       runner_metadata_path: toProjectPath(this.projectRoot, paths.runnerMetadataPath),
       status: "running",
       started_at: new Date().toISOString()
@@ -493,8 +496,16 @@ export class CliSessionRunner {
         persona: request.persona,
         context_path: bundle.context_path,
         outbox_path: toProjectPath(this.projectRoot, outboxPath),
+        prompt_path: toProjectPath(this.projectRoot, paths.promptPath),
+        stdout_log: toProjectPath(this.projectRoot, paths.stdoutPath),
+        stderr_log: toProjectPath(this.projectRoot, paths.stderrPath),
         runner_metadata_path: toProjectPath(this.projectRoot, paths.runnerMetadataPath),
         status: record?.status ?? "failed",
+        failure_reason: record?.failure_reason,
+        setup_action: record?.setup_action,
+        resume_hint: record?.resume_hint,
+        retry_after: record?.retry_after,
+        matched_pattern: record?.matched_pattern,
         started_at: record?.created_at,
         finished_at: record?.finished_at ?? new Date().toISOString()
       });
@@ -514,11 +525,19 @@ export class CliSessionRunner {
       persona: input.record.persona,
       context_path: input.bundle.context_path,
       outbox_path: input.record.outbox_path,
+      prompt_path: input.record.prompt_path,
+      stdout_log: input.record.stdout_log,
+      stderr_log: input.record.stderr_log,
       runner_metadata_path: toProjectPath(
         this.projectRoot,
         input.paths.runnerMetadataPath
       ),
       status: input.record.status,
+      failure_reason: input.record.failure_reason,
+      setup_action: input.record.setup_action,
+      resume_hint: input.record.resume_hint,
+      retry_after: input.record.retry_after,
+      matched_pattern: input.record.matched_pattern,
       started_at: input.record.created_at,
       finished_at: input.record.finished_at
     });

@@ -389,6 +389,48 @@ describe("CliSessionRunner", () => {
         }
       ]
     });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "sessions", "2026-05-25", "claude", "session.json"))
+    ).resolves.toMatchObject({
+      last_run_id: "RUN-0016",
+      last_status: "usage_limited",
+      last_prompt_path: ".kairon/runs/RUN-0016/stdin.md",
+      last_stdout_log: ".kairon/runs/RUN-0016/stdout.log",
+      last_stderr_log: ".kairon/runs/RUN-0016/stderr.log",
+      last_runner_metadata_path: ".kairon/runs/RUN-0016/runner.json",
+      pause: {
+        status: "usage_limited",
+        reason: "cli_usage_limited",
+        setup_action: expect.stringContaining("provider usage"),
+        resume_hint: expect.stringContaining("Pause this agent"),
+        run_id: "RUN-0016",
+        task_id: "TASK-0016"
+      }
+    });
+    await expect(
+      readJsonFile(
+        path.join(
+          root,
+          ".kairon",
+          "sessions",
+          "2026-05-25",
+          "claude",
+          "session_context_manifest.json"
+        )
+      )
+    ).resolves.toMatchObject({
+      latest_context_path: ".kairon/runs/RUN-0016/context.md",
+      runs: [
+        expect.objectContaining({
+          run_id: "RUN-0016",
+          status: "usage_limited",
+          prompt_path: ".kairon/runs/RUN-0016/stdin.md",
+          stdout_log: ".kairon/runs/RUN-0016/stdout.log",
+          stderr_log: ".kairon/runs/RUN-0016/stderr.log",
+          failure_reason: "cli_usage_limited"
+        })
+      ]
+    });
   });
 
   it("classifies permission prompts without auto-approval", async () => {
@@ -426,6 +468,43 @@ describe("CliSessionRunner", () => {
           }
         }
       ]
+    });
+  });
+
+  it("keeps login-required setup pauses in same-day session state", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) =>
+        commandResult(invocation, {
+          exitCode: 1,
+          stderr: "Error: login required. Please log in."
+        })
+    });
+
+    const record = await runner.runAgentJob({
+      agent: "codex",
+      date: "2026-05-25",
+      runId: "RUN-0017",
+      taskId: "TASK-0017",
+      persona: "smoke"
+    });
+
+    expect(record).toMatchObject({
+      status: "setup_required",
+      failure_reason: "cli_login_required",
+      setup_action: expect.stringContaining("codex login")
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "sessions", "2026-05-25", "codex", "session.json"))
+    ).resolves.toMatchObject({
+      last_status: "setup_required",
+      pause: expect.objectContaining({
+        status: "setup_required",
+        reason: "cli_login_required",
+        resume_hint: "Retry after CLI authentication has been completed."
+      })
     });
   });
 
