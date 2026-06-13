@@ -1,6 +1,9 @@
 import type {
   BoardApprovalSummary,
   BoardCleanupProposalSummary,
+  BoardDailyReportSummary,
+  BoardDiscordAuditSummary,
+  BoardDiscordDecisionAuditSummary,
   BoardProjection,
   BoardQueueItemSummary,
   BoardReviewLoopSummary,
@@ -18,18 +21,20 @@ export function renderBoardHtml(projection: BoardProjection): string {
   <title>Kairon Board</title>
   <style>
     :root { color-scheme: light; font-family: Arial, sans-serif; }
-    body { margin: 0; color: #202124; background: #f7f8fa; }
-    header { padding: 24px 32px; background: #ffffff; border-bottom: 1px solid #d9dee7; }
+    body { margin: 0; color: #202124; background: #f6f7f9; }
+    header { padding: 22px 32px 16px; background: #ffffff; border-bottom: 1px solid #d9dee7; }
     main { padding: 24px 32px 40px; display: grid; gap: 24px; }
     h1, h2 { margin: 0; }
     h1 { font-size: 28px; }
     h2 { font-size: 18px; }
     .meta { margin-top: 8px; color: #5f6673; font-size: 13px; }
+    nav { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 18px; font-size: 13px; }
     .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
     .stat, section { background: #ffffff; border: 1px solid #d9dee7; border-radius: 8px; }
     .stat { padding: 14px 16px; }
     .label { color: #5f6673; font-size: 12px; text-transform: uppercase; }
     .value { margin-top: 6px; font-size: 24px; font-weight: 700; }
+    .subvalue { margin-top: 4px; color: #5f6673; font-size: 12px; }
     section { overflow: hidden; }
     section h2 { padding: 16px 18px; border-bottom: 1px solid #e6e9ef; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -39,26 +44,44 @@ export function renderBoardHtml(projection: BoardProjection): string {
     a { color: #2457c5; text-decoration: none; }
     code { font-family: Consolas, monospace; font-size: 12px; }
     .empty { padding: 14px 18px; color: #5f6673; }
+    .section-group { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; }
   </style>
 </head>
 <body>
   <header>
     <h1>Kairon Board</h1>
-    <div class="meta">generated_at=${escapeHtml(projection.generated_at)} | projection=<a href="/projection.json">projection.json</a></div>
+    <div class="meta">generated_at=${escapeHtml(projection.generated_at)} | projection=<a href="/projection.json">projection.json</a> | <a href="/">refresh</a></div>
+    <nav>
+      <a href="#runtime">Runtime</a>
+      <a href="#recovery">Recovery</a>
+      <a href="#discord">Discord</a>
+      <a href="#maintenance">Maintenance</a>
+      <a href="#approvals">Approvals</a>
+      <a href="#queue">Queue</a>
+      <a href="#runs">Runs</a>
+      <a href="#reviews">Reviews</a>
+      <a href="#cleanup">Cleanup</a>
+    </nav>
   </header>
   <main>
     <div class="stats">
-      ${stat("Schedule", projection.runtime.schedule.mode)}
-      ${stat("Queue Ready", String(projection.queue.ready))}
-      ${stat("Approvals Pending", String(projection.approvals.pending))}
-      ${stat("Runs", String(projection.runs.total))}
-      ${stat("Tasks", String(projection.tasks.total))}
-      ${stat("Review Loops", String(projection.reviews.loops_total))}
+      ${stat("Schedule", projection.runtime.schedule.mode, `base=${projection.runtime.schedule.baseMode}`)}
+      ${stat("Runtime", projection.runtime.runtimeLock.locked ? "locked" : "idle", projection.runtime.runtimeLock.stale ? "stale=true" : undefined)}
+      ${stat("Queue Ready", String(projection.queue.ready), `failed=${projection.queue.failed}`)}
+      ${stat("Approvals", String(projection.approvals.pending), "pending")}
+      ${stat("Recovery", String(projection.runtime.recovery.targets), "targets")}
+      ${stat("Discord", projection.discord.gateway?.status ?? "unknown", `audit=${projection.discord.notifications.total}/${projection.discord.decisions.total}`)}
     </div>
-    ${renderTasks(projection.tasks.recent)}
-    ${renderQueue(projection.queue.recent)}
+    <div class="section-group">
+      ${renderRuntime(projection)}
+      ${renderRecovery(projection)}
+      ${renderMaintenance(projection.maintenance.latest_daily_report)}
+    </div>
+    ${renderDiscord(projection.discord.notifications, projection.discord.decisions)}
     ${renderApprovals(projection.approvals.recent)}
+    ${renderQueue(projection.queue.recent)}
     ${renderRuns(projection.runs.recent)}
+    ${renderTasks(projection.tasks.recent)}
     ${renderReviews(projection.reviews.recent_loops, projection.reviews.recent_results)}
     ${renderCleanup(projection.cleanup.recent)}
   </main>
@@ -66,8 +89,106 @@ export function renderBoardHtml(projection: BoardProjection): string {
 </html>`;
 }
 
-function stat(label: string, value: string): string {
-  return `<div class="stat"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div></div>`;
+function stat(label: string, value: string, subvalue?: string): string {
+  return `<div class="stat"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div>${subvalue === undefined ? "" : `<div class="subvalue">${escapeHtml(subvalue)}</div>`}</div>`;
+}
+
+function renderRuntime(projection: BoardProjection): string {
+  return section(
+    "Runtime",
+    ["Key", "Value"],
+    [
+      ["schedule.mode", text(projection.runtime.schedule.mode)],
+      ["schedule.activeWorkClosed", text(String(projection.runtime.schedule.activeWorkClosed))],
+      ["runtime.locked", text(String(projection.runtime.runtimeLock.locked))],
+      ["runtime.mode", text(projection.runtime.runtimeLock.mode)],
+      ["runtime.heartbeatAt", text(projection.runtime.runtimeLock.heartbeat_at)],
+      ["runtime.tickCount", text(optionalNumber(projection.runtime.runtimeLock.tick_count))],
+      ["runtime.nextTickAt", text(projection.runtime.runtimeLock.next_tick_at)],
+      ["sessions.ready", text(optionalNumber(projection.runtime.sessions?.ready))]
+    ].map(([key, value]) => [code(key), value]),
+    "runtime"
+  );
+}
+
+function renderRecovery(projection: BoardProjection): string {
+  const recovery = projection.runtime.recovery;
+  return section(
+    "Recovery",
+    ["Key", "Count"],
+    [
+      ["targets", recovery.targets],
+      ["staleLocks", recovery.stale_locks],
+      ["expiredClaims", recovery.expired_claims],
+      ["runIssues", recovery.run_issues],
+      ["gatewayIssues", recovery.gateway_issues],
+      ["gitTransactionIssues", recovery.git_transaction_issues],
+      ["resolvedTargets", recovery.resolved_targets]
+    ].map(([key, value]) => [code(String(key)), text(String(value))]),
+    "recovery"
+  );
+}
+
+function renderMaintenance(report: BoardDailyReportSummary | undefined): string {
+  if (report === undefined) {
+    return section("Maintenance", ["Key", "Value"], [], "maintenance");
+  }
+
+  return section(
+    "Maintenance",
+    ["Key", "Value"],
+    [
+      ["date", text(report.date)],
+      ["report", code(report.report_path)],
+      ["completedRuns", text(optionalNumber(report.completed_runs))],
+      ["failedRuns", text(optionalNumber(report.failed_runs))],
+      ["setupRequiredRuns", text(optionalNumber(report.setup_required_runs))],
+      ["pendingApprovals", text(optionalNumber(report.pending_approvals))],
+      ["failedNotifications", text(optionalNumber(report.failed_notifications))]
+    ].map(([key, value]) => [code(String(key)), value]),
+    "maintenance"
+  );
+}
+
+function renderDiscord(
+  notifications: BoardDiscordAuditSummary,
+  decisions: BoardDiscordDecisionAuditSummary
+): string {
+  const summaryRows = [
+    ["notifications.total", notifications.total],
+    ...Object.entries(notifications.by_status).map(([status, count]) => [
+      `notifications.${status}`,
+      count
+    ]),
+    ["decisions.total", decisions.total],
+    ...Object.entries(decisions.by_status).map(([status, count]) => [
+      `decisions.status.${status}`,
+      count
+    ]),
+    ...Object.entries(decisions.by_decision).map(([decision, count]) => [
+      `decisions.action.${decision}`,
+      count
+    ])
+  ].map(([key, value]) => [code(String(key)), text(String(value))]);
+
+  const notificationRows = notifications.recent.map((record) => [
+    text(record.approval_id),
+    text(record.status),
+    text(record.reason),
+    text(record.recorded_at ?? record.updated_at ?? record.sent_at)
+  ]);
+  const decisionRows = decisions.recent.map((record) => [
+    text(record.approval_id),
+    text(record.decision),
+    text(record.status),
+    text(record.actor_hash),
+    text(record.message_update_status),
+    text(record.recorded_at)
+  ]);
+
+  return `<div id="discord">${section("Discord Summary", ["Key", "Value"], summaryRows)}
+${section("Discord Notification Audit", ["Approval", "Status", "Reason", "Recorded"], notificationRows)}
+${section("Discord Decision Audit", ["Approval", "Decision", "Status", "Actor", "Message", "Recorded"], decisionRows)}</div>`;
 }
 
 function renderTasks(tasks: BoardTaskSummary[]): string {
@@ -95,7 +216,8 @@ function renderQueue(items: BoardQueueItemSummary[]): string {
       text(item.task_id),
       text(String(item.attempts)),
       text(item.updated_at ?? item.created_at)
-    ])
+    ]),
+    "queue"
   );
 }
 
@@ -110,7 +232,8 @@ function renderApprovals(approvals: BoardApprovalSummary[]): string {
       text(approval.title),
       text(approval.task_id),
       text(approval.updated_at ?? approval.created_at)
-    ])
+    ]),
+    "approvals"
   );
 }
 
@@ -125,7 +248,8 @@ function renderRuns(runs: BoardRunSummary[]): string {
       text(run.status ?? run.outbox_status),
       text(run.exit_code === undefined ? undefined : String(run.exit_code)),
       text(run.finished_at ?? run.created_at)
-    ])
+    ]),
+    "runs"
   );
 }
 
@@ -149,8 +273,8 @@ function renderReviews(
     text(result.created_at)
   ]);
 
-  return `${section("Review Loops", ["Loop", "Task", "Status", "Iteration", "Updated"], loopRows)}
-${section("Review Results", ["Review", "Run", "Status", "Score", "Highest Severity", "Created"], resultRows)}`;
+  return `<div id="reviews">${section("Review Loops", ["Loop", "Task", "Status", "Iteration", "Updated"], loopRows)}
+${section("Review Results", ["Review", "Run", "Status", "Score", "Highest Severity", "Created"], resultRows)}</div>`;
 }
 
 function renderCleanup(proposals: BoardCleanupProposalSummary[]): string {
@@ -162,16 +286,18 @@ function renderCleanup(proposals: BoardCleanupProposalSummary[]): string {
       text(String(proposal.candidate_count)),
       text(String(proposal.direct_delete ?? false)),
       text(proposal.created_at)
-    ])
+    ]),
+    "cleanup"
   );
 }
 
-function section(title: string, headers: string[], rows: string[][]): string {
+function section(title: string, headers: string[], rows: string[][], id?: string): string {
+  const idAttribute = id === undefined ? "" : ` id="${escapeAttribute(id)}"`;
   if (rows.length === 0) {
-    return `<section><h2>${escapeHtml(title)}</h2><div class="empty">No items</div></section>`;
+    return `<section${idAttribute}><h2>${escapeHtml(title)}</h2><div class="empty">No items</div></section>`;
   }
 
-  return `<section><h2>${escapeHtml(title)}</h2><table><thead><tr>${headers
+  return `<section${idAttribute}><h2>${escapeHtml(title)}</h2><table><thead><tr>${headers
     .map((header) => `<th>${escapeHtml(header)}</th>`)
     .join("")}</tr></thead><tbody>${rows
     .map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`)
@@ -184,6 +310,10 @@ function text(value: string | undefined): string {
 
 function code(value: string | undefined): string {
   return `<code>${escapeHtml(value ?? "-")}</code>`;
+}
+
+function optionalNumber(value: number | undefined): string | undefined {
+  return value === undefined ? undefined : String(value);
 }
 
 function approvalAnchor(approvalId: string): string {

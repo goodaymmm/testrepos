@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { renderBoardHtml } from "../src/board/html.js";
@@ -56,6 +56,34 @@ describe("board projection", () => {
       },
       cleanup: {
         proposals_total: 1
+      },
+      maintenance: {
+        daily_reports_total: 1,
+        latest_daily_report: {
+          date: "2026-06-01",
+          failed_runs: 1
+        }
+      },
+      discord: {
+        gateway: {
+          status: "ready"
+        },
+        notifications: {
+          total: 2,
+          by_status: {
+            sent: 1,
+            failed: 1
+          }
+        },
+        decisions: {
+          total: 1,
+          by_status: {
+            applied: 1
+          },
+          by_decision: {
+            approve: 1
+          }
+        }
       }
     });
     expect(projection.queue.recent[0]).toMatchObject({
@@ -76,9 +104,21 @@ describe("board projection", () => {
       title: "Deploy approval"
     });
     expect(projection.approvals.recent[0]).not.toHaveProperty("diff");
+    expect(projection.discord.notifications.recent[0]).toMatchObject({
+      approval_id: "APR-0001",
+      status: "failed",
+      reason: "token=[redacted] failed"
+    });
+    expect(projection.discord.decisions.recent[0]).toMatchObject({
+      approval_id: "APR-0001",
+      decision: "approve",
+      actor_hash: "abcdef1234567890",
+      message_update_status: "updated"
+    });
 
     const serialized = JSON.stringify(projection);
     expect(serialized).not.toContain("SHOULD_NOT_LEAK");
+    expect(serialized).not.toContain("SHOULD_NOT_BE_EXPOSED");
     expect(serialized).not.toContain("FULL_DIFF_SHOULD_NOT_APPEAR");
     expect(serialized).not.toContain("FULL_STDOUT_SHOULD_NOT_APPEAR");
 
@@ -117,12 +157,21 @@ describe("board projection", () => {
     const html = renderBoardHtml(projection);
 
     expect(html).toContain("<title>Kairon Board</title>");
+    expect(html).toContain('href="#runtime"');
+    expect(html).toContain('id="runtime"');
+    expect(html).toContain('id="recovery"');
+    expect(html).toContain('id="maintenance"');
+    expect(html).toContain('id="discord"');
     expect(html).toContain('id="approval-APR-0001"');
     expect(html).toContain('href="#approval-APR-0001"');
+    expect(html).toContain("Discord Summary");
+    expect(html).toContain("Discord Decision Audit");
+    expect(html).toContain("failedRuns");
     expect(html).toContain("/projection.json");
     expect(html).not.toContain("FULL_DIFF_SHOULD_NOT_APPEAR");
     expect(html).not.toContain("FULL_STDOUT_SHOULD_NOT_APPEAR");
     expect(html).not.toContain("SHOULD_NOT_LEAK");
+    expect(html).not.toContain("SHOULD_NOT_BE_EXPOSED");
   });
 
   it("serves the board on loopback only", async () => {
@@ -270,6 +319,69 @@ async function seedBoardArtifacts(root: string): Promise<void> {
       direct_delete: false,
       candidates: [{ id: "CLEAN-001", path: "dist" }],
       created_at: "2026-06-01T00:07:00.000Z"
+    }
+  );
+
+  await writeJsonFileAtomic(
+    path.join(root, ".kairon", "runtime", "discord", "gateway.json"),
+    {
+      schema_version: "0.1",
+      status: "ready",
+      commands_registered: true,
+      updated_at: "2026-06-01T00:08:00.000Z"
+    }
+  );
+  await writeFile(
+    path.join(root, ".kairon", "runtime", "discord", "approval-notifications.jsonl"),
+    [
+      JSON.stringify({
+        schema_version: "0.1",
+        approval_id: "APR-0001",
+        status: "sent",
+        channel_id: "SHOULD_NOT_BE_EXPOSED",
+        message_id: "SHOULD_NOT_BE_EXPOSED",
+        recorded_at: "2026-06-01T00:09:00.000Z"
+      }),
+      JSON.stringify({
+        schema_version: "0.1",
+        approval_id: "APR-0001",
+        status: "failed",
+        reason: "token=SHOULD_NOT_LEAK failed",
+        channel_id: "SHOULD_NOT_BE_EXPOSED",
+        message_id: "SHOULD_NOT_BE_EXPOSED",
+        recorded_at: "2026-06-01T00:10:00.000Z"
+      })
+    ].join("\n") + "\n",
+    "utf8"
+  );
+  await writeFile(
+    path.join(root, ".kairon", "runtime", "discord", "decision-interactions.jsonl"),
+    `${JSON.stringify({
+      schema_version: "0.1",
+      approval_id: "APR-0001",
+      decision: "approve",
+      status: "applied",
+      actor_hash: "abcdef1234567890",
+      actor_id: "SHOULD_NOT_BE_EXPOSED",
+      message_update_status: "updated",
+      recorded_at: "2026-06-01T00:11:00.000Z"
+    })}\n`,
+    "utf8"
+  );
+  await writeJsonFileAtomic(
+    path.join(root, ".kairon", "reports", "daily", "2026-06-01.json"),
+    {
+      schema_version: "0.1",
+      date: "2026-06-01",
+      report_path: ".kairon/reports/daily/2026-06-01.json",
+      summary: {
+        completed_runs: 3,
+        failed_runs: 1,
+        setup_required_runs: 0,
+        pending_approvals: 1,
+        failed_notifications: 1
+      },
+      created_at: "2026-06-01T00:12:00.000Z"
     }
   );
 }
