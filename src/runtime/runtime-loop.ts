@@ -546,7 +546,8 @@ function summarizeReviewRun(
     next_action: result.next_action.action,
     review_run_ids: result.review_run_ids,
     review_result_ids: result.review_result_ids,
-    iteration_path: result.iteration_path
+    iteration_path: result.iteration_path,
+    git_transaction_queue_item_id: result.git_transaction_queue_item_id
   };
 }
 

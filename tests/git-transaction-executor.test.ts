@@ -43,6 +43,14 @@ describe("GitTransactionExecutor", () => {
       base_sha: "base-sha",
       parent_sha: "parent-sha",
       commit_sha: "commit-sha",
+      changed_files: [
+        {
+          path: "src/example.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 0
+        }
+      ],
       push: {
         requested: false,
         allowed: false,
