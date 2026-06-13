@@ -46,6 +46,7 @@ describe("startRuntime", () => {
     expect(text).toContain("Kairon runtime daemon stopped.");
     expect(text).toContain("runtime.daemon.ticks=2");
     expect(text).toContain("runtime.daemon.stopReason=max_ticks");
+    expect(text).toContain("runtime.daemon.log=.kairon/runtime/daemon/");
     await expect(readRuntimeLockStatus(root)).resolves.toMatchObject({
       locked: false
     });

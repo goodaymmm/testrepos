@@ -18,6 +18,15 @@ export type RuntimeStatus = {
     mode?: string;
     heartbeat_at?: string;
     stop_requested?: boolean;
+    tick_count?: number;
+    idle_count?: number;
+    last_action?: string;
+    next_tick_at?: string;
+    last_error?: {
+      code?: string;
+      message: string;
+      at: string;
+    };
   };
   queue: {
     ready: number;
@@ -76,7 +85,12 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
           owner: lock.data.owner,
           mode: lock.data.mode,
           heartbeat_at: lock.data.heartbeat_at,
-          stop_requested: lock.data.stop_requested
+          stop_requested: lock.data.stop_requested,
+          tick_count: lock.data.tick_count,
+          idle_count: lock.data.idle_count,
+          last_action: lock.data.last_action,
+          next_tick_at: lock.data.next_tick_at,
+          last_error: lock.data.last_error
         }
       : { locked: false },
     queue: {
@@ -109,6 +123,26 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
     status.runtimeLock.stop_requested === undefined
       ? null
       : `runtime.stopRequested=${status.runtimeLock.stop_requested}`,
+    status.runtimeLock.tick_count === undefined
+      ? null
+      : `runtime.tickCount=${status.runtimeLock.tick_count}`,
+    status.runtimeLock.idle_count === undefined
+      ? null
+      : `runtime.idleCount=${status.runtimeLock.idle_count}`,
+    status.runtimeLock.last_action === undefined
+      ? null
+      : `runtime.lastAction=${status.runtimeLock.last_action}`,
+    status.runtimeLock.next_tick_at === undefined
+      ? null
+      : `runtime.nextTickAt=${status.runtimeLock.next_tick_at}`,
+    status.runtimeLock.last_error?.code === undefined
+      ? null
+      : `runtime.lastErrorCode=${sanitizeStatusText(status.runtimeLock.last_error.code)}`,
+    status.runtimeLock.last_error?.message === undefined
+      ? null
+      : `runtime.lastErrorMessage=${sanitizeStatusText(
+          status.runtimeLock.last_error.message
+        )}`,
     `queue.ready=${status.queue.ready}`,
     `queue.claimed=${status.queue.claimed}`,
     `queue.failed=${status.queue.failed}`,

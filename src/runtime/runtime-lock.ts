@@ -12,6 +12,15 @@ export type RuntimeLockData = LockFileData & {
   updated_at?: string;
   stop_requested?: boolean;
   stop_requested_at?: string;
+  tick_count?: number;
+  idle_count?: number;
+  last_action?: string;
+  next_tick_at?: string;
+  last_error?: {
+    code?: string;
+    message: string;
+    at: string;
+  };
 };
 
 export type RuntimeLockStatus =
@@ -92,7 +101,15 @@ export async function readRuntimeLockStatus(
 
 export async function refreshRuntimeHeartbeat(
   projectRoot: string,
-  options: { now?: Date; ttlMs?: number } = {}
+  options: {
+    now?: Date;
+    ttlMs?: number;
+    tickCount?: number;
+    idleCount?: number;
+    lastAction?: string;
+    nextTickAt?: string | null;
+    lastError?: RuntimeLockData["last_error"] | null;
+  } = {}
 ): Promise<RuntimeLockData> {
   const status = await readRuntimeLockStatus(projectRoot);
   if (!status.locked) {
@@ -107,6 +124,31 @@ export async function refreshRuntimeHeartbeat(
     updated_at: now.toISOString(),
     expires_at: new Date(now.getTime() + ttlMs).toISOString()
   };
+
+  if (options.tickCount !== undefined) {
+    data.tick_count = options.tickCount;
+  }
+  if (options.idleCount !== undefined) {
+    data.idle_count = options.idleCount;
+  }
+  if (options.lastAction !== undefined) {
+    data.last_action = options.lastAction;
+  }
+  if (options.nextTickAt !== undefined) {
+    if (options.nextTickAt === null) {
+      delete data.next_tick_at;
+    } else {
+      data.next_tick_at = options.nextTickAt;
+    }
+  }
+  if (options.lastError !== undefined) {
+    if (options.lastError === null) {
+      delete data.last_error;
+    } else {
+      data.last_error = options.lastError;
+    }
+  }
+
   await writeRuntimeLockData(projectRoot, data);
   return data;
 }
