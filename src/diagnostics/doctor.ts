@@ -611,7 +611,8 @@ async function checkRuntimeRecovery(projectRoot: string): Promise<DoctorCheck> {
     `expired_claims=${recovery.summary.expired_claims}`,
     `run_issues=${recovery.summary.run_issues}`,
     `gateway_issues=${recovery.summary.gateway_issues}`,
-    `git_transaction_issues=${recovery.summary.git_transaction_issues}`
+    `git_transaction_issues=${recovery.summary.git_transaction_issues}`,
+    `resolved_targets=${recovery.summary.resolved_targets}`
   ];
 
   if (recovery.summary.targets === 0) {

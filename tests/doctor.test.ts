@@ -370,6 +370,7 @@ describe("runDoctor", () => {
     expect(statusById(result, "runtime.recovery")).toBe("warning");
     expect(checkById(result, "runtime.recovery")?.details).toContain("targets=1");
     expect(checkById(result, "runtime.recovery")?.details).toContain("stale_locks=1");
+    expect(checkById(result, "runtime.recovery")?.details).toContain("resolved_targets=0");
     expect(checkById(result, "runtime.recovery")?.nextAction).toBe(
       "Run kairon recovery run and review any generated approval requests."
     );

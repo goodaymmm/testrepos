@@ -22,6 +22,27 @@ export type RuntimeRecoveryOptions = {
   writeNoopArtifact?: boolean;
 };
 
+export type RuntimeRecoveryResolutionAction = "resolved" | "acknowledged";
+
+export type RuntimeRecoveryResolution = {
+  schema_version: "0.1";
+  fingerprint: string;
+  target_id: string;
+  target_type: RuntimeRecoveryIssue["target_type"];
+  issue_kind: RuntimeRecoveryIssue["kind"];
+  severity: RuntimeRecoveryIssue["severity"];
+  action: RuntimeRecoveryResolutionAction;
+  reason: string;
+  created_at: string;
+  issue: RuntimeRecoveryIssue;
+  resolved_by?: {
+    source: "local-cli";
+  };
+  acknowledged_by?: {
+    source: "local-cli";
+  };
+};
+
 export type RuntimeRecoveryResult = {
   schema_version: "0.1";
   recovery_id: string;
@@ -51,6 +72,7 @@ export type RuntimeRecoveryInspection = {
     run_issues: number;
     gateway_issues: number;
     git_transaction_issues: number;
+    resolved_targets: number;
   };
   issues: RuntimeRecoveryIssue[];
 };
@@ -84,6 +106,7 @@ export type RuntimeRecoveryAction =
     };
 
 export type RuntimeRecoveryIssue = {
+  fingerprint: string;
   kind:
     | "stale_lock"
     | "claimed_timeout"
@@ -109,6 +132,8 @@ export type RuntimeRecoveryIssue = {
   transaction_id?: string;
   transaction_status?: string;
 };
+
+type RuntimeRecoveryIssueInput = Omit<RuntimeRecoveryIssue, "fingerprint">;
 
 type RunnerMetadata = {
   run_id?: string;
@@ -159,6 +184,7 @@ export async function runRuntimeRecovery(
   const queueItems = await queue.list();
   const runs = await readRunnerMetadata(projectRoot);
   const gitTransactions = await readGitTransactions(projectRoot);
+  const resolvedFingerprints = await readResolvedRecoveryFingerprints(projectRoot);
 
   const staleLockAction = await recoverStaleRuntimeLock(projectRoot, now, options);
   if (staleLockAction !== null) {
@@ -189,21 +215,27 @@ export async function runRuntimeRecovery(
       continue;
     }
 
-    actions.push(
-      await requestRecoveryApproval(projectRoot, {
-        kind: "claimed_timeout",
-        target_id: item.id,
-        target_type: "queue_item",
-        item_type: item.type,
-        task_id: item.task_id,
-        severity: "high",
-        reason: "Expired claimed item may have side effects and requires manual recovery approval."
-      })
-    );
+    const issue = createRecoveryIssue({
+      kind: "claimed_timeout",
+      target_id: item.id,
+      target_type: "queue_item",
+      item_type: item.type,
+      task_id: item.task_id,
+      severity: "high",
+      reason: "Expired claimed item may have side effects and requires manual recovery approval."
+    });
+    if (resolvedFingerprints.has(issue.fingerprint)) {
+      continue;
+    }
+
+    actions.push(await requestRecoveryApproval(projectRoot, issue));
   }
 
   if (options.safeOnly !== true) {
     for (const issue of await findRunIssues(projectRoot, runs, now, options)) {
+      if (resolvedFingerprints.has(issue.fingerprint)) {
+        continue;
+      }
       actions.push(await requestRecoveryApproval(projectRoot, issue));
     }
   }
@@ -215,6 +247,9 @@ export async function runRuntimeRecovery(
 
   if (options.safeOnly !== true) {
     for (const issue of findStaleGitTransactionIssues(gitTransactions, now, options)) {
+      if (resolvedFingerprints.has(issue.fingerprint)) {
+        continue;
+      }
       actions.push(await requestRecoveryApproval(projectRoot, issue));
     }
   }
@@ -283,13 +318,13 @@ export async function inspectRuntimeRecoveryTargets(
   const issues: RuntimeRecoveryIssue[] = [];
 
   if (lock.locked && lock.stale) {
-    issues.push({
+    issues.push(createRecoveryIssue({
       kind: "stale_lock",
       target_id: "runtime-lock",
       target_type: "runtime_lock",
       severity: "medium",
       reason: "Runtime lock is stale and can be cleared before startup."
-    });
+    }));
   }
 
   for (const item of queueItems.filter((candidate) => candidate.status === "claimed")) {
@@ -297,7 +332,7 @@ export async function inspectRuntimeRecoveryTargets(
       continue;
     }
 
-    issues.push({
+    issues.push(createRecoveryIssue({
       kind: "claimed_timeout",
       target_id: item.id,
       target_type: "queue_item",
@@ -307,7 +342,7 @@ export async function inspectRuntimeRecoveryTargets(
       reason: isSafeToRequeue(item)
         ? "Expired non-code-producing queue claim can be safely requeued."
         : "Expired claimed item may have side effects and requires manual recovery approval."
-    });
+    }));
   }
 
   issues.push(...(await findRunIssues(projectRoot, runs, now, options)));
@@ -318,23 +353,103 @@ export async function inspectRuntimeRecoveryTargets(
   }
 
   issues.push(...findStaleGitTransactionIssues(gitTransactions, now, options));
+  const resolvedFingerprints = await readResolvedRecoveryFingerprints(projectRoot);
+  const unresolvedIssues = issues.filter(
+    (issue) => !resolvedFingerprints.has(issue.fingerprint)
+  );
+  const resolvedTargets = issues.length - unresolvedIssues.length;
 
   return {
     schema_version: "0.1",
     generated_at: now.toISOString(),
     summary: {
-      targets: issues.length,
-      stale_locks: issues.filter((issue) => issue.kind === "stale_lock").length,
-      expired_claims: issues.filter((issue) => issue.kind === "claimed_timeout").length,
-      run_issues: issues.filter((issue) =>
+      targets: unresolvedIssues.length,
+      stale_locks: unresolvedIssues.filter((issue) => issue.kind === "stale_lock").length,
+      expired_claims: unresolvedIssues.filter((issue) => issue.kind === "claimed_timeout").length,
+      run_issues: unresolvedIssues.filter((issue) =>
         ["running_runner", "missing_outbox", "partial_outbox"].includes(issue.kind)
       ).length,
-      gateway_issues: issues.filter((issue) => issue.kind === "discord_gateway_starting").length,
-      git_transaction_issues: issues.filter(
+      gateway_issues: unresolvedIssues.filter(
+        (issue) => issue.kind === "discord_gateway_starting"
+      ).length,
+      git_transaction_issues: unresolvedIssues.filter(
         (issue) => issue.kind === "git_transaction_mid_state"
-      ).length
+      ).length,
+      resolved_targets: resolvedTargets
     },
-    issues
+    issues: unresolvedIssues
+  };
+}
+
+export async function listRuntimeRecoveryTargets(
+  projectRoot: string,
+  options: RuntimeRecoveryOptions = {}
+): Promise<RuntimeRecoveryIssue[]> {
+  return (await inspectRuntimeRecoveryTargets(projectRoot, options)).issues;
+}
+
+export async function showRuntimeRecoveryTarget(
+  projectRoot: string,
+  targetIdOrFingerprint: string,
+  options: RuntimeRecoveryOptions = {}
+): Promise<RuntimeRecoveryIssue> {
+  const issue = (await listRuntimeRecoveryTargets(projectRoot, options)).find(
+    (candidate) =>
+      candidate.target_id === targetIdOrFingerprint ||
+      candidate.fingerprint === targetIdOrFingerprint
+  );
+
+  if (issue === undefined) {
+    throw new Error(`Runtime recovery target was not found: ${targetIdOrFingerprint}`);
+  }
+
+  return issue;
+}
+
+export async function resolveRuntimeRecoveryTarget(
+  projectRoot: string,
+  targetIdOrFingerprint: string,
+  options: {
+    action: RuntimeRecoveryResolutionAction;
+    reason: string;
+    now?: Date;
+  }
+): Promise<{
+  target: RuntimeRecoveryIssue;
+  resolution: RuntimeRecoveryResolution;
+  resolution_path: string;
+}> {
+  const reason = options.reason.trim();
+  if (reason.length === 0) {
+    throw new Error("Runtime recovery resolution reason is required.");
+  }
+
+  const target = await showRuntimeRecoveryTarget(projectRoot, targetIdOrFingerprint, {
+    now: options.now
+  });
+  const now = options.now ?? new Date();
+  const resolution: RuntimeRecoveryResolution = {
+    schema_version: "0.1",
+    fingerprint: target.fingerprint,
+    target_id: target.target_id,
+    target_type: target.target_type,
+    issue_kind: target.kind,
+    severity: target.severity,
+    action: options.action,
+    reason,
+    created_at: now.toISOString(),
+    issue: target,
+    ...(options.action === "resolved"
+      ? { resolved_by: { source: "local-cli" as const } }
+      : { acknowledged_by: { source: "local-cli" as const } })
+  };
+  const resolutionPath = recoveryResolutionPath(projectRoot, target.fingerprint);
+  await writeJsonFileAtomic(resolutionPath, resolution);
+
+  return {
+    target,
+    resolution,
+    resolution_path: toProjectPath(projectRoot, resolutionPath)
   };
 }
 
@@ -385,7 +500,7 @@ async function requestRecoveryApproval(
         type: recoveryApprovalType,
         title: `Runtime recovery required: ${issue.kind} ${issue.target_id}`,
         actions: ["approve", "reject", "request_changes", "snooze"],
-        recovery_fingerprint: recoveryFingerprint(issue),
+        recovery_fingerprint: issue.fingerprint,
         recovery_issue: issue
       }
     }
@@ -402,7 +517,7 @@ async function findExistingRecoveryApproval(
   projectRoot: string,
   issue: RuntimeRecoveryIssue
 ): Promise<string | undefined> {
-  const fingerprint = recoveryFingerprint(issue);
+  const fingerprint = issue.fingerprint;
   const approvals = await new ApprovalQueue(projectRoot).list({ status: "all" });
   return approvals.find((approval) =>
     approval.type === recoveryApprovalType &&
@@ -465,7 +580,7 @@ async function findRunIssues(
 
   for (const run of runs) {
     if (isRunnerStale(run, now, options.runnerStaleMs ?? defaultRunnerStaleMs)) {
-      issues.push({
+      issues.push(createRecoveryIssue({
         kind: "running_runner",
         target_id: run.run_id ?? run.directory_name,
         target_type: "run",
@@ -473,12 +588,12 @@ async function findRunIssues(
         task_id: run.metadata.task_id,
         severity: "high",
         reason: "Runner metadata is still running past the recovery threshold."
-      });
+      }));
     }
 
     const health = await readOutboxHealth(projectRoot, run);
     if (health.status === "missing" && run.metadata.status === "completed") {
-      issues.push({
+      issues.push(createRecoveryIssue({
         kind: "missing_outbox",
         target_id: run.run_id ?? run.directory_name,
         target_type: "run",
@@ -487,11 +602,11 @@ async function findRunIssues(
         severity: "medium",
         outbox_path: run.outbox_project_path,
         reason: health.reason
-      });
+      }));
     }
 
     if (health.status === "partial") {
-      issues.push({
+      issues.push(createRecoveryIssue({
         kind: "partial_outbox",
         target_id: run.run_id ?? run.directory_name,
         target_type: "run",
@@ -500,7 +615,7 @@ async function findRunIssues(
         severity: "high",
         outbox_path: run.outbox_project_path,
         reason: health.reason
-      });
+      }));
     }
   }
 
@@ -567,14 +682,14 @@ async function findStaleDiscordGatewayIssue(
   return {
     gateway,
     gateway_path: gatewayPath,
-    issue: {
+    issue: createRecoveryIssue({
       kind: "discord_gateway_starting",
       target_id: projectPath,
       target_type: "discord_gateway",
       severity: "medium",
       gateway_path: projectPath,
       reason: "Discord gateway artifact is stuck in starting state past the recovery threshold."
-    }
+    })
   };
 }
 
@@ -623,7 +738,7 @@ function findStaleGitTransactionIssues(
     const transactionId =
       record.transaction_id ?? file_name.replace(/\.json$/i, "");
     return [
-      {
+      createRecoveryIssue({
         kind: "git_transaction_mid_state",
         target_id: transactionId,
         target_type: "git_transaction",
@@ -634,7 +749,7 @@ function findStaleGitTransactionIssues(
         severity: ["committing", "pushing"].includes(record.status) ? "high" : "medium",
         reason:
           "Git transaction stopped in a mid-state and requires manual recovery to avoid duplicate commit or push."
-      } satisfies RuntimeRecoveryIssue
+      })
     ];
   });
 }
@@ -783,7 +898,41 @@ async function readOptionalJson<T>(filePath: string): Promise<T | null> {
   }
 }
 
-function recoveryFingerprint(issue: RuntimeRecoveryIssue): string {
+async function readResolvedRecoveryFingerprints(projectRoot: string): Promise<Set<string>> {
+  const resolutions = await readRecoveryResolutions(projectRoot);
+  return new Set(
+    resolutions
+      .filter((resolution) => ["resolved", "acknowledged"].includes(resolution.action))
+      .map((resolution) => resolution.fingerprint)
+  );
+}
+
+async function readRecoveryResolutions(projectRoot: string): Promise<RuntimeRecoveryResolution[]> {
+  const directoryPath = recoveryResolutionsDir(projectRoot);
+  const entries = await readDirectoryEntries(directoryPath);
+  const resolutions = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) =>
+        readJsonFile<RuntimeRecoveryResolution>(resolveInside(directoryPath, entry.name))
+      )
+  );
+
+  return resolutions.filter(
+    (resolution) =>
+      typeof resolution.fingerprint === "string" &&
+      (resolution.action === "resolved" || resolution.action === "acknowledged")
+  );
+}
+
+function createRecoveryIssue(issue: RuntimeRecoveryIssueInput): RuntimeRecoveryIssue {
+  return {
+    ...issue,
+    fingerprint: recoveryFingerprint(issue)
+  };
+}
+
+function recoveryFingerprint(issue: RuntimeRecoveryIssueInput): string {
   return `${issue.kind}:${issue.target_type}:${issue.target_id}`;
 }
 
@@ -793,6 +942,18 @@ function recoveryArtifactId(now: Date): string {
 
 function recoveryArtifactPath(projectRoot: string, recoveryId: string): string {
   return resolveInside(getKaironPaths(projectRoot).recoveryDir, `${recoveryId}.json`);
+}
+
+function recoveryResolutionPath(projectRoot: string, fingerprint: string): string {
+  return resolveInside(recoveryResolutionsDir(projectRoot), `${safeFileName(fingerprint)}.json`);
+}
+
+function recoveryResolutionsDir(projectRoot: string): string {
+  return resolveInside(getKaironPaths(projectRoot).recoveryDir, "resolutions");
+}
+
+function safeFileName(value: string): string {
+  return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
 function toProjectPath(projectRoot: string, filePath: string): string {

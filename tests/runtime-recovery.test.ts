@@ -2,9 +2,16 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeProject } from "../src/cli/commands/init.js";
-import { runRecovery } from "../src/cli/commands/recovery.js";
+import {
+  acknowledgeRecoveryTarget,
+  listRecoveryTargets,
+  resolveRecoveryTarget,
+  runRecovery,
+  showRecoveryTarget
+} from "../src/cli/commands/recovery.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import {
+  inspectRuntimeRecoveryTargets,
   runRuntimeRecovery,
   type RuntimeRecoveryResult
 } from "../src/recovery/runtime-recovery.js";
@@ -241,6 +248,115 @@ describe("runtime recovery", () => {
       "Kairon runtime recovery completed."
     );
   });
+
+  it("lists, shows, and resolves runtime recovery targets by stable fingerprint", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writePartialOutboxFixture(root);
+
+    await expect(listRecoveryTargets(root)).resolves.toContain("target_id=RUN-0001");
+    await expect(showRecoveryTarget(root, "RUN-0001")).resolves.toContain(
+      "kind=partial_outbox"
+    );
+    await expect(showRecoveryTarget(root, "RUN-0001")).resolves.not.toContain(
+      "SHOULD_NOT_LEAK"
+    );
+
+    const resolved = await resolveRecoveryTarget(root, "RUN-0001", {
+      reason: "manual outbox cleanup verified"
+    });
+    expect(resolved).toContain("Kairon recovery target resolved.");
+    expect(resolved).toContain(
+      "fingerprint=partial_outbox:run:RUN-0001"
+    );
+    await expect(
+      readJsonFile(
+        path.join(
+          root,
+          ".kairon",
+          "recovery",
+          "resolutions",
+          "partial_outbox-run-RUN-0001.json"
+        )
+      )
+    ).resolves.toMatchObject({
+      action: "resolved",
+      reason: "manual outbox cleanup verified",
+      fingerprint: "partial_outbox:run:RUN-0001",
+      issue: {
+        kind: "partial_outbox",
+        target_id: "RUN-0001"
+      }
+    });
+
+    const inspection = await inspectRuntimeRecoveryTargets(root);
+    expect(inspection.summary).toMatchObject({
+      targets: 0,
+      run_issues: 0,
+      resolved_targets: 1
+    });
+    await expect(listRecoveryTargets(root)).resolves.toBe(
+      "No Kairon recovery targets found."
+    );
+
+    const recovery = await runRuntimeRecovery(root, {
+      now: new Date("2026-06-01T00:02:00.000Z")
+    });
+    expect(recovery.summary.approvals_requested).toBe(0);
+  });
+
+  it("acknowledges runtime recovery targets without leaking transaction secrets", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "git", "transactions", "GTX-0001.json"),
+      {
+        schema_version: "0.1",
+        transaction_id: "GTX-0001",
+        task_id: "TASK-0001",
+        run_id: "RUN-0001",
+        status: "pushing",
+        updated_at: "2026-06-01T00:00:00.000Z",
+        api_token: "SHOULD_NOT_LEAK"
+      }
+    );
+
+    const acknowledged = await acknowledgeRecoveryTarget(root, "GTX-0001", {
+      reason: "operator will recover git transaction manually"
+    });
+
+    expect(acknowledged).toContain("Kairon recovery target acknowledged.");
+    expect(acknowledged).toContain(
+      "fingerprint=git_transaction_mid_state:git_transaction:GTX-0001"
+    );
+    const inspection = await inspectRuntimeRecoveryTargets(root, {
+      now: new Date("2026-06-01T00:20:00.000Z")
+    });
+    expect(inspection.summary.targets).toBe(0);
+    expect(inspection.summary.resolved_targets).toBe(1);
+    const serializedResolution = JSON.stringify(
+      await readJsonFile(
+        path.join(
+          root,
+          ".kairon",
+          "recovery",
+          "resolutions",
+          "git_transaction_mid_state-git_transaction-GTX-0001.json"
+        )
+      )
+    );
+    expect(serializedResolution).not.toContain("SHOULD_NOT_LEAK");
+  });
+
+  it("requires a reason before resolving runtime recovery targets", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writePartialOutboxFixture(root);
+
+    await expect(resolveRecoveryTarget(root, "RUN-0001", { reason: " " })).rejects.toThrow(
+      "Runtime recovery resolution reason is required."
+    );
+  });
 });
 
 async function readRecoveryArtifact(
@@ -248,4 +364,25 @@ async function readRecoveryArtifact(
   result: RuntimeRecoveryResult
 ): Promise<RuntimeRecoveryResult> {
   return readJsonFile(path.join(root, result.artifact_path));
+}
+
+async function writePartialOutboxFixture(root: string): Promise<void> {
+  const runDir = path.join(root, ".kairon", "runs", "RUN-0001");
+  await mkdir(runDir, { recursive: true });
+  await writeJsonFileAtomic(path.join(runDir, "runner.json"), {
+    schema_version: "0.1",
+    kind: "job",
+    status: "completed",
+    run_id: "RUN-0001",
+    task_id: "TASK-0001",
+    outbox_path: ".kairon/runs/RUN-0001/outbox.json",
+    created_at: "2026-06-01T00:00:00.000Z",
+    finished_at: "2026-06-01T00:01:00.000Z"
+  });
+  await writeJsonFileAtomic(path.join(runDir, "outbox.json"), {
+    schema_version: "0.1",
+    run_id: "RUN-0001",
+    api_token: "SHOULD_NOT_LEAK",
+    stdout: "FULL_STDOUT_SHOULD_NOT_APPEAR"
+  });
 }

@@ -238,6 +238,7 @@ export const kaironDirectories = [
   "runtime/terminals",
   "runtime/discord",
   "recovery",
+  "recovery/resolutions",
   "state",
   "rag",
   "board",
