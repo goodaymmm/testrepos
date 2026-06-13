@@ -13,6 +13,7 @@ import { StateApplier } from "../state/state-applier.js";
 import {
   compareSnapshotToStoredDiff,
   readDiffSnapshot,
+  type ChangedFile,
   type DiffSnapshot
 } from "./diff-snapshot.js";
 import {
@@ -74,6 +75,7 @@ export type GitTransactionRecord = {
   parent_sha?: string;
   commit_sha?: string;
   diff_sha256: string;
+  changed_files?: ChangedFile[];
   checks: GitTransactionCheck[];
   push: GitTransactionPush;
   rollback: GitRollbackMetadata;
@@ -549,6 +551,7 @@ function createInitialRecord(input: {
     base_branch: input.workspace.base_branch,
     base_sha: input.workspace.base_sha,
     diff_sha256: input.snapshot.diff_sha256,
+    changed_files: input.snapshot.changed_files,
     checks: [],
     push: {
       requested: input.request.pushRequested ?? false,

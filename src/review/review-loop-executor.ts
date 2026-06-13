@@ -16,6 +16,8 @@ import {
   type QualityGateDecision,
   type ReviewResult
 } from "./quality-gate.js";
+import { readDiffSnapshot, type ChangedFile } from "../git/diff-snapshot.js";
+import { WorkQueue } from "../queue/work-queue.js";
 import {
   ReviewLoopManager,
   type ReviewLoopState,
@@ -38,6 +40,7 @@ export type ReviewLoopExecutionResult = {
   iteration_path: string;
   decision: QualityGateDecision;
   next_action: ReviewNextAction;
+  git_transaction_queue_item_id?: string;
 };
 
 type ReviewOutbox = {
@@ -56,6 +59,8 @@ type ReviewResultReadOutcome =
       reviewer: AgentId;
       reason: string;
     };
+
+type GitTransactionQueueSummary = NonNullable<ReviewLoopState["git_transaction"]>;
 
 export class ReviewLoopExecutor {
   private readonly manager: ReviewLoopManager;
@@ -206,18 +211,27 @@ export class ReviewLoopExecutor {
 
     const decision = await this.manager.evaluate(reviewResults);
     const nextAction = await this.manager.nextAction(state, decision);
-    const nextState = updateLoopState(state, {
+    let nextState = updateLoopState(state, {
       reviewRunIds: reviewRuns.map((run) => run.runId),
       decision,
       nextAction,
       now: this.now()
     });
+    const gitTransaction = await this.maybeQueueGitTransaction(nextState, nextAction);
+    if (gitTransaction !== undefined) {
+      nextState = {
+        ...nextState,
+        git_transaction: gitTransaction,
+        updated_at: this.now().toISOString()
+      };
+    }
     await this.manager.saveLoopState(nextState);
     const artifactPath = await this.writeIterationArtifact(nextState, {
       reviewRunIds: reviewRuns.map((run) => run.runId),
       reviewResults,
       decision,
-      nextAction
+      nextAction,
+      gitTransaction
     });
 
     return {
@@ -229,7 +243,8 @@ export class ReviewLoopExecutor {
       review_result_ids: reviewResults.map((result) => result.review_id),
       iteration_path: artifactPath,
       decision,
-      next_action: nextAction
+      next_action: nextAction,
+      git_transaction_queue_item_id: gitTransaction?.queue_item_id
     };
   }
 
@@ -348,6 +363,7 @@ export class ReviewLoopExecutor {
       reviewResults: ReviewResult[];
       decision: QualityGateDecision;
       nextAction: ReviewNextAction;
+      gitTransaction?: GitTransactionQueueSummary;
     }
   ): Promise<string> {
     const artifactPath = resolveInside(
@@ -365,9 +381,91 @@ export class ReviewLoopExecutor {
       review_result_ids: input.reviewResults.map((result) => result.review_id),
       decision: input.decision,
       next_action: input.nextAction,
+      git_transaction: input.gitTransaction,
       created_at: this.now().toISOString()
     });
     return toProjectPath(this.projectRoot, artifactPath);
+  }
+
+  private async maybeQueueGitTransaction(
+    state: ReviewLoopState,
+    nextAction: ReviewNextAction
+  ): Promise<GitTransactionQueueSummary | undefined> {
+    if (
+      nextAction.action !== "approve" ||
+      state.commit_requested !== true ||
+      state.git_transaction !== undefined
+    ) {
+      return state.git_transaction;
+    }
+
+    const implementationRunId = latestImplementationRunId(state);
+    if (implementationRunId === undefined) {
+      return undefined;
+    }
+
+    const snapshot = await readOptionalDiffSnapshot(this.projectRoot, implementationRunId);
+    if (snapshot === undefined) {
+      return undefined;
+    }
+
+    const item = await new WorkQueue(this.projectRoot).enqueue({
+      type: "git.transaction",
+      task_id: state.task_id,
+      priority: 90,
+      payload: {
+        action: "commit",
+        run_id: implementationRunId,
+        agent: state.implementer,
+        review_loop_id: state.loop_id,
+        write_paths: writePathsFromChangedFiles(snapshot.changed_files),
+        push_requested: true,
+        diff_sha256: snapshot.diff_sha256,
+        changed_files: snapshot.changed_files
+      }
+    });
+
+    const summary: GitTransactionQueueSummary = {
+      status: "queued",
+      queue_item_id: item.id,
+      run_id: implementationRunId,
+      diff_sha256: snapshot.diff_sha256,
+      changed_files: snapshot.changed_files,
+      queued_at: item.created_at
+    };
+    await this.recordTaskGitTransaction(state, summary);
+    return summary;
+  }
+
+  private async recordTaskGitTransaction(
+    state: ReviewLoopState,
+    summary: GitTransactionQueueSummary
+  ): Promise<void> {
+    const taskPath = resolveInside(
+      getKaironPaths(this.projectRoot).tasksDir,
+      state.task_id,
+      "task.json"
+    );
+
+    try {
+      const task = await readJsonFile<Record<string, unknown>>(taskPath);
+      await writeJsonFileAtomic(taskPath, {
+        ...task,
+        git_transaction: {
+          status: summary.status,
+          queue_item_id: summary.queue_item_id,
+          run_id: summary.run_id,
+          review_loop_id: state.loop_id,
+          diff_sha256: summary.diff_sha256,
+          queued_at: summary.queued_at
+        },
+        updated_at: summary.queued_at
+      });
+    } catch (error) {
+      if (!String(error).includes("ENOENT")) {
+        throw error;
+      }
+    }
   }
 
   private now(): Date {
@@ -388,8 +486,13 @@ export function formatReviewLoopExecutionResult(
     `review_runs=${result.review_run_ids.join(",")}`,
     `review_results=${result.review_result_ids.join(",")}`,
     `iteration_artifact=${result.iteration_path}`,
+    result.git_transaction_queue_item_id === undefined
+      ? null
+      : `git_transaction_queue_item_id=${result.git_transaction_queue_item_id}`,
     ...result.decision.reasons.map((reason) => `reason=${reason}`)
-  ].join("\n");
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
 }
 
 function shouldRunReviews(state: ReviewLoopState): boolean {
@@ -397,6 +500,38 @@ function shouldRunReviews(state: ReviewLoopState): boolean {
     state.code_producing &&
     ["running", "changes_requested", "setup_required"].includes(state.status)
   );
+}
+
+async function readOptionalDiffSnapshot(
+  projectRoot: string,
+  runId: string
+): Promise<Awaited<ReturnType<typeof readDiffSnapshot>> | undefined> {
+  try {
+    return await readDiffSnapshot(projectRoot, runId);
+  } catch (error) {
+    if (String(error).includes("ENOENT")) {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+function latestImplementationRunId(state: ReviewLoopState): string | undefined {
+  return [...state.history]
+    .reverse()
+    .find((entry) => entry.type === "implementation" || entry.type === "fix")
+    ?.run_id;
+}
+
+function writePathsFromChangedFiles(changedFiles: ChangedFile[]): string[] {
+  return [
+    ...new Set(
+      changedFiles
+        .flatMap((file) => [file.path, file.previous_path])
+        .filter((value): value is string => value !== undefined && value.length > 0)
+    )
+  ];
 }
 
 function updateLoopState(

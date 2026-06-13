@@ -43,6 +43,16 @@ export type ReviewLoopState = {
   reviewers: AgentId[];
   integration?: string;
   code_producing: boolean;
+  commit_requested: boolean;
+  changed_files?: Array<Pick<ChangedFile, "path" | "status">>;
+  git_transaction?: {
+    status: "queued";
+    queue_item_id: string;
+    run_id: string;
+    diff_sha256: string;
+    changed_files: ChangedFile[];
+    queued_at: string;
+  };
   history: Array<{
     run_id: string;
     type: "implementation" | "review" | "fix" | "escalation";
@@ -140,6 +150,14 @@ export class ReviewLoopManager {
       reviewers,
       integration: selectReviewIntegration(request, policy),
       code_producing: codeProducing,
+      commit_requested: request.commitRequested ?? false,
+      changed_files:
+        request.changedFiles === undefined
+          ? undefined
+          : request.changedFiles.map((file) => ({
+              path: file.path,
+              status: file.status
+            })),
       history: [{ run_id: request.runId, type: "implementation" }],
       created_at: now,
       updated_at: now

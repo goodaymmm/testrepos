@@ -6,6 +6,7 @@ import type {
 } from "../src/agents/command-runner.js";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
+import { createDiffSnapshot } from "../src/git/diff-snapshot.js";
 import { WorkQueue } from "../src/queue/work-queue.js";
 import { ReviewLoopExecutor } from "../src/review/review-loop-executor.js";
 import { ReviewLoopManager } from "../src/review/review-loop-manager.js";
@@ -55,6 +56,106 @@ describe("ReviewLoopExecutor", () => {
     ).resolves.toMatchObject({
       status: "approved",
       history: expect.arrayContaining([{ run_id: "RUN-0002", type: "review" }])
+    });
+  });
+
+  it("queues a git transaction when a commit-requested reviewed diff is approved", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeJsonFileAtomic(path.join(root, ".kairon", "tasks", "TASK-0001", "task.json"), {
+      schema_version: "0.1",
+      id: "TASK-0001",
+      status: "ready",
+      title: "Commit reviewed change",
+      commit_requested: true,
+      code_producing: true,
+      created_at: "2026-05-26T00:00:00.000Z",
+      updated_at: "2026-05-26T00:00:00.000Z"
+    });
+    await createDiffSnapshot(root, {
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      branch: "auto/TASK-0001/codex",
+      baseSha: "base-sha",
+      diff: "diff --git a/src/example.ts b/src/example.ts\n+export const value = 1;\n",
+      changedFiles: [
+        {
+          path: "src/example.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 0
+        }
+      ]
+    });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true,
+      commitRequested: true,
+      changedFiles: [{ path: "src/example.ts", status: "modified" }]
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: reviewCommandRunner(root, {
+        status: "approved",
+        score: { overall: 0.95 },
+        findings: [],
+        tests_passed: true,
+        secret_scan_passed: true
+      })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "approved",
+      git_transaction_queue_item_id: "JOB-0001"
+    });
+    await expect(new WorkQueue(root).list("ready")).resolves.toMatchObject([
+      {
+        id: "JOB-0001",
+        type: "git.transaction",
+        task_id: "TASK-0001",
+        priority: 90,
+        payload: {
+          action: "commit",
+          run_id: "RUN-0001",
+          agent: "codex",
+          review_loop_id: loop.loop_id,
+          write_paths: ["src/example.ts"],
+          push_requested: true,
+          diff_sha256: expect.stringMatching(/^sha256:/),
+          changed_files: [
+            {
+              path: "src/example.ts",
+              status: "modified",
+              additions: 1,
+              deletions: 0
+            }
+          ]
+        }
+      }
+    ]);
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "reviews", "loops", `${loop.loop_id}.json`))
+    ).resolves.toMatchObject({
+      status: "approved",
+      commit_requested: true,
+      git_transaction: {
+        status: "queued",
+        queue_item_id: "JOB-0001",
+        run_id: "RUN-0001",
+        diff_sha256: expect.stringMatching(/^sha256:/)
+      }
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "tasks", "TASK-0001", "task.json"))
+    ).resolves.toMatchObject({
+      git_transaction: {
+        status: "queued",
+        queue_item_id: "JOB-0001",
+        review_loop_id: loop.loop_id
+      }
     });
   });
 
