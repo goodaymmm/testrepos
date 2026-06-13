@@ -31,6 +31,11 @@ import { closeActiveWork } from "./commands/leave.js";
 import { runMaintenance } from "./commands/maintenance.js";
 import { runMigrations } from "./commands/migrate.js";
 import {
+  queryRagIndexCommand,
+  refreshRagIndexCommand,
+  statusRagIndexCommand
+} from "./commands/rag.js";
+import {
   acknowledgeRecoveryTarget,
   listRecoveryTargets,
   resolveRecoveryTarget,
@@ -393,6 +398,42 @@ export function createProgram(): Command {
       console.log(
         await runMaintenance(process.cwd(), { buildRag: options.buildRag })
       );
+    });
+
+  const rag = program
+    .command("rag")
+    .description("Build, inspect, and query the local RAG index.");
+
+  rag
+    .command("refresh")
+    .description("Refresh the local RAG index.")
+    .action(async () => {
+      console.log(await refreshRagIndexCommand(process.cwd()));
+    });
+
+  rag
+    .command("status")
+    .description("Show local RAG index status.")
+    .action(async () => {
+      console.log(await statusRagIndexCommand(process.cwd()));
+    });
+
+  rag
+    .command("query")
+    .description("Query the local RAG index.")
+    .argument("<query>", "Search query.")
+    .option("--type <type>", "Source type filter, comma- or whitespace-separated.")
+    .option("--collection <collection>", "Collection filter, comma- or whitespace-separated.")
+    .option("--limit <count>", "Maximum matches to return. Defaults to 5.")
+    .option("--task-id <taskId>", "Task id filter.")
+    .option("--run-id <runId>", "Run id filter.")
+    .option("--approval-id <approvalId>", "Approval id filter.")
+    .option("--review-id <reviewId>", "Review result id filter.")
+    .option("--review-loop-id <reviewLoopId>", "Review loop id filter.")
+    .option("--date <date>", "Date filter in YYYY-MM-DD form.")
+    .option("--severity <severity>", "Severity filter.")
+    .action(async (query: string, options) => {
+      console.log(await queryRagIndexCommand(process.cwd(), query, options));
     });
 
   return program;

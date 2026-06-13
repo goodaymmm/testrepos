@@ -110,6 +110,17 @@ export type RagSearchRequest = {
   };
 };
 
+export type RagIndexStatus = {
+  schema_version: string;
+  enabled: boolean;
+  index_path: string;
+  exists: boolean;
+  source_count: number;
+  chunk_count: number;
+  created_at?: string;
+  updated_at?: string;
+};
+
 type RagConfig = {
   enabled?: boolean;
   storage?: {
@@ -254,6 +265,39 @@ export async function searchRagIndex(
 export async function isRagEnabled(projectRoot: string): Promise<boolean> {
   const config = await loadConfigFile<RagConfig>(projectRoot, "rag.json");
   return config.enabled === true;
+}
+
+export async function getRagIndexStatus(projectRoot: string): Promise<RagIndexStatus> {
+  const config = await loadConfigFile<RagConfig>(projectRoot, "rag.json");
+  const indexPath = ragIndexPath(projectRoot, config);
+
+  try {
+    await access(indexPath);
+    const index = await readJsonFile<RagIndex>(indexPath);
+    return {
+      schema_version: "0.1",
+      enabled: config.enabled === true,
+      index_path: toProjectPath(projectRoot, indexPath),
+      exists: true,
+      source_count: index.source_count,
+      chunk_count: index.chunk_count,
+      created_at: index.created_at,
+      updated_at: index.updated_at
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  return {
+    schema_version: "0.1",
+    enabled: config.enabled === true,
+    index_path: toProjectPath(projectRoot, indexPath),
+    exists: false,
+    source_count: 0,
+    chunk_count: 0
+  };
 }
 
 async function loadOrBuildIndex(projectRoot: string): Promise<RagIndex> {

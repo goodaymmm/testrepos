@@ -1,0 +1,218 @@
+import {
+  buildRagIndex,
+  getRagIndexStatus,
+  type RagCollection,
+  type RagSearchRequest,
+  searchRagIndex,
+  type RagSourceType
+} from "../../rag/lexical-index.js";
+
+export type RagQueryCommandOptions = {
+  type?: string;
+  collection?: string;
+  limit?: string;
+  taskId?: string;
+  runId?: string;
+  approvalId?: string;
+  reviewId?: string;
+  reviewLoopId?: string;
+  date?: string;
+  severity?: string;
+};
+
+const sourceTypes: RagSourceType[] = [
+  "rule",
+  "task_state",
+  "handoff",
+  "document",
+  "decision",
+  "review",
+  "approval",
+  "failure",
+  "daily_report",
+  "code_index"
+];
+
+const collections: RagCollection[] = [
+  "project_rules",
+  "task_state",
+  "code_index",
+  "decisions",
+  "reviews",
+  "approvals",
+  "failures",
+  "daily_reports",
+  "documents"
+];
+
+export async function refreshRagIndexCommand(projectRoot: string): Promise<string> {
+  const result = await buildRagIndex(projectRoot);
+  return [
+    "Kairon RAG index refreshed.",
+    `index=${result.index_path}`,
+    `sources=${result.source_count}`,
+    `chunks=${result.chunk_count}`,
+    `updated_at=${result.index.updated_at}`
+  ].join("\n");
+}
+
+export async function statusRagIndexCommand(projectRoot: string): Promise<string> {
+  const status = await getRagIndexStatus(projectRoot);
+  return [
+    "Kairon RAG status.",
+    `enabled=${status.enabled}`,
+    `index=${status.index_path}`,
+    `exists=${status.exists}`,
+    `sources=${status.source_count}`,
+    `chunks=${status.chunk_count}`,
+    ...(status.created_at === undefined ? [] : [`created_at=${status.created_at}`]),
+    ...(status.updated_at === undefined ? [] : [`updated_at=${status.updated_at}`])
+  ].join("\n");
+}
+
+export async function queryRagIndexCommand(
+  projectRoot: string,
+  query: string,
+  options: RagQueryCommandOptions
+): Promise<string> {
+  const request: RagSearchRequest = {
+    query,
+    topK: parseLimit(options.limit),
+    filters: buildFilters(options)
+  };
+  const results = await searchRagIndex(projectRoot, request);
+  const lines = ["Kairon RAG query completed.", `matches=${results.length}`];
+
+  for (const [index, result] of results.entries()) {
+    lines.push(
+      `[${index + 1}] score=${formatScore(result.score)}`,
+      `path=${result.path}`,
+      `source_type=${result.source_type}`,
+      `collection=${result.metadata.collection}`,
+      `hash=${result.content_hash}`,
+      ...formatMetadata(result.metadata),
+      `text=${formatExcerpt(result.text)}`
+    );
+  }
+
+  return lines.join("\n");
+}
+
+function buildFilters(options: RagQueryCommandOptions): RagSearchRequest["filters"] {
+  const filters: NonNullable<RagSearchRequest["filters"]> = {};
+  const sourceTypeFilter = parseEnumList(options.type, sourceTypes, "source type");
+  const collectionFilter = parseEnumList(options.collection, collections, "collection");
+
+  if (sourceTypeFilter !== undefined) {
+    filters.source_types = sourceTypeFilter;
+  }
+  if (collectionFilter !== undefined) {
+    filters.collections = collectionFilter;
+  }
+  if (options.taskId !== undefined) {
+    filters.task_id = options.taskId;
+  }
+  if (options.runId !== undefined) {
+    filters.run_id = options.runId;
+  }
+  if (options.approvalId !== undefined) {
+    filters.approval_id = options.approvalId;
+  }
+  if (options.reviewId !== undefined) {
+    filters.review_id = options.reviewId;
+  }
+  if (options.reviewLoopId !== undefined) {
+    filters.review_loop_id = options.reviewLoopId;
+  }
+  if (options.date !== undefined) {
+    filters.date = options.date;
+  }
+  if (options.severity !== undefined) {
+    filters.severity = options.severity.toLowerCase();
+  }
+
+  return Object.keys(filters).length === 0 ? undefined : filters;
+}
+
+function parseLimit(value: string | undefined): number {
+  if (value === undefined) {
+    return 5;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`Invalid RAG limit: ${value}`);
+  }
+
+  return parsed;
+}
+
+function parseEnumList<T extends string>(
+  value: string | undefined,
+  allowed: T[],
+  label: string
+): T[] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const items = value
+    .split(/[,\s]+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+
+  if (items.length === 0) {
+    return undefined;
+  }
+
+  for (const item of items) {
+    if (!allowed.includes(item as T)) {
+      throw new Error(
+        `Invalid RAG ${label}: ${item}. Allowed values: ${allowed.join(",")}`
+      );
+    }
+  }
+
+  return items as T[];
+}
+
+function formatScore(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(2);
+}
+
+function formatMetadata(metadata: Record<string, unknown>): string[] {
+  return [
+    "task_id",
+    "run_id",
+    "approval_id",
+    "review_id",
+    "review_loop_id",
+    "date",
+    "severity",
+    "status",
+    "agent",
+    "persona"
+  ].flatMap((key) => {
+    const value = metadata[key];
+    return typeof value === "string" && value.length > 0
+      ? [`metadata.${key}=${value}`]
+      : [];
+  });
+}
+
+function formatExcerpt(text: string): string {
+  const redacted = redactSecrets(text).replace(/\s+/g, " ").trim();
+  return redacted.length > 600 ? `${redacted.slice(0, 597)}...` : redacted;
+}
+
+function redactSecrets(value: string): string {
+  return value
+    .replace(
+      /"([^"]*(?:api[_-]?key|token|secret|password|authorization)[^"]*)"\s*:\s*"[^"]*"/giu,
+      (_match, key: string) => `"${key}":"[redacted]"`
+    )
+    .replace(
+      /\b(api[_-]?key|token|secret|password|authorization)\b\s*[:=]\s*[^\s"',}]+/giu,
+      "$1=[redacted]"
+    );
+}
