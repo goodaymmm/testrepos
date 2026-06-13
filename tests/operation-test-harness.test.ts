@@ -41,7 +41,11 @@ describe("kairon-operation-test.ps1", () => {
     expect(script).toContain("DiscordInvalidEnv");
     expect(script).toContain("DiscordSetupError");
     expect(script).toContain("ApprovalNotificationAudit");
+    expect(script).toContain("DiscordDecisionAuditLive");
     expect(script).toContain("RuntimeRecovery");
+    expect(script).toContain("DiscordDecisionAuditTimeoutSeconds");
+    expect(script).toContain("manual_action.required=true");
+    expect(script).toContain("decision.audit.record=found");
     expect(script).toContain("SETUP_REQUIRED");
     expect(script).toContain("OPTIONAL");
     expect(script).toContain("Assert-NoSecretLeak");
@@ -233,6 +237,105 @@ describe("kairon-operation-test.ps1", () => {
       status: "PASS"
     });
   });
+
+  runIfPowerShell("marks DiscordDecisionAuditLive optional when manual timeout is not enabled", async () => {
+    const root = await createTempProject();
+    const kaironRoot = path.join(root, "kairon");
+    const targetRoot = path.join(root, "target");
+    const outputRoot = path.join(root, "results");
+    await mkdir(kaironRoot, { recursive: true });
+    await mkdir(targetRoot, { recursive: true });
+
+    const result = runHarness(kaironRoot, targetRoot, outputRoot, "DiscordDecisionAuditLive", {
+      ...process.env,
+      KAIRON_DISCORD_BOT_TOKEN: "secret-token-for-test",
+      KAIRON_DISCORD_APPLICATION_ID: "111111111111111111",
+      KAIRON_DISCORD_GUILD_ID: "222222222222222222",
+      KAIRON_DISCORD_APPROVAL_CHANNEL_ID: "333333333333333333",
+      KAIRON_DISCORD_OWNER_USER_ID: "444444444444444444",
+      KAIRON_DISCORD_ALLOWED_USER_IDS: "444444444444444444"
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("[DISCORD_DECISION_AUDIT_LIVE] OPTIONAL");
+    expect(result.stdout).not.toContain("secret-token-for-test");
+    expect(result.stdout).not.toContain("444444444444444444");
+    const summary = await readSummaryFromStdout(result.stdout);
+    expect(summary.results[0]).toMatchObject({
+      id: "DISCORD_DECISION_AUDIT_LIVE",
+      status: "OPTIONAL"
+    });
+  });
+
+  runIfPowerShell("passes DiscordDecisionAuditLive when the decision audit record exists", async () => {
+    const root = await createTempProject();
+    const kaironRoot = path.join(root, "kairon");
+    const targetRoot = path.join(root, "target");
+    const outputRoot = path.join(root, "results");
+    const binRoot = path.join(root, "bin");
+    const approvalId = "APR-T70-LIVE-TEST";
+    await mkdir(kaironRoot, { recursive: true });
+    await mkdir(targetRoot, { recursive: true });
+    await mkdir(binRoot, { recursive: true });
+    await writeFakeKairon(binRoot);
+    await writeMinimalNotifications(targetRoot);
+    await mkdir(path.join(targetRoot, ".kairon", "runtime", "discord"), {
+      recursive: true
+    });
+    await writeFile(
+      path.join(targetRoot, ".kairon", "runtime", "discord", "decision-interactions.jsonl"),
+      `${JSON.stringify({
+        schema_version: "0.1",
+        interaction_id: "INTERACTION-T70",
+        approval_id: approvalId,
+        decision: "approve",
+        status: "applied",
+        duplicate: false,
+        actor_hash: "abcdef1234567890",
+        message_update_status: "updated",
+        command_status: "completed",
+        recorded_at: "2026-06-13T00:00:00.000Z"
+      })}\n`,
+      "utf8"
+    );
+
+    const result = runHarness(
+      kaironRoot,
+      targetRoot,
+      outputRoot,
+      "DiscordDecisionAuditLive",
+      {
+        ...process.env,
+        PATH: `${binRoot}${path.delimiter}${process.env.PATH ?? ""}`,
+        KAIRON_DISCORD_BOT_TOKEN: "secret-token-for-test",
+        KAIRON_DISCORD_APPLICATION_ID: "111111111111111111",
+        KAIRON_DISCORD_GUILD_ID: "222222222222222222",
+        KAIRON_DISCORD_APPROVAL_CHANNEL_ID: "333333333333333333",
+        KAIRON_DISCORD_OWNER_USER_ID: "444444444444444444",
+        KAIRON_DISCORD_ALLOWED_USER_IDS: "444444444444444444"
+      },
+      [
+        "-DiscordDecisionAuditApprovalId",
+        approvalId,
+        "-DiscordDecisionAuditExpectedAction",
+        "approve",
+        "-DiscordDecisionAuditTimeoutSeconds",
+        "1"
+      ]
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("[DISCORD_DECISION_AUDIT_LIVE] PASS");
+    expect(result.stdout).not.toContain("secret-token-for-test");
+    expect(result.stdout).not.toContain("444444444444444444");
+    const summary = await readSummaryFromStdout(result.stdout);
+    expect(summary.results[0]).toMatchObject({
+      id: "DISCORD_DECISION_AUDIT_LIVE",
+      status: "PASS"
+    });
+    expect(JSON.stringify(summary)).not.toContain("secret-token-for-test");
+    expect(JSON.stringify(summary)).not.toContain("444444444444444444");
+  });
 });
 
 function findPowerShell(): string | undefined {
@@ -252,7 +355,8 @@ function runHarness(
   targetRoot: string,
   outputRoot: string,
   testName: string,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  extraArgs: string[] = []
 ) {
   return spawnSync(
     powershell!,
@@ -269,7 +373,8 @@ function runHarness(
       "-OutputRoot",
       outputRoot,
       "-Test",
-      testName
+      testName,
+      ...extraArgs
     ],
     {
       cwd: path.resolve("."),
@@ -327,6 +432,21 @@ async function writeFakeKairon(binRoot: string): Promise<void> {
         "  echo   - live_status=ready",
         "  exit /b 0",
         ")",
+        "if \"%1\"==\"approval\" if \"%2\"==\"seed\" (",
+        "  echo Kairon approval seeded.",
+        "  echo approval_id=%3",
+        "  exit /b 0",
+        ")",
+        "if \"%1\"==\"start\" (",
+        "  echo Kairon runtime daemon stopped. pid=1234",
+        "  echo runtime.daemon.ticks=2",
+        "  echo runtime.daemon.stopReason=max_ticks",
+        "  exit /b 0",
+        ")",
+        "if \"%1\"==\"stop\" (",
+        "  echo Kairon runtime stopped.",
+        "  exit /b 0",
+        ")",
         "echo unexpected kairon args: %*",
         "exit /b 2",
         ""
@@ -346,6 +466,21 @@ async function writeFakeKairon(binRoot: string): Promise<void> {
       "  echo \"PASS discord.config Discord notification config\"",
       "  echo \"  - gateway_status=ready\"",
       "  echo \"  - live_status=ready\"",
+      "  exit 0",
+      "fi",
+      "if [ \"$1\" = \"approval\" ] && [ \"$2\" = \"seed\" ]; then",
+      "  echo \"Kairon approval seeded.\"",
+      "  echo \"approval_id=$3\"",
+      "  exit 0",
+      "fi",
+      "if [ \"$1\" = \"start\" ]; then",
+      "  echo \"Kairon runtime daemon stopped. pid=1234\"",
+      "  echo \"runtime.daemon.ticks=2\"",
+      "  echo \"runtime.daemon.stopReason=max_ticks\"",
+      "  exit 0",
+      "fi",
+      "if [ \"$1\" = \"stop\" ]; then",
+      "  echo \"Kairon runtime stopped.\"",
       "  exit 0",
       "fi",
       "echo \"unexpected kairon args: $*\"",
