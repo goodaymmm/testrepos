@@ -3,7 +3,10 @@ import path from "node:path";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { WorkQueue } from "../src/queue/work-queue.js";
-import { acquireRuntimeLock } from "../src/runtime/runtime-lock.js";
+import {
+  acquireRuntimeLock,
+  refreshRuntimeHeartbeat
+} from "../src/runtime/runtime-lock.js";
 import { formatRuntimeStatus, getRuntimeStatus } from "../src/runtime/status.js";
 import { createTempProject } from "./test-utils.js";
 
@@ -14,6 +17,18 @@ describe("runtime status", () => {
     await acquireRuntimeLock(root, {
       mode: "daemon",
       now: new Date("2026-05-26T00:00:00.000Z")
+    });
+    await refreshRuntimeHeartbeat(root, {
+      now: new Date("2026-05-26T00:00:10.000Z"),
+      tickCount: 7,
+      idleCount: 2,
+      lastAction: "idle",
+      nextTickAt: "2026-05-26T00:00:15.000Z",
+      lastError: {
+        code: "daemon_error",
+        message: "token=SHOULD_NOT_LEAK failed",
+        at: "2026-05-26T00:00:09.000Z"
+      }
     });
     await new WorkQueue(root).enqueue({ type: "agent.run" });
     await writeJsonFileAtomic(path.join(root, ".kairon", "approvals", "APR-0001.json"), {
@@ -58,11 +73,23 @@ describe("runtime status", () => {
     const status = await getRuntimeStatus(root);
     expect(status.runtimeLock.locked).toBe(true);
     expect(status.runtimeLock.mode).toBe("daemon");
-    expect(status.runtimeLock.heartbeat_at).toBe("2026-05-26T00:00:00.000Z");
+    expect(status.runtimeLock.heartbeat_at).toBe("2026-05-26T00:00:10.000Z");
     expect(status.queue.ready).toBe(1);
     expect(status.approvals.pending).toBe(1);
     expect(formatRuntimeStatus(status)).toContain("queue.ready=1");
     expect(formatRuntimeStatus(status)).toContain("runtime.mode=daemon");
+    expect(formatRuntimeStatus(status)).toContain("runtime.tickCount=7");
+    expect(formatRuntimeStatus(status)).toContain("runtime.idleCount=2");
+    expect(formatRuntimeStatus(status)).toContain("runtime.lastAction=idle");
+    expect(formatRuntimeStatus(status)).toContain(
+      "runtime.nextTickAt=2026-05-26T00:00:15.000Z"
+    );
+    expect(formatRuntimeStatus(status)).toContain(
+      "runtime.lastErrorCode=daemon_error"
+    );
+    expect(formatRuntimeStatus(status)).toContain(
+      "runtime.lastErrorMessage=token=[redacted] failed"
+    );
     expect(formatRuntimeStatus(status)).toContain("recovery.targets=1");
     expect(formatRuntimeStatus(status)).toContain("recovery.staleLocks=1");
     expect(formatRuntimeStatus(status)).toContain("recovery.resolvedTargets=0");

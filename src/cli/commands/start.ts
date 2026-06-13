@@ -44,8 +44,18 @@ export async function startRuntime(
           `Kairon runtime daemon stopped. pid=${status.locked ? status.data.pid : "unknown"}`,
           `runtime.daemon.ticks=${result.ticks}`,
           `runtime.daemon.idleTicks=${result.idle_ticks}`,
-          `runtime.daemon.stopReason=${result.stop_reason}`
+          `runtime.daemon.stopReason=${result.stop_reason}`,
+          `runtime.daemon.log=${result.daemon_log_path}`
         ];
+        if (result.stop_reason === "fatal_error") {
+          process.exitCode = 1;
+        }
+        if (result.last_error !== undefined) {
+          if (result.last_error.code !== undefined) {
+            lines.push(`runtime.daemon.lastErrorCode=${result.last_error.code}`);
+          }
+          lines.push(`runtime.daemon.lastErrorMessage=${result.last_error.message}`);
+        }
         if (
           discordGateway.status === "setup_required" ||
           discordGateway.status === "error"

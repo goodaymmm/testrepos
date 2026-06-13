@@ -51,7 +51,16 @@ describe("runtime lock", () => {
     });
 
     await refreshRuntimeHeartbeat(root, {
-      now: new Date("2026-05-26T00:00:10.000Z")
+      now: new Date("2026-05-26T00:00:10.000Z"),
+      tickCount: 3,
+      idleCount: 2,
+      lastAction: "idle",
+      nextTickAt: "2026-05-26T00:00:15.000Z",
+      lastError: {
+        code: "previous_error",
+        message: "Previous error",
+        at: "2026-05-26T00:00:09.000Z"
+      }
     });
     await requestRuntimeStop(root, {
       now: new Date("2026-05-26T00:00:20.000Z")
@@ -68,7 +77,16 @@ describe("runtime lock", () => {
         mode: "daemon",
         heartbeat_at: "2026-05-26T00:00:10.000Z",
         stop_requested: true,
-        stop_requested_at: "2026-05-26T00:00:20.000Z"
+        stop_requested_at: "2026-05-26T00:00:20.000Z",
+        tick_count: 3,
+        idle_count: 2,
+        last_action: "idle",
+        next_tick_at: "2026-05-26T00:00:15.000Z",
+        last_error: {
+          code: "previous_error",
+          message: "Previous error",
+          at: "2026-05-26T00:00:09.000Z"
+        }
       }
     });
 
