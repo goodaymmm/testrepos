@@ -7,6 +7,7 @@ import {
   ApprovalQueue
 } from "../approvals/approval-queue.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
+import { readJsonLines } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import { type QueueItem, WorkQueue } from "../queue/work-queue.js";
 import { getRuntimeStatus, type RuntimeStatus } from "../runtime/status.js";
@@ -45,6 +46,15 @@ export type BoardProjection = {
   cleanup: {
     proposals_total: number;
     recent: BoardCleanupProposalSummary[];
+  };
+  maintenance: {
+    daily_reports_total: number;
+    latest_daily_report?: BoardDailyReportSummary;
+  };
+  discord: {
+    gateway?: RuntimeStatus["discordGateway"];
+    notifications: BoardDiscordAuditSummary;
+    decisions: BoardDiscordDecisionAuditSummary;
   };
 };
 
@@ -165,6 +175,49 @@ export type BoardCleanupProposalSummary = {
   created_at?: string;
 };
 
+export type BoardDailyReportSummary = {
+  date: string;
+  report_path?: string;
+  completed_runs?: number;
+  failed_runs?: number;
+  setup_required_runs?: number;
+  pending_approvals?: number;
+  failed_notifications?: number;
+  created_at?: string;
+};
+
+export type BoardDiscordAuditSummary = {
+  total: number;
+  by_status: Record<string, number>;
+  recent: BoardDiscordNotificationAuditSummary[];
+};
+
+export type BoardDiscordNotificationAuditSummary = {
+  approval_id?: string;
+  status?: string;
+  reason?: string;
+  recorded_at?: string;
+  sent_at?: string;
+  updated_at?: string;
+};
+
+export type BoardDiscordDecisionAuditSummary = {
+  total: number;
+  by_status: Record<string, number>;
+  by_decision: Record<string, number>;
+  recent: BoardDiscordDecisionAuditRecordSummary[];
+};
+
+export type BoardDiscordDecisionAuditRecordSummary = {
+  approval_id?: string;
+  decision?: string;
+  status?: string;
+  duplicate?: boolean;
+  actor_hash?: string;
+  message_update_status?: string;
+  recorded_at?: string;
+};
+
 type ReviewLoopArtifact = {
   loop_id?: string;
   task_id?: string;
@@ -199,6 +252,38 @@ type CleanupProposalArtifact = {
   created_at?: string;
 };
 
+type DailyReportArtifact = {
+  date?: string;
+  report_path?: string;
+  summary?: {
+    completed_runs?: number;
+    failed_runs?: number;
+    setup_required_runs?: number;
+    pending_approvals?: number;
+    failed_notifications?: number;
+  };
+  created_at?: string;
+};
+
+type DiscordNotificationAuditRecord = {
+  approval_id?: string;
+  status?: string;
+  reason?: string;
+  recorded_at?: string;
+  sent_at?: string;
+  updated_at?: string;
+};
+
+type DiscordDecisionAuditRecord = {
+  approval_id?: string;
+  decision?: string;
+  status?: string;
+  duplicate?: boolean;
+  actor_hash?: string;
+  message_update_status?: string;
+  recorded_at?: string;
+};
+
 const defaultRecentLimit = 10;
 const secretKeyPattern = /(secret|token|password|api[_-]?key|authorization|cookie|credential)/i;
 
@@ -208,8 +293,18 @@ export async function createBoardProjection(
 ): Promise<BoardProjection> {
   const recentLimit = options.recentLimit ?? defaultRecentLimit;
   const generatedAt = (options.now?.() ?? new Date()).toISOString();
-  const [runtime, queueItems, tasks, runs, approvals, reviewLoops, reviewResults, cleanupProposals] =
-    await Promise.all([
+  const [
+    runtime,
+    queueItems,
+    tasks,
+    runs,
+    approvals,
+    reviewLoops,
+    reviewResults,
+    cleanupProposals,
+    dailyReports,
+    discordAudits
+  ] = await Promise.all([
       getRuntimeStatus(projectRoot),
       new WorkQueue(projectRoot).list(),
       readTasks(projectRoot),
@@ -217,7 +312,9 @@ export async function createBoardProjection(
       new ApprovalQueue(projectRoot).list({ status: "all" }),
       readReviewLoops(projectRoot),
       readReviewResults(projectRoot),
-      readCleanupProposals(projectRoot)
+      readCleanupProposals(projectRoot),
+      readDailyReports(projectRoot),
+      readDiscordAudits(projectRoot)
     ]);
 
   return {
@@ -271,6 +368,21 @@ export async function createBoardProjection(
         .sort(compareByCreatedDesc)
         .slice(0, recentLimit)
         .map(summarizeCleanupProposal)
+    },
+    maintenance: {
+      daily_reports_total: dailyReports.length,
+      latest_daily_report: dailyReports
+        .sort(compareDailyReportsDesc)
+        .slice(0, 1)
+        .map(summarizeDailyReport)[0]
+    },
+    discord: {
+      gateway: runtime.discordGateway,
+      notifications: summarizeDiscordNotificationAudits(
+        discordAudits.notifications,
+        recentLimit
+      ),
+      decisions: summarizeDiscordDecisionAudits(discordAudits.decisions, recentLimit)
     }
   };
 }
@@ -366,6 +478,35 @@ async function readCleanupProposals(projectRoot: string): Promise<CleanupProposa
   );
 
   return proposals.filter((proposal): proposal is CleanupProposalArtifact => proposal !== null);
+}
+
+async function readDailyReports(projectRoot: string): Promise<DailyReportArtifact[]> {
+  const dailyDir = resolveInside(getKaironPaths(projectRoot).reportsDir, "daily");
+  const entries = await readDirectoryEntries(dailyDir);
+  const reports = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => readOptionalJson<DailyReportArtifact>(path.join(dailyDir, entry.name)))
+  );
+
+  return reports.filter((report): report is DailyReportArtifact => report !== null);
+}
+
+async function readDiscordAudits(projectRoot: string): Promise<{
+  notifications: DiscordNotificationAuditRecord[];
+  decisions: DiscordDecisionAuditRecord[];
+}> {
+  const discordDir = resolveInside(getKaironPaths(projectRoot).runtimeDir, "discord");
+  const [notifications, decisions] = await Promise.all([
+    readOptionalJsonLines<DiscordNotificationAuditRecord>(
+      path.join(discordDir, "approval-notifications.jsonl")
+    ),
+    readOptionalJsonLines<DiscordDecisionAuditRecord>(
+      path.join(discordDir, "decision-interactions.jsonl")
+    )
+  ]);
+
+  return { notifications, decisions };
 }
 
 async function summarizeRunDirectory(
@@ -502,6 +643,81 @@ function summarizeCleanupProposal(
   });
 }
 
+function summarizeDailyReport(report: DailyReportArtifact): BoardDailyReportSummary {
+  return compact({
+    date: report.date ?? "unknown",
+    report_path: report.report_path,
+    completed_runs: report.summary?.completed_runs,
+    failed_runs: report.summary?.failed_runs,
+    setup_required_runs: report.summary?.setup_required_runs,
+    pending_approvals: report.summary?.pending_approvals,
+    failed_notifications: report.summary?.failed_notifications,
+    created_at: report.created_at
+  });
+}
+
+function summarizeDiscordNotificationAudits(
+  records: DiscordNotificationAuditRecord[],
+  recentLimit: number
+): BoardDiscordAuditSummary {
+  return {
+    total: records.length,
+    by_status: countBy(records, (record) => record.status ?? "unknown"),
+    recent: records
+      .sort(compareDiscordNotificationAuditsDesc)
+      .slice(0, recentLimit)
+      .map((record) =>
+        compact({
+          approval_id: record.approval_id,
+          status: record.status,
+          reason: record.reason === undefined ? undefined : sanitizeInline(record.reason),
+          recorded_at: record.recorded_at,
+          sent_at: record.sent_at,
+          updated_at: record.updated_at
+        })
+      )
+  };
+}
+
+function summarizeDiscordDecisionAudits(
+  records: DiscordDecisionAuditRecord[],
+  recentLimit: number
+): BoardDiscordDecisionAuditSummary {
+  return {
+    total: records.length,
+    by_status: countBy(records, (record) => record.status ?? "unknown"),
+    by_decision: countBy(records, (record) => record.decision ?? "unknown"),
+    recent: records
+      .sort(compareDiscordDecisionAuditsDesc)
+      .slice(0, recentLimit)
+      .map((record) =>
+        compact({
+          approval_id: record.approval_id,
+          decision: record.decision,
+          status: record.status,
+          duplicate: record.duplicate,
+          actor_hash: record.actor_hash,
+          message_update_status: record.message_update_status,
+          recorded_at: record.recorded_at
+        })
+      )
+  };
+}
+
+async function readOptionalJsonLines<T>(filePath: string): Promise<T[]> {
+  try {
+    await access(filePath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
+
+  return readJsonLines<T>(filePath);
+}
+
 async function readDirectoryEntries(directoryPath: string): Promise<Dirent[]> {
   try {
     return await readdir(directoryPath, { withFileTypes: true });
@@ -540,6 +756,27 @@ function compareByCreatedDesc<T extends { created_at?: string }>(
   right: T
 ): number {
   return timestamp(right.created_at) - timestamp(left.created_at);
+}
+
+function compareDailyReportsDesc(left: DailyReportArtifact, right: DailyReportArtifact): number {
+  return timestamp(right.created_at ?? right.date) - timestamp(left.created_at ?? left.date);
+}
+
+function compareDiscordNotificationAuditsDesc(
+  left: DiscordNotificationAuditRecord,
+  right: DiscordNotificationAuditRecord
+): number {
+  return (
+    timestamp(right.recorded_at ?? right.updated_at ?? right.sent_at) -
+    timestamp(left.recorded_at ?? left.updated_at ?? left.sent_at)
+  );
+}
+
+function compareDiscordDecisionAuditsDesc(
+  left: DiscordDecisionAuditRecord,
+  right: DiscordDecisionAuditRecord
+): number {
+  return timestamp(right.recorded_at) - timestamp(left.recorded_at);
 }
 
 function compareRunSummariesDesc(left: BoardRunSummary, right: BoardRunSummary): number {
