@@ -27,7 +27,6 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 
 T67-T75完了後も残る主な後続作業の範囲:
 
-- GitHub branch protection live確認のpublic sandbox運用をharness profile化
 - private repositoryでbranch protection APIが403になる場合の診断文言改善
 - 24時間以上の連続daemon運用エビデンス取得とWindows常駐手順の固定
 - Board運用ビュー、Discord通知とBoard linkの対応追跡強化
@@ -413,7 +412,7 @@ T67-T75では、local runtimeだけでなくGitHub / Discordを含む外部接�
 
 | 区分 | 対象 | 現状 |
 | --- | --- | --- |
-| T67 | GitHub branch protection診断 | public sandbox `goodaymmm/14Forge` でlive API確認済み。private repositoryの403は外部条件として扱う |
+| T67 | GitHub branch protection診断 | public sandbox `goodaymmm/14Forge` でlive API確認済み。`BranchProtectionPublicSandbox` profileで再実行可能。private repositoryの403は外部条件として扱う |
 | T68 | Cleanup apply / archive | dry-run、apply、archive、protected path blockを確認済み |
 | T69 | Runtime recovery resolution | stale / partial / ambiguous target、resolve / acknowledge、重複抑止を確認済み |
 | T70 | Discord live decision audit | Gateway live接続、approval通知、button decision、audit artifact記録を確認済み |

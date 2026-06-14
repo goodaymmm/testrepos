@@ -70,7 +70,27 @@ Repository permissions:
 
 token値はコマンドログ、Markdown、`.kairon/` artifactに保存しない。
 
-## 実行手順
+## Harnessでの実行
+
+T80以降はoperation test harnessから実行できる。
+
+```powershell
+cd C:\Users\hikar\Documents\AutoRunner
+
+.\scripts\kairon-operation-test.ps1 `
+  -KaironRoot "C:\Users\hikar\Documents\AutoRunner" `
+  -TargetRoot "M:\EnglishApp" `
+  -Test BranchProtectionPublicSandbox `
+  -BranchProtectionSandboxRoot "$env:TEMP\kairon-branch-protection-sandbox" `
+  -BranchProtectionSandboxRepoUrl "https://github.com/goodaymmm/14Forge.git" `
+  -BranchProtectionSandboxBranch main `
+  -BranchProtectionRequireToken
+```
+
+このprofileは一時workspaceを作成して `git init`、`git remote add origin`、`kairon init`、`kairon doctor` を実行する。
+token未設定、403、404、required gate未設定は `SETUP_REQUIRED` としてsummaryに記録する。
+
+## 手動実行手順
 
 PowerShellで一時workspaceを作成する。
 
@@ -145,5 +165,4 @@ private repositoryで403になっても、public sandboxで上記PASSが取れ�
 
 ## 後続
 
-この手順はT79時点では手動運用である。
-T80でoperation test harnessのprofileとして組み込み、sandbox root、repo URL、branch、token要件を引数化する。
+今後はpublic sandbox repository自体をfixture化するか、CI側のbranch protection検証と連携させる。

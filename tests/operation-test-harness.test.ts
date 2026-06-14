@@ -56,6 +56,23 @@ describe("kairon-operation-test.ps1", () => {
     expect(script).toContain("artifact_paths");
   });
 
+  it("includes a GitHub branch protection public sandbox operation profile", async () => {
+    const script = await readFile(
+      path.resolve("scripts", "kairon-operation-test.ps1"),
+      "utf8"
+    );
+
+    expect(script).toContain("BranchProtectionPublicSandbox");
+    expect(script).toContain("BranchProtectionSandboxRoot");
+    expect(script).toContain("BranchProtectionSandboxRepoUrl");
+    expect(script).toContain("BranchProtectionSandboxBranch");
+    expect(script).toContain("BRANCH_PROTECTION_PUBLIC_SANDBOX");
+    expect(script).toContain("api_status=ok");
+    expect(script).toContain("required_pull_request_reviews=present");
+    expect(script).toContain("required_status_checks=present");
+    expect(script).toContain("missing GH_TOKEN or GITHUB_TOKEN");
+  });
+
   it("guards DiscordSetupError evidence from raw Discord errors and raw ids", async () => {
     const script = await readFile(
       path.resolve("scripts", "kairon-operation-test.ps1"),
@@ -166,6 +183,91 @@ describe("kairon-operation-test.ps1", () => {
       status: "PASS"
     });
     expect(JSON.stringify(summary)).not.toContain("secret-token-for-test");
+  });
+
+  runIfPowerShell("passes BranchProtectionPublicSandbox with a token and protected sandbox evidence", async () => {
+    const root = await createTempProject();
+    const kaironRoot = path.join(root, "kairon");
+    const targetRoot = path.join(root, "target");
+    const outputRoot = path.join(root, "results");
+    const sandboxRoot = path.join(root, "sandbox");
+    const binRoot = path.join(root, "bin");
+    await mkdir(kaironRoot, { recursive: true });
+    await mkdir(targetRoot, { recursive: true });
+    await mkdir(binRoot, { recursive: true });
+    await writeFakeKairon(binRoot);
+    await writeFakeGit(binRoot);
+
+    const result = runHarness(
+      kaironRoot,
+      targetRoot,
+      outputRoot,
+      "BranchProtectionPublicSandbox",
+      {
+        ...process.env,
+        PATH: `${binRoot}${path.delimiter}${process.env.PATH ?? ""}`,
+        GH_TOKEN: "secret-gh-token-for-test",
+        GITHUB_TOKEN: ""
+      },
+      [
+        "-BranchProtectionSandboxRoot",
+        sandboxRoot,
+        "-BranchProtectionSandboxRepoUrl",
+        "https://github.com/goodaymmm/14Forge.git",
+        "-BranchProtectionSandboxBranch",
+        "main"
+      ]
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("[BRANCH_PROTECTION_PUBLIC_SANDBOX] PASS");
+    expect(result.stdout).not.toContain("secret-gh-token-for-test");
+    const summary = await readSummaryFromStdout(result.stdout);
+    expect(summary.results[0]).toMatchObject({
+      id: "BRANCH_PROTECTION_PUBLIC_SANDBOX",
+      status: "PASS"
+    });
+    expect(JSON.stringify(summary)).not.toContain("secret-gh-token-for-test");
+  });
+
+  runIfPowerShell("marks BranchProtectionPublicSandbox setup_required when token is missing", async () => {
+    const root = await createTempProject();
+    const kaironRoot = path.join(root, "kairon");
+    const targetRoot = path.join(root, "target");
+    const outputRoot = path.join(root, "results");
+    const sandboxRoot = path.join(root, "sandbox");
+    await mkdir(kaironRoot, { recursive: true });
+    await mkdir(targetRoot, { recursive: true });
+
+    const result = runHarness(
+      kaironRoot,
+      targetRoot,
+      outputRoot,
+      "BranchProtectionPublicSandbox",
+      {
+        ...process.env,
+        GH_TOKEN: "",
+        GITHUB_TOKEN: ""
+      },
+      [
+        "-BranchProtectionSandboxRoot",
+        sandboxRoot,
+        "-BranchProtectionSandboxRepoUrl",
+        "https://github.com/goodaymmm/14Forge.git"
+      ]
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("[BRANCH_PROTECTION_PUBLIC_SANDBOX] SETUP_REQUIRED");
+    const summary = await readSummaryFromStdout(result.stdout);
+    expect(summary.summary).toMatchObject({
+      fail: 0,
+      setup_required: 1
+    });
+    expect(summary.results[0]).toMatchObject({
+      id: "BRANCH_PROTECTION_PUBLIC_SANDBOX",
+      status: "SETUP_REQUIRED"
+    });
   });
 
   runIfPowerShell("marks DiscordSetupError setup_required when one required env is missing", async () => {
@@ -499,11 +601,24 @@ async function writeFakeKairon(binRoot: string): Promise<void> {
       path.join(binRoot, "kairon.cmd"),
       [
         "@echo off",
+        "if \"%1\"==\"init\" (",
+        "  echo Initialized Kairon with fake test state.",
+        "  exit /b 0",
+        ")",
         "if \"%1\"==\"doctor\" (",
         "  echo doctor.ok=true",
         "  echo PASS discord.config Discord notification config",
         "  echo   - gateway_status=ready",
         "  echo   - live_status=ready",
+        "  echo PASS git.branch_protection GitHub branch protection",
+        "  echo   - repository=goodaymmm/14Forge",
+        "  echo   - branch=main",
+        "  echo   - auth=present",
+        "  echo   - network_check=completed",
+        "  echo   - api_status=ok",
+        "  echo   - branch_protection=enabled",
+        "  echo   - required_pull_request_reviews=present",
+        "  echo   - required_status_checks=present",
         "  exit /b 0",
         ")",
         "if \"%1\"==\"approval\" if \"%2\"==\"seed\" (",
@@ -535,11 +650,24 @@ async function writeFakeKairon(binRoot: string): Promise<void> {
     executable,
     [
       "#!/usr/bin/env sh",
+      "if [ \"$1\" = \"init\" ]; then",
+      "  echo \"Initialized Kairon with fake test state.\"",
+      "  exit 0",
+      "fi",
       "if [ \"$1\" = \"doctor\" ]; then",
       "  echo doctor.ok=true",
       "  echo \"PASS discord.config Discord notification config\"",
       "  echo \"  - gateway_status=ready\"",
       "  echo \"  - live_status=ready\"",
+      "  echo \"PASS git.branch_protection GitHub branch protection\"",
+      "  echo \"  - repository=goodaymmm/14Forge\"",
+      "  echo \"  - branch=main\"",
+      "  echo \"  - auth=present\"",
+      "  echo \"  - network_check=completed\"",
+      "  echo \"  - api_status=ok\"",
+      "  echo \"  - branch_protection=enabled\"",
+      "  echo \"  - required_pull_request_reviews=present\"",
+      "  echo \"  - required_status_checks=present\"",
       "  exit 0",
       "fi",
       "if [ \"$1\" = \"approval\" ] && [ \"$2\" = \"seed\" ]; then",
@@ -558,6 +686,61 @@ async function writeFakeKairon(binRoot: string): Promise<void> {
       "  exit 0",
       "fi",
       "echo \"unexpected kairon args: $*\"",
+      "exit 2",
+      ""
+    ].join("\n"),
+    "utf8"
+  );
+  await chmod(executable, 0o755);
+}
+
+async function writeFakeGit(binRoot: string): Promise<void> {
+  if (process.platform === "win32") {
+    await writeFile(
+      path.join(binRoot, "git.cmd"),
+      [
+        "@echo off",
+        "if \"%1\"==\"init\" (",
+        "  echo Initialized empty Git repository",
+        "  exit /b 0",
+        ")",
+        "if \"%1\"==\"branch\" (",
+        "  echo branch updated",
+        "  exit /b 0",
+        ")",
+        "if \"%1\"==\"remote\" (",
+        "  echo remote updated",
+        "  exit /b 0",
+        ")",
+        "echo unexpected git args: %*",
+        "exit /b 2",
+        ""
+      ].join("\r\n"),
+      "utf8"
+    );
+    return;
+  }
+
+  const executable = path.join(binRoot, "git");
+  await writeFile(
+    executable,
+    [
+      "#!/usr/bin/env sh",
+      "case \"$1\" in",
+      "  init)",
+      "    echo \"Initialized empty Git repository\"",
+      "    exit 0",
+      "    ;;",
+      "  branch)",
+      "    echo \"branch updated\"",
+      "    exit 0",
+      "    ;;",
+      "  remote)",
+      "    echo \"remote updated\"",
+      "    exit 0",
+      "    ;;",
+      "esac",
+      "echo \"unexpected git args: $*\"",
       "exit 2",
       ""
     ].join("\n"),
