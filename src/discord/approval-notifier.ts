@@ -46,6 +46,8 @@ export type DiscordApprovalNotificationAuditRecord = {
   status: "sent" | "resent" | "updated" | "skipped" | "failed";
   channel_id: string;
   message_id?: string;
+  board_url?: string;
+  board_anchor?: string;
   reason?: string;
   sent_at?: string;
   updated_at?: string;
@@ -94,6 +96,8 @@ type ApprovalRecord = {
     nonce_expires_at?: string;
     notified_at?: string;
     updated_at?: string;
+    board_url?: string;
+    board_anchor?: string;
     unsafe_fields_omitted?: boolean;
   };
   [key: string]: unknown;
@@ -127,6 +131,7 @@ export async function notifyPendingDiscordApprovals(
   const boardBaseUrl = await readConfiguredBoardBaseUrl(projectRoot);
 
   for (const approval of approvals) {
+    const board = boardTrackingMetadata(boardBaseUrl, approval.id);
     if (shouldRetryApprovalStatusUpdate(approval)) {
       try {
         const update = await updateDiscordApprovalMessage(projectRoot, approval.id, channel, options);
@@ -138,6 +143,8 @@ export async function notifyPendingDiscordApprovals(
             status: "updated",
             channel_id: gateway.approval_channel_id,
             message_id: update.message_id,
+            board_url: approval.discord?.board_url ?? board.board_url,
+            board_anchor: approval.discord?.board_anchor ?? board.board_anchor,
             reason: "status_reconciled",
             updated_at: now.toISOString(),
             recorded_at: now.toISOString()
@@ -150,6 +157,8 @@ export async function notifyPendingDiscordApprovals(
             status: "skipped",
             channel_id: gateway.approval_channel_id,
             message_id: approval.discord?.message_id,
+            board_url: approval.discord?.board_url ?? board.board_url,
+            board_anchor: approval.discord?.board_anchor ?? board.board_anchor,
             reason: update.reason,
             recorded_at: now.toISOString()
           });
@@ -167,6 +176,8 @@ export async function notifyPendingDiscordApprovals(
           status: "failed",
           channel_id: gateway.approval_channel_id,
           message_id: approval.discord?.message_id,
+          board_url: approval.discord?.board_url ?? board.board_url,
+          board_anchor: approval.discord?.board_anchor ?? board.board_anchor,
           reason,
           recorded_at: now.toISOString()
         });
@@ -181,6 +192,8 @@ export async function notifyPendingDiscordApprovals(
         approval_id: approval.id,
         status: "skipped",
         channel_id: gateway.approval_channel_id,
+        board_url: approval.discord?.board_url ?? board.board_url,
+        board_anchor: approval.discord?.board_anchor ?? board.board_anchor,
         reason: "not_pending",
         recorded_at: now.toISOString()
       });
@@ -197,6 +210,8 @@ export async function notifyPendingDiscordApprovals(
           status: "skipped",
           channel_id: gateway.approval_channel_id,
           message_id: approval.discord.message_id,
+          board_url: approval.discord?.board_url ?? board.board_url,
+          board_anchor: approval.discord?.board_anchor ?? board.board_anchor,
           reason: "already_sent",
           recorded_at: now.toISOString()
         });
@@ -215,6 +230,8 @@ export async function notifyPendingDiscordApprovals(
           status: "failed",
           channel_id: gateway.approval_channel_id,
           message_id: approval.discord.message_id,
+          board_url: approval.discord?.board_url ?? board.board_url,
+          board_anchor: approval.discord?.board_anchor ?? board.board_anchor,
           reason: verification.reason,
           recorded_at: now.toISOString()
         });
@@ -234,6 +251,8 @@ export async function notifyPendingDiscordApprovals(
         nonce: message.nonce,
         notified_at: sentAt,
         nonce_expires_at: defaultNonceExpiresAt(now),
+        board_url: input.board_url,
+        board_anchor: input.board_url === undefined ? undefined : approvalBoardAnchor(approval.id),
         unsafe_fields_omitted: containsUnsafeApprovalMessageData(input)
       });
       await appendDiscordNotificationAudit(projectRoot, {
@@ -242,6 +261,8 @@ export async function notifyPendingDiscordApprovals(
         status: resent ? "resent" : "sent",
         channel_id: gateway.approval_channel_id,
         message_id: sent.id,
+        board_url: input.board_url,
+        board_anchor: input.board_url === undefined ? undefined : approvalBoardAnchor(approval.id),
         reason: resent ? "message_missing_reposted" : undefined,
         sent_at: sentAt,
         recorded_at: sentAt
@@ -263,6 +284,8 @@ export async function notifyPendingDiscordApprovals(
         approval_id: approval.id,
         status: "failed",
         channel_id: gateway.approval_channel_id,
+        board_url: board.board_url,
+        board_anchor: board.board_anchor,
         reason,
         recorded_at: now.toISOString()
       });
@@ -482,7 +505,25 @@ function normalizeBoardBaseUrl(value: string): string | undefined {
 }
 
 function approvalBoardUrl(boardBaseUrl: string, approvalId: string): string {
-  return `${boardBaseUrl}/#approval-${approvalId.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+  return `${boardBaseUrl}/${approvalBoardAnchor(approvalId)}`;
+}
+
+function approvalBoardAnchor(approvalId: string): string {
+  return `#approval-${approvalId.replace(/[^A-Za-z0-9_-]/g, "-")}`;
+}
+
+function boardTrackingMetadata(
+  boardBaseUrl: string | undefined,
+  approvalId: string
+): { board_url?: string; board_anchor?: string } {
+  if (boardBaseUrl === undefined) {
+    return {};
+  }
+
+  return {
+    board_url: approvalBoardUrl(boardBaseUrl, approvalId),
+    board_anchor: approvalBoardAnchor(approvalId)
+  };
 }
 
 function appendOpenBoardAction(

@@ -509,7 +509,8 @@ describe("prepareDiscordGateway", () => {
       clientFactory: () => client,
       restFactory: () => rest,
       approvalChannelFactory: () => channel,
-      readyTimeoutMs: 50
+      readyTimeoutMs: 50,
+      now: () => new Date("2026-05-25T09:00:00.000Z")
     });
     await client.waitForLogin();
     client.emitReady();
@@ -519,6 +520,28 @@ describe("prepareDiscordGateway", () => {
     const payloadText = JSON.stringify(channel.sent[0]?.payload);
     expect(payloadText).toContain("Open Board");
     expect(payloadText).toContain("http://127.0.0.1:9999/#approval-APR-BOARD");
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "approvals", "APR-BOARD.json"))
+    ).resolves.toMatchObject({
+      discord: {
+        message_id: "message-1",
+        board_url: "http://127.0.0.1:9999/#approval-APR-BOARD",
+        board_anchor: "#approval-APR-BOARD"
+      }
+    });
+    const audit = await readJsonLines<Record<string, unknown>>(
+      path.join(root, ".kairon", "runtime", "discord", "approval-notifications.jsonl")
+    );
+    expect(audit).toEqual([
+      expect.objectContaining({
+        approval_id: "APR-BOARD",
+        status: "sent",
+        message_id: "message-1",
+        board_url: "http://127.0.0.1:9999/#approval-APR-BOARD",
+        board_anchor: "#approval-APR-BOARD",
+        sent_at: "2026-05-25T09:00:00.000Z"
+      })
+    ]);
 
     await handle.stop();
   });

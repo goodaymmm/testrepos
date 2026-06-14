@@ -238,6 +238,9 @@ export type BoardDiscordAuditSummary = {
 export type BoardDiscordNotificationAuditSummary = {
   approval_id?: string;
   status?: string;
+  message_id?: string;
+  board_anchor?: string;
+  board_url?: string;
   reason?: string;
   recorded_at?: string;
   sent_at?: string;
@@ -257,7 +260,10 @@ export type BoardDiscordDecisionAuditRecordSummary = {
   status?: string;
   duplicate?: boolean;
   actor_hash?: string;
+  message_id?: string;
+  command_status?: string;
   message_update_status?: string;
+  message_update_reason?: string;
   recorded_at?: string;
 };
 
@@ -329,6 +335,9 @@ type GitTransactionArtifact = {
 type DiscordNotificationAuditRecord = {
   approval_id?: string;
   status?: string;
+  message_id?: string;
+  board_anchor?: string;
+  board_url?: string;
   reason?: string;
   recorded_at?: string;
   sent_at?: string;
@@ -341,7 +350,10 @@ type DiscordDecisionAuditRecord = {
   status?: string;
   duplicate?: boolean;
   actor_hash?: string;
+  message_id?: string;
+  command_status?: string;
   message_update_status?: string;
+  message_update_reason?: string;
   recorded_at?: string;
 };
 
@@ -882,6 +894,9 @@ function summarizeDiscordNotificationAudits(
         compact({
           approval_id: record.approval_id,
           status: record.status,
+          message_id: record.message_id,
+          board_anchor: record.board_anchor,
+          board_url: sanitizeLocalBoardUrl(record.board_url),
           reason: record.reason === undefined ? undefined : sanitizeInline(record.reason),
           recorded_at: record.recorded_at,
           sent_at: record.sent_at,
@@ -909,7 +924,13 @@ function summarizeDiscordDecisionAudits(
           status: record.status,
           duplicate: record.duplicate,
           actor_hash: record.actor_hash,
+          message_id: record.message_id,
+          command_status: record.command_status,
           message_update_status: record.message_update_status,
+          message_update_reason:
+            record.message_update_reason === undefined
+              ? undefined
+              : sanitizeInline(record.message_update_reason),
           recorded_at: record.recorded_at
         })
       )
@@ -1052,6 +1073,27 @@ function sanitizeInline(value: string): string {
     .replace(/\s+/g, " ")
     .trim();
   return collapsed.length <= 240 ? collapsed : `${collapsed.slice(0, 237)}...`;
+}
+
+function sanitizeLocalBoardUrl(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    if (url.protocol !== "http:" || (host !== "127.0.0.1" && host !== "localhost")) {
+      return undefined;
+    }
+
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    return sanitizeInline(url.toString());
+  } catch {
+    return undefined;
+  }
 }
 
 function highestSeverity(severities: string[]): string | undefined {
