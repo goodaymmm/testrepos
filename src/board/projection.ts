@@ -24,6 +24,7 @@ export type BoardProjection = {
     failed: number;
     recent: BoardQueueItemSummary[];
   };
+  operations: BoardOperationsSummary;
   tasks: {
     total: number;
     by_status: Record<string, number>;
@@ -42,6 +43,11 @@ export type BoardProjection = {
     recent_loops: BoardReviewLoopSummary[];
     results_total: number;
     recent_results: BoardReviewResultSummary[];
+  };
+  git: {
+    transactions_total: number;
+    transactions_requiring_approval: number;
+    recent_transactions: BoardGitTransactionSummary[];
   };
   cleanup: {
     proposals_total: number;
@@ -73,7 +79,28 @@ export type BoardExportResult = {
   generated_at: string;
   queue_ready: number;
   approvals_pending: number;
+  operations_attention: number;
   recent_runs: number;
+};
+
+export type BoardOperationsSummary = {
+  pending_approvals: number;
+  failed_runs: number;
+  setup_required_runs: number;
+  recovery_targets: number;
+  git_transactions_requiring_approval: number;
+  attention_total: number;
+  priority: BoardOperationPriorityItem[];
+};
+
+export type BoardOperationPriorityItem = {
+  kind: "approval" | "run" | "recovery" | "git_transaction";
+  id: string;
+  label: string;
+  status: string;
+  severity: "high" | "medium";
+  anchor: string;
+  detail?: string;
 };
 
 export type BoardQueueItemSummary = {
@@ -165,6 +192,22 @@ export type BoardReviewResultSummary = {
   finding_count?: number;
   highest_severity?: string;
   created_at?: string;
+};
+
+export type BoardGitTransactionSummary = {
+  transaction_id: string;
+  task_id?: string;
+  run_id?: string;
+  review_loop_id?: string;
+  branch?: string;
+  status?: string;
+  remote?: string;
+  remote_ref?: string | null;
+  approval_id?: string;
+  reason?: string;
+  transaction_path?: string;
+  created_at?: string;
+  updated_at?: string;
 };
 
 export type BoardCleanupProposalSummary = {
@@ -265,6 +308,24 @@ type DailyReportArtifact = {
   created_at?: string;
 };
 
+type GitTransactionArtifact = {
+  transaction_id?: string;
+  task_id?: string;
+  run_id?: string;
+  review_loop_id?: string;
+  branch?: string;
+  status?: string;
+  push?: {
+    remote?: string;
+    remote_ref?: string | null;
+    approval_id?: string;
+    reason?: string;
+  };
+  transaction_path?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
 type DiscordNotificationAuditRecord = {
   approval_id?: string;
   status?: string;
@@ -301,6 +362,7 @@ export async function createBoardProjection(
     approvals,
     reviewLoops,
     reviewResults,
+    gitTransactions,
     cleanupProposals,
     dailyReports,
     discordAudits
@@ -312,10 +374,18 @@ export async function createBoardProjection(
       new ApprovalQueue(projectRoot).list({ status: "all" }),
       readReviewLoops(projectRoot),
       readReviewResults(projectRoot),
+      readGitTransactions(projectRoot),
       readCleanupProposals(projectRoot),
       readDailyReports(projectRoot),
       readDiscordAudits(projectRoot)
     ]);
+  const runSummaries = runs.sort(compareRunSummariesDesc);
+  const approvalSummaries = approvals
+    .sort(compareByUpdatedDesc)
+    .map(summarizeApproval);
+  const gitTransactionSummaries = gitTransactions
+    .sort(compareByUpdatedDesc)
+    .map(summarizeGitTransaction);
 
   return {
     schema_version: "0.1",
@@ -331,6 +401,13 @@ export async function createBoardProjection(
         .slice(0, recentLimit)
         .map(summarizeQueueItem)
     },
+    operations: summarizeOperations({
+      approvals: approvalSummaries,
+      runs: runSummaries,
+      recoveryTargets: runtime.recovery.targets,
+      gitTransactions: gitTransactionSummaries,
+      recentLimit
+    }),
     tasks: {
       total: tasks.length,
       by_status: countBy(tasks, (task) => task.status),
@@ -341,14 +418,11 @@ export async function createBoardProjection(
     },
     runs: {
       total: runs.length,
-      recent: runs.sort(compareRunSummariesDesc).slice(0, recentLimit)
+      recent: runSummaries.slice(0, recentLimit)
     },
     approvals: {
       pending: approvals.filter((approval) => approval.status === "pending").length,
-      recent: approvals
-        .sort(compareByUpdatedDesc)
-        .slice(0, recentLimit)
-        .map(summarizeApproval)
+      recent: approvalSummaries.slice(0, recentLimit)
     },
     reviews: {
       loops_total: reviewLoops.length,
@@ -361,6 +435,13 @@ export async function createBoardProjection(
         .sort(compareByCreatedDesc)
         .slice(0, recentLimit)
         .map(summarizeReviewResult)
+    },
+    git: {
+      transactions_total: gitTransactions.length,
+      transactions_requiring_approval: gitTransactions.filter(
+        (transaction) => transaction.status === "approval_required"
+      ).length,
+      recent_transactions: gitTransactionSummaries.slice(0, recentLimit)
     },
     cleanup: {
       proposals_total: cleanupProposals.length,
@@ -405,6 +486,7 @@ export async function exportBoardProjection(
     generated_at: projection.generated_at,
     queue_ready: projection.queue.ready,
     approvals_pending: projection.approvals.pending,
+    operations_attention: projection.operations.attention_total,
     recent_runs: projection.runs.recent.length
   };
 }
@@ -416,6 +498,7 @@ export function formatBoardExportResult(result: BoardExportResult): string {
     `generated_at=${result.generated_at}`,
     `queue.ready=${result.queue_ready}`,
     `approvals.pending=${result.approvals_pending}`,
+    `operations.attention=${result.operations_attention}`,
     `runs.recent=${result.recent_runs}`
   ].join("\n");
 }
@@ -466,6 +549,20 @@ async function readReviewResults(projectRoot: string): Promise<ReviewResultArtif
   );
 
   return results.filter((result): result is ReviewResultArtifact => result !== null);
+}
+
+async function readGitTransactions(projectRoot: string): Promise<GitTransactionArtifact[]> {
+  const transactionsDir = resolveInside(getKaironPaths(projectRoot).kaironDir, "git", "transactions");
+  const entries = await readDirectoryEntries(transactionsDir);
+  const transactions = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => readOptionalJson<GitTransactionArtifact>(path.join(transactionsDir, entry.name)))
+  );
+
+  return transactions.filter(
+    (transaction): transaction is GitTransactionArtifact => transaction !== null
+  );
 }
 
 async function readCleanupProposals(projectRoot: string): Promise<CleanupProposalArtifact[]> {
@@ -629,6 +726,121 @@ function summarizeReviewResult(result: ReviewResultArtifact): BoardReviewResultS
     highest_severity: highestSeverity(severities),
     created_at: result.created_at
   });
+}
+
+function summarizeGitTransaction(
+  transaction: GitTransactionArtifact
+): BoardGitTransactionSummary {
+  const reason = transaction.push?.reason;
+
+  return compact({
+    transaction_id: transaction.transaction_id ?? "unknown",
+    task_id: transaction.task_id,
+    run_id: transaction.run_id,
+    review_loop_id: transaction.review_loop_id,
+    branch: transaction.branch,
+    status: transaction.status,
+    remote: transaction.push?.remote,
+    remote_ref: transaction.push?.remote_ref,
+    approval_id: transaction.push?.approval_id,
+    reason: reason === undefined ? undefined : sanitizeInline(reason),
+    transaction_path: transaction.transaction_path,
+    created_at: transaction.created_at,
+    updated_at: transaction.updated_at
+  });
+}
+
+function summarizeOperations(input: {
+  approvals: BoardApprovalSummary[];
+  runs: BoardRunSummary[];
+  recoveryTargets: number;
+  gitTransactions: BoardGitTransactionSummary[];
+  recentLimit: number;
+}): BoardOperationsSummary {
+  const pendingApprovals = input.approvals.filter((approval) => approval.status === "pending");
+  const failedRuns = input.runs.filter((run) => run.status === "failed" || run.outbox_status === "failed");
+  const setupRequiredRuns = input.runs.filter((run) =>
+    ["setup_required", "permission_required", "rate_limited", "usage_limited", "timeout", "no_output"].includes(
+      run.status ?? run.outbox_status ?? ""
+    )
+  );
+  const approvalRequiredTransactions = input.gitTransactions.filter(
+    (transaction) => transaction.status === "approval_required"
+  );
+  const priority: BoardOperationPriorityItem[] = [
+    ...pendingApprovals.map((approval) =>
+      compact({
+        kind: "approval" as const,
+        id: approval.id,
+        label: approval.title ?? approval.type ?? "Approval pending",
+        status: approval.status,
+        severity: "high" as const,
+        anchor: `#approval-${approval.id}`,
+        detail: approval.reason
+      })
+    ),
+    ...failedRuns.map((run) =>
+      compact({
+        kind: "run" as const,
+        id: run.run_id,
+        label: run.task_id ?? run.agent ?? "Run failed",
+        status: run.status ?? run.outbox_status ?? "failed",
+        severity: "high" as const,
+        anchor: `#run-${run.run_id}`,
+        detail: run.command
+      })
+    ),
+    ...setupRequiredRuns.map((run) =>
+      compact({
+        kind: "run" as const,
+        id: run.run_id,
+        label: run.task_id ?? run.agent ?? "Run setup required",
+        status: run.status ?? run.outbox_status ?? "setup_required",
+        severity: "medium" as const,
+        anchor: `#run-${run.run_id}`,
+        detail: run.command
+      })
+    ),
+    ...approvalRequiredTransactions.map((transaction) =>
+      compact({
+        kind: "git_transaction" as const,
+        id: transaction.transaction_id,
+        label: transaction.task_id ?? transaction.branch ?? "Git transaction",
+        status: transaction.status ?? "approval_required",
+        severity: "high" as const,
+        anchor: `#git-transaction-${transaction.transaction_id}`,
+        detail: transaction.approval_id ?? transaction.reason
+      })
+    ),
+    ...(input.recoveryTargets > 0
+      ? [
+          {
+            kind: "recovery" as const,
+            id: "recovery",
+            label: "Runtime recovery targets",
+            status: String(input.recoveryTargets),
+            severity: "high" as const,
+            anchor: "#recovery",
+            detail: "Run kairon recovery inspect"
+          }
+        ]
+      : [])
+  ];
+
+  return {
+    pending_approvals: pendingApprovals.length,
+    failed_runs: failedRuns.length,
+    setup_required_runs: setupRequiredRuns.length,
+    recovery_targets: input.recoveryTargets,
+    git_transactions_requiring_approval: approvalRequiredTransactions.length,
+    attention_total:
+      pendingApprovals.length +
+      failedRuns.length +
+      setupRequiredRuns.length +
+      input.recoveryTargets +
+      approvalRequiredTransactions.length,
+    priority: priority.slice(0, input.recentLimit)
+  };
 }
 
 function summarizeCleanupProposal(

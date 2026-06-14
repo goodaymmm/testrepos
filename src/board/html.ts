@@ -4,6 +4,8 @@ import type {
   BoardDailyReportSummary,
   BoardDiscordAuditSummary,
   BoardDiscordDecisionAuditSummary,
+  BoardGitTransactionSummary,
+  BoardOperationPriorityItem,
   BoardProjection,
   BoardQueueItemSummary,
   BoardReviewLoopSummary,
@@ -35,6 +37,8 @@ export function renderBoardHtml(projection: BoardProjection): string {
     .label { color: #5f6673; font-size: 12px; text-transform: uppercase; }
     .value { margin-top: 6px; font-size: 24px; font-weight: 700; }
     .subvalue { margin-top: 4px; color: #5f6673; font-size: 12px; }
+    .severity-high { color: #8a1c1c; font-weight: 700; }
+    .severity-medium { color: #725200; font-weight: 700; }
     section { overflow: hidden; }
     section h2 { padding: 16px 18px; border-bottom: 1px solid #e6e9ef; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -52,6 +56,7 @@ export function renderBoardHtml(projection: BoardProjection): string {
     <h1>Kairon Board</h1>
     <div class="meta">generated_at=${escapeHtml(projection.generated_at)} | projection=<a href="/projection.json">projection.json</a> | <a href="/">refresh</a></div>
     <nav>
+      <a href="#operations">Operations</a>
       <a href="#runtime">Runtime</a>
       <a href="#recovery">Recovery</a>
       <a href="#discord">Discord</a>
@@ -60,18 +65,22 @@ export function renderBoardHtml(projection: BoardProjection): string {
       <a href="#queue">Queue</a>
       <a href="#runs">Runs</a>
       <a href="#reviews">Reviews</a>
+      <a href="#git">Git</a>
       <a href="#cleanup">Cleanup</a>
     </nav>
   </header>
   <main>
     <div class="stats">
+      ${stat("Attention", String(projection.operations.attention_total), `runs=${projection.operations.failed_runs + projection.operations.setup_required_runs}`)}
       ${stat("Schedule", projection.runtime.schedule.mode, `base=${projection.runtime.schedule.baseMode}`)}
       ${stat("Runtime", projection.runtime.runtimeLock.locked ? "locked" : "idle", projection.runtime.runtimeLock.stale ? "stale=true" : undefined)}
       ${stat("Queue Ready", String(projection.queue.ready), `failed=${projection.queue.failed}`)}
       ${stat("Approvals", String(projection.approvals.pending), "pending")}
       ${stat("Recovery", String(projection.runtime.recovery.targets), "targets")}
+      ${stat("Git Push", String(projection.git.transactions_requiring_approval), "approval required")}
       ${stat("Discord", projection.discord.gateway?.status ?? "unknown", `audit=${projection.discord.notifications.total}/${projection.discord.decisions.total}`)}
     </div>
+    ${renderOperations(projection.operations.priority)}
     <div class="section-group">
       ${renderRuntime(projection)}
       ${renderRecovery(projection)}
@@ -83,6 +92,7 @@ export function renderBoardHtml(projection: BoardProjection): string {
     ${renderRuns(projection.runs.recent)}
     ${renderTasks(projection.tasks.recent)}
     ${renderReviews(projection.reviews.recent_loops, projection.reviews.recent_results)}
+    ${renderGitTransactions(projection.git.recent_transactions)}
     ${renderCleanup(projection.cleanup.recent)}
   </main>
 </body>
@@ -91,6 +101,21 @@ export function renderBoardHtml(projection: BoardProjection): string {
 
 function stat(label: string, value: string, subvalue?: string): string {
   return `<div class="stat"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div>${subvalue === undefined ? "" : `<div class="subvalue">${escapeHtml(subvalue)}</div>`}</div>`;
+}
+
+function renderOperations(items: BoardOperationPriorityItem[]): string {
+  return section(
+    "Operations",
+    ["Severity", "Kind", "Target", "Status", "Detail"],
+    items.map((item) => [
+      `<span class="severity-${escapeAttribute(item.severity)}">${escapeHtml(item.severity)}</span>`,
+      text(item.kind),
+      `<a href="${escapeHtml(item.anchor)}">${escapeHtml(item.id)}</a><div class="subvalue">${escapeHtml(item.label)}</div>`,
+      text(item.status),
+      text(item.detail)
+    ]),
+    "operations"
+  );
 }
 
 function renderRuntime(projection: BoardProjection): string {
@@ -242,7 +267,7 @@ function renderRuns(runs: BoardRunSummary[]): string {
     "Runs",
     ["Run", "Task", "Agent", "Status", "Exit", "Finished"],
     runs.map((run) => [
-      code(run.run_id),
+      `<a id="${runAnchor(run.run_id)}" href="#${runAnchor(run.run_id)}"><code>${escapeHtml(run.run_id)}</code></a>`,
       text(run.task_id),
       text(run.agent),
       text(run.status ?? run.outbox_status),
@@ -258,14 +283,14 @@ function renderReviews(
   results: BoardReviewResultSummary[]
 ): string {
   const loopRows = loops.map((loop) => [
-    code(loop.loop_id),
+    `<a id="${reviewLoopAnchor(loop.loop_id)}" href="#${reviewLoopAnchor(loop.loop_id)}"><code>${escapeHtml(loop.loop_id)}</code></a>`,
     text(loop.task_id),
     text(loop.status),
     text(loop.iteration === undefined ? undefined : String(loop.iteration)),
     text(loop.updated_at ?? loop.created_at)
   ]);
   const resultRows = results.map((result) => [
-    code(result.review_id),
+    `<a id="${reviewResultAnchor(result.review_id)}" href="#${reviewResultAnchor(result.review_id)}"><code>${escapeHtml(result.review_id)}</code></a>`,
     text(result.run_id),
     text(result.status),
     text(result.score === undefined ? undefined : String(result.score)),
@@ -275,6 +300,23 @@ function renderReviews(
 
   return `<div id="reviews">${section("Review Loops", ["Loop", "Task", "Status", "Iteration", "Updated"], loopRows)}
 ${section("Review Results", ["Review", "Run", "Status", "Score", "Highest Severity", "Created"], resultRows)}</div>`;
+}
+
+function renderGitTransactions(transactions: BoardGitTransactionSummary[]): string {
+  return section(
+    "Git Transactions",
+    ["Transaction", "Status", "Task", "Branch", "Remote Ref", "Approval", "Updated"],
+    transactions.map((transaction) => [
+      `<a id="${gitTransactionAnchor(transaction.transaction_id)}" href="#${gitTransactionAnchor(transaction.transaction_id)}"><code>${escapeHtml(transaction.transaction_id)}</code></a>`,
+      text(transaction.status),
+      text(transaction.task_id),
+      text(transaction.branch),
+      text(transaction.remote_ref ?? undefined),
+      text(transaction.approval_id),
+      text(transaction.updated_at ?? transaction.created_at)
+    ]),
+    "git"
+  );
 }
 
 function renderCleanup(proposals: BoardCleanupProposalSummary[]): string {
@@ -318,6 +360,22 @@ function optionalNumber(value: number | undefined): string | undefined {
 
 function approvalAnchor(approvalId: string): string {
   return `approval-${escapeAttribute(approvalId)}`;
+}
+
+function runAnchor(runId: string): string {
+  return `run-${escapeAttribute(runId)}`;
+}
+
+function reviewLoopAnchor(loopId: string): string {
+  return `review-loop-${escapeAttribute(loopId)}`;
+}
+
+function reviewResultAnchor(reviewId: string): string {
+  return `review-result-${escapeAttribute(reviewId)}`;
+}
+
+function gitTransactionAnchor(transactionId: string): string {
+  return `git-transaction-${escapeAttribute(transactionId)}`;
 }
 
 function escapeHtml(value: string): string {
