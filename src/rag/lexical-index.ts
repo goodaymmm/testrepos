@@ -149,6 +149,12 @@ type CandidateSource = {
 };
 
 const maxChunkChars = 1_200;
+const internalReviewScanReplacePattern = /\b(?:secret_scan_passed)\b/giu;
+const internalReviewScanTestPattern = /\b(?:secret_scan_passed)\b/iu;
+const explicitSecretReferenceReplacePattern =
+  /\b(?:GH_TOKEN|GITHUB_TOKEN|KAIRON_DISCORD_BOT_TOKEN)\b/gu;
+const explicitSecretReferenceTestPattern =
+  /\b(?:GH_TOKEN|GITHUB_TOKEN|KAIRON_DISCORD_BOT_TOKEN)\b/u;
 
 export async function buildRagIndex(
   projectRoot: string,
@@ -806,6 +812,8 @@ function sanitizeJsonValue(value: unknown): unknown {
 
 function sanitizeTextContent(content: string): string {
   return content
+    .replace(internalReviewScanReplacePattern, "[removed]")
+    .replace(explicitSecretReferenceReplacePattern, "[removed]")
     .replace(
       /"[^"]*(?:api[_-]?key|token|secret|password|authorization|credential|cookie)[^"]*"\s*:\s*(?:"[^"]*"|true|false|null|-?\d+(?:\.\d+)?)/giu,
       "[removed]"
@@ -829,6 +837,8 @@ function isSensitiveKey(key: string): boolean {
 function isSensitiveString(value: string): boolean {
   return (
     /\bSHOULD_(?:NOT|BE)_[A-Z0-9_]+\b/u.test(value) ||
+    internalReviewScanTestPattern.test(value) ||
+    explicitSecretReferenceTestPattern.test(value) ||
     /\b(?:api[_-]?key|token|secret|password|authorization)\b\s*[:=]/iu.test(
       value
     )
