@@ -49,7 +49,12 @@ export type DailyMaintenanceResult = {
   >;
   rag_index?: Pick<
     BuildRagIndexResult,
-    "index_path" | "source_count" | "chunk_count"
+    | "index_path"
+    | "source_count"
+    | "chunk_count"
+    | "skipped_source_count"
+    | "skipped_protected_count"
+    | "pruned_source_count"
   >;
   rag_index_skipped?: RagIndexSkipped;
 };
@@ -106,7 +111,10 @@ export async function runDailyMaintenance(
         : {
             index_path: ragIndex.index_path,
             source_count: ragIndex.source_count,
-            chunk_count: ragIndex.chunk_count
+            chunk_count: ragIndex.chunk_count,
+            skipped_source_count: ragIndex.skipped_source_count,
+            skipped_protected_count: ragIndex.skipped_protected_count,
+            pruned_source_count: ragIndex.pruned_source_count
           },
     rag_index_skipped:
       ragIndex === undefined

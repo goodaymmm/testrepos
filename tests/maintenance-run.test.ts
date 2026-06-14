@@ -148,7 +148,9 @@ describe("runDailyMaintenance", () => {
 
     expect(result.rag_index).toMatchObject({
       index_path: ".kairon/rag/index.json",
-      chunk_count: expect.any(Number)
+      chunk_count: expect.any(Number),
+      skipped_protected_count: expect.any(Number),
+      pruned_source_count: expect.any(Number)
     });
     expect(result.rag_index_skipped).toBeUndefined();
     await expect(
@@ -163,6 +165,8 @@ describe("runDailyMaintenance", () => {
     const output = await runMaintenance(root, { buildRag: true });
     expect(output).toContain("rag_index=.kairon/rag/index.json");
     expect(output).toContain("rag_chunks=");
+    expect(output).toContain("rag_skipped_protected=");
+    expect(output).toContain("rag_pruned_sources=");
   });
 
   it("refreshes the RAG index during maintenance when enabled", async () => {
@@ -190,7 +194,9 @@ describe("runDailyMaintenance", () => {
 
     expect(result.rag_index).toMatchObject({
       index_path: ".kairon/rag/index.json",
-      chunk_count: expect.any(Number)
+      chunk_count: expect.any(Number),
+      skipped_protected_count: expect.any(Number),
+      pruned_source_count: expect.any(Number)
     });
     await expect(
       readJsonFile(path.join(root, ".kairon", "rag", "index.json"))

@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeProject } from "../src/cli/commands/init.js";
@@ -7,6 +7,8 @@ import {
   refreshRagIndexCommand,
   statusRagIndexCommand
 } from "../src/cli/commands/rag.js";
+import { readJsonFile } from "../src/core/fs/json-file.js";
+import type { RagIndex } from "../src/rag/lexical-index.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("RAG CLI commands", () => {
@@ -25,13 +27,66 @@ describe("RAG CLI commands", () => {
     const refreshOutput = await refreshRagIndexCommand(root);
     expect(refreshOutput).toContain("Kairon RAG index refreshed.");
     expect(refreshOutput).toContain("index=.kairon/rag/index.json");
+    expect(refreshOutput).toContain("mode=full");
     expect(refreshOutput).toMatch(/sources=\d+/);
     expect(refreshOutput).toMatch(/chunks=\d+/);
+    expect(refreshOutput).toMatch(/skipped_protected=\d+/);
+    expect(refreshOutput).toMatch(/pruned_sources=\d+/);
 
     const statusOutput = await statusRagIndexCommand(root);
     expect(statusOutput).toContain("exists=true");
     expect(statusOutput).toContain("index=.kairon/rag/index.json");
+    expect(statusOutput).toMatch(/index_size_bytes=\d+/);
+    expect(statusOutput).toContain("last_refresh_at=");
     expect(statusOutput).toContain("updated_at=");
+  });
+
+  it("refreshes a scoped subset while retaining the previous index", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    const oldDoc = path.join(root, "docs", "old-rag.md");
+    const freshDoc = path.join(root, "docs", "fresh-rag.md");
+    await writeFile(oldDoc, "Old RAG source remains searchable.", "utf8");
+    await writeFile(freshDoc, "Fresh RAG source before scoped refresh.", "utf8");
+    await utimes(
+      oldDoc,
+      new Date("2026-05-24T00:00:00.000Z"),
+      new Date("2026-05-24T00:00:00.000Z")
+    );
+    await utimes(
+      freshDoc,
+      new Date("2026-05-25T00:00:00.000Z"),
+      new Date("2026-05-25T00:00:00.000Z")
+    );
+
+    await refreshRagIndexCommand(root);
+    await writeFile(freshDoc, "Fresh RAG source after scoped refresh.", "utf8");
+    await utimes(
+      freshDoc,
+      new Date("2026-05-27T00:00:00.000Z"),
+      new Date("2026-05-27T00:00:00.000Z")
+    );
+
+    const output = await refreshRagIndexCommand(root, {
+      since: "2026-05-26T00:00:00.000Z",
+      type: "document",
+      limit: "1"
+    });
+    expect(output).toContain("mode=scoped");
+
+    const index = await readJsonFile<RagIndex>(
+      path.join(root, ".kairon", "rag", "index.json")
+    );
+    expect(index.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ path: "docs/old-rag.md" }),
+        expect.objectContaining({ path: "docs/fresh-rag.md" })
+      ])
+    );
+    expect(index.chunks.map((chunk) => chunk.text).join("\n")).toContain(
+      "Fresh RAG source after scoped refresh."
+    );
   });
 
   it("queries with metadata filters and redacts secret-like output", async () => {

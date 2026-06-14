@@ -21,7 +21,9 @@ export async function runMaintenance(
           ]
       : [
           `rag_index=${result.rag_index.index_path}`,
-          `rag_chunks=${result.rag_index.chunk_count}`
+          `rag_chunks=${result.rag_index.chunk_count}`,
+          `rag_skipped_protected=${result.rag_index.skipped_protected_count}`,
+          `rag_pruned_sources=${result.rag_index.pruned_source_count}`
         ];
 
   return [

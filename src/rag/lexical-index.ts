@@ -91,7 +91,19 @@ export type BuildRagIndexResult = {
   index_path: string;
   source_count: number;
   chunk_count: number;
+  refresh_mode: "full" | "scoped";
+  skipped_source_count: number;
+  skipped_protected_count: number;
+  pruned_source_count: number;
   index: RagIndex;
+};
+
+export type BuildRagIndexOptions = {
+  now?: () => Date;
+  since?: Date | string;
+  sourceTypes?: RagSourceType[];
+  limit?: number;
+  prune?: boolean;
 };
 
 export type RagSearchRequest = {
@@ -117,6 +129,10 @@ export type RagIndexStatus = {
   exists: boolean;
   source_count: number;
   chunk_count: number;
+  index_size_bytes?: number;
+  last_refresh_at?: string;
+  skipped_source_count: number;
+  skipped_protected_count: number;
   created_at?: string;
   updated_at?: string;
 };
@@ -148,6 +164,23 @@ type CandidateSource = {
   absolutePath: string;
 };
 
+type PreparedCandidateSource = CandidateSource & {
+  relativePath: string;
+  updatedAt: Date;
+  mtimeMs: number;
+};
+
+type PreparedCandidateSources = {
+  indexable: PreparedCandidateSource[];
+  skipped_source_count: number;
+  skipped_protected_count: number;
+};
+
+type BuiltSource = {
+  source: RagIndexSource;
+  chunks: RagIndexChunk[];
+};
+
 const maxChunkChars = 1_200;
 const internalReviewScanReplacePattern = /\b(?:secret_scan_passed)\b/giu;
 const internalReviewScanTestPattern = /\b(?:secret_scan_passed)\b/iu;
@@ -158,72 +191,52 @@ const explicitSecretReferenceTestPattern =
 
 export async function buildRagIndex(
   projectRoot: string,
-  options: { now?: () => Date } = {}
+  options: BuildRagIndexOptions = {}
 ): Promise<BuildRagIndexResult> {
   const now = (options.now?.() ?? new Date()).toISOString();
   const config = await loadConfigFile<RagConfig>(projectRoot, "rag.json");
   const indexPath = ragIndexPath(projectRoot, config);
-  const candidates = await collectCandidateSources(projectRoot);
   const excludePatterns = await loadExcludePatterns(projectRoot, config);
-  const sources: RagIndexSource[] = [];
-  const chunks: RagIndexChunk[] = [];
+  const prepared = await prepareCandidateSources(projectRoot, config);
+  const selectedCandidates = filterCandidateSources(prepared.indexable, options);
+  const scoped = isScopedRefresh(options);
+  const builtSources: BuiltSource[] = [];
 
-  for (const candidate of candidates) {
-    const relativePath = toProjectPath(projectRoot, candidate.absolutePath);
-    if (isExcludedPath(relativePath, excludePatterns)) {
-      continue;
+  for (const candidate of selectedCandidates) {
+    const built = await buildIndexedSource(projectRoot, candidate);
+    if (built !== undefined) {
+      builtSources.push(built);
     }
-
-    const rawContent = await readFile(candidate.absolutePath, "utf8");
-    const content = sanitizeIndexContent(rawContent);
-    if (content.trim().length === 0) {
-      continue;
-    }
-    if (candidate.sourceType === "failure" && !isFailureMemory(content, relativePath)) {
-      continue;
-    }
-
-    const contentHash = sha256(content);
-    const fileStat = await stat(candidate.absolutePath);
-    const metadata = inferMetadata({
-      sourceType: candidate.sourceType,
-      relativePath,
-      content,
-      updatedAt: fileStat.mtime
-    });
-    const source: RagIndexSource = {
-      source_id: `${candidate.sourceType}:${relativePath}:${contentHash.slice(7, 19)}`,
-      source_type: candidate.sourceType,
-      path: relativePath,
-      content_hash: contentHash,
-      bytes: Buffer.byteLength(content, "utf8"),
-      updated_at: fileStat.mtime.toISOString(),
-      metadata
-    };
-    sources.push(source);
-
-    chunks.push(
-      ...chunkContent(content).map((text, index) => ({
-        chunk_id: `${source.source_id}#${index + 1}`,
-        source_id: source.source_id,
-        source_type: source.source_type,
-        path: source.path,
-        content_hash: source.content_hash,
-        metadata: source.metadata,
-        text
-      }))
-    );
   }
+
+  const selectedSourceKeys = new Set(
+    selectedCandidates.map((candidate) =>
+      sourceIdentity(candidate.sourceType, candidate.relativePath)
+    )
+  );
+  const existingIndex = await readExistingIndex(indexPath);
+  const prunedSourceIds =
+    options.prune === true && existingIndex !== undefined
+      ? await findPrunedSourceIds(projectRoot, existingIndex, excludePatterns)
+      : new Set<string>();
+
+  const merged = mergeIndexSources({
+    existingIndex,
+    builtSources,
+    selectedSourceKeys,
+    prunedSourceIds,
+    scoped
+  });
 
   const index: RagIndex = {
     schema_version: "0.1",
     kind: "rag_lexical_index",
-    created_at: now,
+    created_at: scoped && existingIndex !== undefined ? existingIndex.created_at : now,
     updated_at: now,
-    source_count: sources.length,
-    chunk_count: chunks.length,
-    sources,
-    chunks
+    source_count: merged.sources.length,
+    chunk_count: merged.chunks.length,
+    sources: merged.sources,
+    chunks: merged.chunks
   };
 
   await mkdir(path.dirname(indexPath), { recursive: true });
@@ -232,8 +245,12 @@ export async function buildRagIndex(
   return {
     schema_version: "0.1",
     index_path: toProjectPath(projectRoot, indexPath),
-    source_count: sources.length,
-    chunk_count: chunks.length,
+    source_count: index.source_count,
+    chunk_count: index.chunk_count,
+    refresh_mode: scoped ? "scoped" : "full",
+    skipped_source_count: prepared.skipped_source_count,
+    skipped_protected_count: prepared.skipped_protected_count,
+    pruned_source_count: prunedSourceIds.size,
     index
   };
 }
@@ -276,9 +293,11 @@ export async function isRagEnabled(projectRoot: string): Promise<boolean> {
 export async function getRagIndexStatus(projectRoot: string): Promise<RagIndexStatus> {
   const config = await loadConfigFile<RagConfig>(projectRoot, "rag.json");
   const indexPath = ragIndexPath(projectRoot, config);
+  const prepared = await prepareCandidateSources(projectRoot, config);
 
   try {
     await access(indexPath);
+    const indexFileStat = await stat(indexPath);
     const index = await readJsonFile<RagIndex>(indexPath);
     return {
       schema_version: "0.1",
@@ -287,6 +306,10 @@ export async function getRagIndexStatus(projectRoot: string): Promise<RagIndexSt
       exists: true,
       source_count: index.source_count,
       chunk_count: index.chunk_count,
+      index_size_bytes: indexFileStat.size,
+      last_refresh_at: index.updated_at,
+      skipped_source_count: prepared.skipped_source_count,
+      skipped_protected_count: prepared.skipped_protected_count,
       created_at: index.created_at,
       updated_at: index.updated_at
     };
@@ -302,7 +325,9 @@ export async function getRagIndexStatus(projectRoot: string): Promise<RagIndexSt
     index_path: toProjectPath(projectRoot, indexPath),
     exists: false,
     source_count: 0,
-    chunk_count: 0
+    chunk_count: 0,
+    skipped_source_count: prepared.skipped_source_count,
+    skipped_protected_count: prepared.skipped_protected_count
   };
 }
 
@@ -386,6 +411,242 @@ async function collectCandidateSources(
   );
 
   return dedupeCandidates(candidates);
+}
+
+async function prepareCandidateSources(
+  projectRoot: string,
+  ragConfig: RagConfig
+): Promise<PreparedCandidateSources> {
+  const candidates = await collectCandidateSources(projectRoot);
+  const excludePatterns = await loadExcludePatterns(projectRoot, ragConfig);
+  const indexable: PreparedCandidateSource[] = [];
+  let skippedProtectedCount = 0;
+
+  for (const candidate of candidates) {
+    const relativePath = toProjectPath(projectRoot, candidate.absolutePath);
+    if (isExcludedPath(relativePath, excludePatterns)) {
+      skippedProtectedCount += 1;
+      continue;
+    }
+
+    const fileStat = await stat(candidate.absolutePath);
+    indexable.push({
+      ...candidate,
+      relativePath,
+      updatedAt: fileStat.mtime,
+      mtimeMs: fileStat.mtimeMs
+    });
+  }
+
+  indexable.sort(comparePreparedCandidates);
+
+  return {
+    indexable,
+    skipped_source_count: skippedProtectedCount,
+    skipped_protected_count: skippedProtectedCount
+  };
+}
+
+function filterCandidateSources(
+  candidates: PreparedCandidateSource[],
+  options: BuildRagIndexOptions
+): PreparedCandidateSource[] {
+  const since = normalizeSince(options.since);
+  const sourceTypeSet =
+    options.sourceTypes === undefined ? undefined : new Set(options.sourceTypes);
+  const filtered = candidates.filter((candidate) => {
+    if (sourceTypeSet !== undefined && !sourceTypeSet.has(candidate.sourceType)) {
+      return false;
+    }
+
+    if (since !== undefined && candidate.updatedAt < since) {
+      return false;
+    }
+
+    return true;
+  });
+
+  if (options.limit === undefined) {
+    return filtered;
+  }
+
+  return filtered.slice(0, options.limit);
+}
+
+async function buildIndexedSource(
+  projectRoot: string,
+  candidate: PreparedCandidateSource
+): Promise<BuiltSource | undefined> {
+  const rawContent = await readFile(candidate.absolutePath, "utf8");
+  const content = sanitizeIndexContent(rawContent);
+  if (content.trim().length === 0) {
+    return undefined;
+  }
+  if (
+    candidate.sourceType === "failure" &&
+    !isFailureMemory(content, candidate.relativePath)
+  ) {
+    return undefined;
+  }
+
+  const contentHash = sha256(content);
+  const metadata = inferMetadata({
+    sourceType: candidate.sourceType,
+    relativePath: candidate.relativePath,
+    content,
+    updatedAt: candidate.updatedAt
+  });
+  const source: RagIndexSource = {
+    source_id: `${candidate.sourceType}:${candidate.relativePath}:${contentHash.slice(7, 19)}`,
+    source_type: candidate.sourceType,
+    path: candidate.relativePath,
+    content_hash: contentHash,
+    bytes: Buffer.byteLength(content, "utf8"),
+    updated_at: candidate.updatedAt.toISOString(),
+    metadata
+  };
+
+  return {
+    source,
+    chunks: chunkContent(content).map((text, index) => ({
+      chunk_id: `${source.source_id}#${index + 1}`,
+      source_id: source.source_id,
+      source_type: source.source_type,
+      path: source.path,
+      content_hash: source.content_hash,
+      metadata: source.metadata,
+      text
+    }))
+  };
+}
+
+function mergeIndexSources(input: {
+  existingIndex: RagIndex | undefined;
+  builtSources: BuiltSource[];
+  selectedSourceKeys: Set<string>;
+  prunedSourceIds: Set<string>;
+  scoped: boolean;
+}): { sources: RagIndexSource[]; chunks: RagIndexChunk[] } {
+  if (!input.scoped || input.existingIndex === undefined) {
+    return sortIndexParts({
+      sources: input.builtSources.map((item) => item.source),
+      chunks: input.builtSources.flatMap((item) => item.chunks)
+    });
+  }
+
+  const retainedSources = input.existingIndex.sources.filter(
+    (source) =>
+      !input.prunedSourceIds.has(source.source_id) &&
+      !input.selectedSourceKeys.has(sourceIdentity(source.source_type, source.path))
+  );
+  const retainedSourceIds = new Set(
+    retainedSources.map((source) => source.source_id)
+  );
+  const sources = [
+    ...retainedSources,
+    ...input.builtSources.map((item) => item.source)
+  ];
+  const chunks = [
+    ...input.existingIndex.chunks.filter((chunk) =>
+      retainedSourceIds.has(chunk.source_id)
+    ),
+    ...input.builtSources.flatMap((item) => item.chunks)
+  ];
+
+  return sortIndexParts({ sources, chunks });
+}
+
+function sortIndexParts(input: {
+  sources: RagIndexSource[];
+  chunks: RagIndexChunk[];
+}): { sources: RagIndexSource[]; chunks: RagIndexChunk[] } {
+  return {
+    sources: [...input.sources].sort(compareSources),
+    chunks: [...input.chunks].sort(compareChunks)
+  };
+}
+
+async function readExistingIndex(indexPath: string): Promise<RagIndex | undefined> {
+  try {
+    await access(indexPath);
+    return readJsonFile<RagIndex>(indexPath);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+    return undefined;
+  }
+}
+
+async function findPrunedSourceIds(
+  projectRoot: string,
+  index: RagIndex,
+  excludePatterns: string[]
+): Promise<Set<string>> {
+  const pruned = new Set<string>();
+  for (const source of index.sources) {
+    if (
+      isArchivedCleanupArtifact(source.path) ||
+      isExcludedPath(source.path, excludePatterns) ||
+      !(await exists(resolveInside(projectRoot, source.path)))
+    ) {
+      pruned.add(source.source_id);
+    }
+  }
+
+  return pruned;
+}
+
+function isScopedRefresh(options: BuildRagIndexOptions): boolean {
+  return (
+    options.since !== undefined ||
+    options.sourceTypes !== undefined ||
+    options.limit !== undefined
+  );
+}
+
+function normalizeSince(value: Date | string | undefined): Date | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid RAG since timestamp: ${String(value)}`);
+  }
+
+  return parsed;
+}
+
+function sourceIdentity(sourceType: RagSourceType, relativePath: string): string {
+  return `${sourceType}:${toPosixPath(relativePath).toLowerCase()}`;
+}
+
+function comparePreparedCandidates(
+  left: PreparedCandidateSource,
+  right: PreparedCandidateSource
+): number {
+  return (
+    right.mtimeMs - left.mtimeMs ||
+    left.sourceType.localeCompare(right.sourceType) ||
+    left.relativePath.localeCompare(right.relativePath)
+  );
+}
+
+function compareSources(left: RagIndexSource, right: RagIndexSource): number {
+  return (
+    left.source_type.localeCompare(right.source_type) ||
+    left.path.localeCompare(right.path) ||
+    left.source_id.localeCompare(right.source_id)
+  );
+}
+
+function compareChunks(left: RagIndexChunk, right: RagIndexChunk): number {
+  return left.chunk_id.localeCompare(right.chunk_id);
+}
+
+function isArchivedCleanupArtifact(relativePath: string): boolean {
+  return toPosixPath(relativePath).startsWith(".kairon/cleanup/archived/");
 }
 
 async function collectFiles(
