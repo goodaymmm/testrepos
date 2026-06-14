@@ -38,6 +38,14 @@ describe("board projection", () => {
       queue: {
         ready: 1
       },
+      operations: {
+        pending_approvals: 1,
+        failed_runs: 1,
+        setup_required_runs: 1,
+        recovery_targets: 1,
+        git_transactions_requiring_approval: 1,
+        attention_total: 5
+      },
       tasks: {
         total: 1,
         by_status: {
@@ -45,7 +53,7 @@ describe("board projection", () => {
         }
       },
       runs: {
-        total: 1
+        total: 3
       },
       approvals: {
         pending: 1
@@ -53,6 +61,10 @@ describe("board projection", () => {
       reviews: {
         loops_total: 1,
         results_total: 1
+      },
+      git: {
+        transactions_total: 2,
+        transactions_requiring_approval: 1
       },
       cleanup: {
         proposals_total: 1
@@ -93,6 +105,10 @@ describe("board projection", () => {
     });
     expect(projection.queue.recent[0]).not.toHaveProperty("payload");
     expect(projection.runs.recent[0]).toMatchObject({
+      run_id: "RUN-0003",
+      status: "setup_required"
+    });
+    expect(projection.runs.recent[2]).toMatchObject({
       run_id: "RUN-0001",
       outbox_status: "completed",
       outbox_event_count: 1
@@ -115,6 +131,44 @@ describe("board projection", () => {
       actor_hash: "abcdef1234567890",
       message_update_status: "updated"
     });
+    expect(projection.git.recent_transactions[0]).toMatchObject({
+      transaction_id: "GTX-0002",
+      status: "pushing"
+    });
+    expect(projection.git.recent_transactions[1]).toMatchObject({
+      transaction_id: "GTX-0001",
+      status: "approval_required",
+      approval_id: "APR-0001"
+    });
+    expect(projection.operations.priority).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "approval",
+          id: "APR-0001",
+          anchor: "#approval-APR-0001"
+        }),
+        expect.objectContaining({
+          kind: "run",
+          id: "RUN-0002",
+          anchor: "#run-RUN-0002"
+        }),
+        expect.objectContaining({
+          kind: "run",
+          id: "RUN-0003",
+          anchor: "#run-RUN-0003"
+        }),
+        expect.objectContaining({
+          kind: "git_transaction",
+          id: "GTX-0001",
+          anchor: "#git-transaction-GTX-0001"
+        }),
+        expect.objectContaining({
+          kind: "recovery",
+          id: "recovery",
+          anchor: "#recovery"
+        })
+      ])
+    );
 
     const serialized = JSON.stringify(projection);
     expect(serialized).not.toContain("SHOULD_NOT_LEAK");
@@ -144,6 +198,7 @@ describe("board projection", () => {
 
     expect(output).toContain("Kairon board projection exported.");
     expect(output).toContain("projection=.kairon/board/projection.json");
+    expect(output).toContain("operations.attention=0");
   });
 
   it("renders sanitized read-only board HTML with approval anchors", async () => {
@@ -157,6 +212,8 @@ describe("board projection", () => {
     const html = renderBoardHtml(projection);
 
     expect(html).toContain("<title>Kairon Board</title>");
+    expect(html).toContain('href="#operations"');
+    expect(html).toContain('id="operations"');
     expect(html).toContain('href="#runtime"');
     expect(html).toContain('id="runtime"');
     expect(html).toContain('id="recovery"');
@@ -164,6 +221,14 @@ describe("board projection", () => {
     expect(html).toContain('id="discord"');
     expect(html).toContain('id="approval-APR-0001"');
     expect(html).toContain('href="#approval-APR-0001"');
+    expect(html).toContain('id="run-RUN-0002"');
+    expect(html).toContain('href="#run-RUN-0002"');
+    expect(html).toContain('id="review-loop-REV-0001"');
+    expect(html).toContain('id="review-result-REV-RESULT-0001"');
+    expect(html).toContain('id="git"');
+    expect(html).toContain('id="git-transaction-GTX-0001"');
+    expect(html).toContain("Operations");
+    expect(html).toContain("Git Transactions");
     expect(html).toContain("Discord Summary");
     expect(html).toContain("Discord Decision Audit");
     expect(html).toContain("failedRuns");
@@ -263,6 +328,58 @@ async function seedBoardArtifacts(root: string): Promise<void> {
     ]
   });
 
+  const failedRunDir = path.join(root, ".kairon", "runs", "RUN-0002");
+  await mkdir(failedRunDir, { recursive: true });
+  await writeJsonFileAtomic(path.join(failedRunDir, "runner.json"), {
+    schema_version: "0.1",
+    run_id: "RUN-0002",
+    task_id: "TASK-0001",
+    agent: "claude",
+    persona: "reviewer",
+    status: "failed",
+    command: "claude",
+    command_available: true,
+    exit_code: 1,
+    timed_out: false,
+    stdout_log: ".kairon/runs/RUN-0002/stdout.log",
+    stderr_log: ".kairon/runs/RUN-0002/stderr.log",
+    created_at: "2026-06-01T00:03:30.000Z",
+    finished_at: "2026-06-01T00:03:40.000Z"
+  });
+  await writeJsonFileAtomic(path.join(failedRunDir, "outbox.json"), {
+    schema_version: "0.1",
+    run_id: "RUN-0002",
+    task_id: "TASK-0001",
+    status: "failed",
+    events: [
+      {
+        type: "message.created",
+        payload: {
+          stdout: "FULL_STDOUT_SHOULD_NOT_APPEAR"
+        }
+      }
+    ]
+  });
+
+  const setupRunDir = path.join(root, ".kairon", "runs", "RUN-0003");
+  await mkdir(setupRunDir, { recursive: true });
+  await writeJsonFileAtomic(path.join(setupRunDir, "runner.json"), {
+    schema_version: "0.1",
+    run_id: "RUN-0003",
+    task_id: "TASK-0001",
+    agent: "gemini",
+    persona: "researcher",
+    status: "setup_required",
+    command: "agy",
+    command_available: true,
+    exit_code: 1,
+    timed_out: false,
+    stdout_log: ".kairon/runs/RUN-0003/stdout.log",
+    stderr_log: ".kairon/runs/RUN-0003/stderr.log",
+    created_at: "2026-06-01T00:03:50.000Z",
+    finished_at: "2026-06-01T00:04:10.000Z"
+  });
+
   await writeJsonFileAtomic(path.join(root, ".kairon", "approvals", "APR-0001.json"), {
     schema_version: "0.1",
     id: "APR-0001",
@@ -276,6 +393,53 @@ async function seedBoardArtifacts(root: string): Promise<void> {
     created_at: "2026-06-01T00:04:00.000Z",
     updated_at: "2026-06-01T00:04:00.000Z"
   });
+
+  await writeJsonFileAtomic(
+    path.join(root, ".kairon", "git", "transactions", "GTX-0001.json"),
+    {
+      schema_version: "0.1",
+      transaction_id: "GTX-0001",
+      task_id: "TASK-0001",
+      run_id: "RUN-0001",
+      review_loop_id: "REV-0001",
+      branch: "auto/TASK-0001/codex",
+      status: "approval_required",
+      push: {
+        requested: true,
+        allowed: false,
+        remote: "origin",
+        remote_ref: "main",
+        pushed: false,
+        approval_id: "APR-0001",
+        reason: "protected_branch_push requires approval"
+      },
+      transaction_path: ".kairon/git/transactions/GTX-0001.json",
+      created_at: "2026-06-01T00:04:30.000Z",
+      updated_at: "2026-06-01T00:04:30.000Z"
+    }
+  );
+  await writeJsonFileAtomic(
+    path.join(root, ".kairon", "git", "transactions", "GTX-0002.json"),
+    {
+      schema_version: "0.1",
+      transaction_id: "GTX-0002",
+      task_id: "TASK-0001",
+      run_id: "RUN-0002",
+      review_loop_id: "REV-0001",
+      branch: "auto/TASK-0001/claude",
+      status: "pushing",
+      push: {
+        requested: true,
+        allowed: true,
+        remote: "origin",
+        remote_ref: "auto/TASK-0001/claude",
+        pushed: false
+      },
+      transaction_path: ".kairon/git/transactions/GTX-0002.json",
+      created_at: "2026-06-01T00:04:40.000Z",
+      updated_at: "2026-06-01T00:04:40.000Z"
+    }
+  );
 
   await writeJsonFileAtomic(
     path.join(root, ".kairon", "reviews", "loops", "REV-0001.json"),
