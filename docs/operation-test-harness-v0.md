@@ -70,7 +70,7 @@ Discord decision auditをliveで確認する場合は、approvalをseedしてDis
 
 ## GitHub branch protection live確認
 
-T67のGitHub branch protection live確認は、private repositoryのGitHubプラン制約で403になる場合があるため、public sandbox repositoryで代替確認します。現時点では手動手順として扱い、harness profile化は後続タスクで行います。
+T67のGitHub branch protection live確認は、private repositoryのGitHubプラン制約で403になる場合があるため、public sandbox repositoryで代替確認します。現時点では手動手順として扱い、harness profile化は後続タスクで行います。再実行手順は [docs/github-branch-protection-sandbox-v0.md](github-branch-protection-sandbox-v0.md) を参照してください。
 
 必要な前提:
 

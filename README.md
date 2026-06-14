@@ -150,7 +150,7 @@ kairon doctor
 
 Git、`.gitignore`、config、公式CLI、API key混入、Discord設定、GitHub branch protection、runtime recovery、safety policyを確認し、`pass` / `warning` / `error` と次の対応を表示します。
 
-GitHub branch protectionのlive確認は、`GH_TOKEN` または `GITHUB_TOKEN` を使って GitHub REST API を確認します。両方ある場合は `GH_TOKEN` を優先します。fine-grained PATを使う場合は対象repositoryへのRepository accessと、AdministrationのRead-only権限が必要です。GitHub Freeのprivate repositoryではbranch protection APIが403になる場合があるため、live API疎通はpublic sandbox repositoryで確認する運用にしています。
+GitHub branch protectionのlive確認は、`GH_TOKEN` または `GITHUB_TOKEN` を使って GitHub REST API を確認します。両方ある場合は `GH_TOKEN` を優先します。fine-grained PATを使う場合は対象repositoryへのRepository accessと、AdministrationのRead-only権限が必要です。GitHub Freeのprivate repositoryではbranch protection APIが403になる場合があるため、live API疎通はpublic sandbox repositoryで確認する運用にしています。手順は [docs/github-branch-protection-sandbox-v0.md](docs/github-branch-protection-sandbox-v0.md) を参照してください。
 
 ### Agent Smoke
 
@@ -438,5 +438,6 @@ T67-T75では、local runtimeだけでなくGitHub / Discordを含む外部接�
 - [docs/architecture-v0.md](docs/architecture-v0.md)
 - [docs/workflow-v0.md](docs/workflow-v0.md)
 - [docs/cli-commands-v0.md](docs/cli-commands-v0.md)
+- [docs/github-branch-protection-sandbox-v0.md](docs/github-branch-protection-sandbox-v0.md)
 - [docs/project-docking-v0.md](docs/project-docking-v0.md)
 - [docs/subscription-compliance-v0.md](docs/subscription-compliance-v0.md)
