@@ -113,6 +113,9 @@ describe("RAG lexical memory", () => {
     await mkdir(path.join(root, ".kairon", "reviews", "results"), {
       recursive: true
     });
+    await mkdir(path.join(root, ".kairon", "reviews", "loops"), {
+      recursive: true
+    });
     await mkdir(path.join(root, ".kairon", "runs", "RUN-0007"), {
       recursive: true
     });
@@ -154,12 +157,33 @@ describe("RAG lexical memory", () => {
       "utf8"
     );
     await writeFile(
+      path.join(root, ".kairon", "reviews", "loops", "REV-0007-iteration-1.json"),
+      JSON.stringify({
+        loop_id: "REV-0007",
+        task_id: "TASK-0007",
+        status: "changes_requested",
+        decision: {
+          status: "failed",
+          reasons: [
+            "REV-0007: secret_scan_passed is required",
+            "Review runner did not produce validation evidence."
+          ]
+        },
+        created_at: "2026-05-25T01:15:00.000Z"
+      }),
+      "utf8"
+    );
+    await writeFile(
       path.join(root, ".kairon", "runs", "RUN-0007", "runner.json"),
       JSON.stringify({
         run_id: "RUN-0007",
         task_id: "TASK-0007",
         status: "failed",
         failure_reason: "transient tool failure",
+        args: [
+          "Required review_result fields include secret_scan_passed: boolean",
+          "Never expose GH_TOKEN in context."
+        ],
         finished_at: "2026-05-25T01:20:00.000Z"
       }),
       "utf8"
@@ -208,6 +232,7 @@ describe("RAG lexical memory", () => {
     const indexedText = result.index.chunks.map((chunk) => chunk.text).join("\n");
     expect(indexedText).not.toContain("api_token");
     expect(indexedText).not.toContain("secret_scan_passed");
+    expect(indexedText).not.toContain("GH_TOKEN");
     expect(indexedText).not.toContain("SHOULD_NOT_BE_INDEXED");
 
     await expect(
