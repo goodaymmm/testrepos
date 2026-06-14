@@ -87,6 +87,28 @@ describe("createProgram", () => {
     ).toEqual(expect.arrayContaining(["--host", "--port", "--recent", "--max-seconds"]));
   });
 
+  it("registers agent session commands", () => {
+    const agent = createProgram().commands.find(
+      (command) => command.name() === "agent"
+    );
+    const session = agent?.commands.find((command) => command.name() === "session");
+
+    expect(agent?.commands.map((command) => command.name()).sort()).toEqual([
+      "session",
+      "smoke"
+    ]);
+    expect(session?.commands.map((command) => command.name()).sort()).toEqual([
+      "list",
+      "reset",
+      "show"
+    ]);
+    expect(
+      session?.commands
+        .find((command) => command.name() === "reset")
+        ?.options.map((option) => option.long)
+    ).toContain("--date");
+  });
+
   it("registers cleanup proposal commands", () => {
     const cleanup = createProgram().commands.find(
       (command) => command.name() === "cleanup"

@@ -5,7 +5,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { Command } from "commander";
 import { agentCliIdHint } from "../agents/display.js";
 import { KAIRON_VERSION } from "../index.js";
-import { runAgentSmokeCommand } from "./commands/agent.js";
+import {
+  listAgentSessionsCommand,
+  resetAgentSessionCommand,
+  runAgentSmokeCommand,
+  showAgentSessionCommand
+} from "./commands/agent.js";
 import {
   decideApprovalCommand,
   listApprovalsCommand,
@@ -100,6 +105,36 @@ export function createProgram(): Command {
     .option("--timeout-ms <ms>", "CLI execution timeout in milliseconds.")
     .action(async (options: { agent?: string; timeoutMs?: string }) => {
       console.log(await runAgentSmokeCommand(process.cwd(), options));
+    });
+
+  const agentSession = agent
+    .command("session")
+    .description("Inspect and safely reset Kairon agent sessions.");
+
+  agentSession
+    .command("list")
+    .description("List agent sessions for a date.")
+    .option("--date <date>", "Session date in YYYY-MM-DD form. Defaults to today.")
+    .action(async (options: { date?: string }) => {
+      console.log(await listAgentSessionsCommand(process.cwd(), options));
+    });
+
+  agentSession
+    .command("show")
+    .description("Show one agent session.")
+    .argument("<agent>", `Agent id: ${agentCliIdHint()}.`)
+    .option("--date <date>", "Session date in YYYY-MM-DD form. Defaults to today.")
+    .action(async (agentId: string, options: { date?: string }) => {
+      console.log(await showAgentSessionCommand(process.cwd(), agentId, options));
+    });
+
+  agentSession
+    .command("reset")
+    .description("Archive one agent session so a fresh session can be created safely.")
+    .argument("<agent>", `Agent id: ${agentCliIdHint()}.`)
+    .requiredOption("--date <date>", "Session date in YYYY-MM-DD form.")
+    .action(async (agentId: string, options: { date?: string }) => {
+      console.log(await resetAgentSessionCommand(process.cwd(), agentId, options));
     });
 
   const config = program
