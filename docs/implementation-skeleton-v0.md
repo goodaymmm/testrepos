@@ -172,9 +172,10 @@ MVP service。
 - `queue-worker`
 - `agent-session-host`
 - `discord-gateway`
-- `rag-placeholder`
+- `rag-index`
+- `board-server`
 
-Board Server は MVP では disabled service として扱う。
+Board Server は MVP では loopback read-only service として扱う。public bind や外部公開は無効にする。
 
 ### Work Queue
 

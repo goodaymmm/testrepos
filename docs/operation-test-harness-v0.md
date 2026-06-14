@@ -68,6 +68,27 @@ Discord decision auditをliveで確認する場合は、approvalをseedしてDis
 
 `DiscordSetupError` では実tokenを使いつつ、存在しないguild / channel idを一時注入してsetup errorを確認できます。出力にはraw token、guild id、channel idを残さない方針です。
 
+## GitHub branch protection live確認
+
+T67のGitHub branch protection live確認は、private repositoryのGitHubプラン制約で403になる場合があるため、public sandbox repositoryで代替確認します。現時点では手動手順として扱い、harness profile化は後続タスクで行います。
+
+必要な前提:
+
+- `GH_TOKEN` または `GITHUB_TOKEN` が設定されていること。両方ある場合、Kaironは `GH_TOKEN` を優先します。
+- fine-grained PATの場合、対象public sandbox repositoryへのRepository accessがあること。
+- Administration permissionがRead-onlyで付与されていること。
+- sandbox repositoryの対象branchにBranch protection ruleが設定され、required pull request reviewsとrequired status checksが有効であること。
+
+期待する `kairon doctor` evidence:
+
+```text
+PASS git.branch_protection GitHub branch protection
+  - api_status=ok
+  - branch_protection=enabled
+  - required_pull_request_reviews=present
+  - required_status_checks=present
+```
+
 ## Restore方針
 
 実行開始時に `TargetRoot\.kairon` をbackupします。`-SkipRestore` を付けない限り、script終了時に現在の `TargetRoot\.kairon` を削除してbackupから復元します。

@@ -10,7 +10,7 @@ MVP では Slack 対応や常時公開 Board UI を必須にしない。
 - 外出時: Discord 上で簡易情報を見て承認 / 差し戻しする。
 - 在宅時: Discord 通知を入口にし、必要なら Board で詳細を確認して承認する。
 
-スマートフォンでの Board 閲覧は将来対応とする。
+Board は在宅時の詳細確認用として loopback read-only UI を使う。スマートフォン最適化や外部公開は将来対応とする。
 
 ## 結論
 
@@ -44,7 +44,8 @@ MVP は Discord Gateway を優先する。
 | --- | --- | --- |
 | Discord Gateway | MVP | public callback endpoint 不要。個人PC常駐と相性が良い |
 | Discord HTTP Interactions Endpoint | 将来 | serverless / cloud 化しやすいが endpoint 公開と署名検証が必要 |
-| Board Mobile UI | 将来 | 詳細確認には有効だが、初期セキュリティ設計が重い |
+| Loopback Board UI | MVP | 在宅時の詳細確認用。外部公開せず `127.0.0.1` / `localhost` で提供する |
+| Board Mobile UI | 将来 | 詳細確認には有効だが、外部公開と認証設計が必要 |
 
 Gateway で interaction を受けた場合も、Discord への interaction response は HTTP で返す。
 処理は短時間で ack し、実際の state update は内部 queue に渡す。
@@ -171,7 +172,7 @@ Discord Approval は利用者の状況に応じて表示密度を切り替える
 ```
 
 初期実装では schedule と manual toggle で `home / away` を切り替える。
-スマートフォン用 Board は将来の phase で対応する。
+Board linkはloopback URLを前提にし、スマートフォン用Boardやpublic endpointは将来のphaseで対応する。
 
 ## notifications.json
 

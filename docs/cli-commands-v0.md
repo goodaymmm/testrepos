@@ -125,6 +125,8 @@ PASS git.repository Git repository
 
 `warning` は運用前に確認すべき注意、`error` は通常運用前に解消すべき問題を示す。
 
+GitHub branch protection診断は、remote repository、default branch、branch protection API、required pull request reviews、required status checksを確認する。API tokenは `GH_TOKEN` を優先し、未設定時に `GITHUB_TOKEN` を参照する。GitHub Freeのprivate repositoryなど、外部プラン制約でbranch protection APIが403になる場合は、Kairon実装不具合ではなく外部条件として扱い、public sandbox repositoryでlive API確認を代替する。
+
 ## kairon agent smoke
 
 設定済みの公式CLIへ最小promptを投げ、stdout / stderr / runner metadata / outboxを保存する。
@@ -333,6 +335,7 @@ serve HTML and projection.json on loopback only when requested
 ```
 
 `serve` は `127.0.0.1` または `localhost` のようなloopback hostだけを許可する。
+Discord approval messageからBoardを開く場合も、MVPではこのloopback URLを在宅時の詳細確認導線として扱う。public Board公開やスマートフォン最適化は後続のcloud / public endpoint設計に含める。
 
 ## kairon cleanup
 
