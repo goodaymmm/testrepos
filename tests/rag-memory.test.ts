@@ -147,6 +147,7 @@ describe("RAG lexical memory", () => {
         task_id: "TASK-0007",
         run_id: "RUN-0007",
         status: "changes_requested",
+        secret_scan_passed: false,
         findings: [{ severity: "high", body: "Retry guard must be added." }],
         created_at: "2026-05-25T01:10:00.000Z"
       }),
@@ -204,9 +205,10 @@ describe("RAG lexical memory", () => {
       ])
     );
 
-    expect(result.index.chunks.map((chunk) => chunk.text).join("\n")).not.toContain(
-      "SHOULD_NOT_BE_INDEXED"
-    );
+    const indexedText = result.index.chunks.map((chunk) => chunk.text).join("\n");
+    expect(indexedText).not.toContain("api_token");
+    expect(indexedText).not.toContain("secret_scan_passed");
+    expect(indexedText).not.toContain("SHOULD_NOT_BE_INDEXED");
 
     await expect(
       searchRagIndex(root, {

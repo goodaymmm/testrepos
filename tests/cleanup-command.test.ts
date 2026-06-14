@@ -135,4 +135,60 @@ describe("cleanup proposal commands", () => {
       "Kairon cleanup proposal archived."
     );
   });
+
+  it("uses a unique tmp destination when the proposed cleanup destination exists", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await mkdir(path.join(root, "dist"), { recursive: true });
+    await writeFile(path.join(root, "dist", "bundle.js"), "new build\n", "utf8");
+    await createCleanupProposals(root, {
+      date: "2026-06-05",
+      candidatePaths: ["dist"]
+    });
+    await mkdir(path.join(root, ".kairon", "tmp", "2026-06-05", "dist"), {
+      recursive: true
+    });
+    await writeFile(
+      path.join(root, ".kairon", "tmp", "2026-06-05", "dist", "bundle.js"),
+      "old build\n",
+      "utf8"
+    );
+
+    const dryRunOutput = await applyCleanupCommand(root, "2026-06-05", {
+      dryRun: true
+    });
+    expect(dryRunOutput).toContain(
+      ".kairon/tmp/2026-06-05/dist-2 reason=destination already exists"
+    );
+
+    const result = await applyCleanupProposal({
+      projectRoot: root,
+      proposalId: "2026-06-05"
+    });
+
+    expect(result).toMatchObject({
+      moved: 1,
+      blocked: 0,
+      candidates: [
+        expect.objectContaining({
+          status: "moved",
+          destination: ".kairon/tmp/2026-06-05/dist-2",
+          reason:
+            "destination already exists; using .kairon/tmp/2026-06-05/dist-2"
+        })
+      ]
+    });
+    await expect(
+      readFile(
+        path.join(root, ".kairon", "tmp", "2026-06-05", "dist", "bundle.js"),
+        "utf8"
+      )
+    ).resolves.toBe("old build\n");
+    await expect(
+      readFile(
+        path.join(root, ".kairon", "tmp", "2026-06-05", "dist-2", "bundle.js"),
+        "utf8"
+      )
+    ).resolves.toBe("new build\n");
+  });
 });

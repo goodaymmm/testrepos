@@ -758,15 +758,81 @@ function dateFromString(value: string | undefined): string | undefined {
 }
 
 function sanitizeIndexContent(content: string): string {
+  const parsed = parseJsonObject(content);
+  if (parsed !== undefined) {
+    const sanitized = sanitizeJsonValue(parsed);
+    return sanitized === undefined ? "" : JSON.stringify(sanitized);
+  }
+
+  const lines = content.split(/\r?\n/);
+  const nonEmptyLines = lines.filter((line) => line.trim().length > 0);
+  const parsedLines = nonEmptyLines.map((line) => parseJsonObject(line));
+  if (
+    nonEmptyLines.length > 0 &&
+    parsedLines.every((line) => line !== undefined)
+  ) {
+    return parsedLines
+      .map((line) => sanitizeJsonValue(line))
+      .filter((line) => line !== undefined)
+      .map((line) => JSON.stringify(line))
+      .join("\n");
+  }
+
+  return sanitizeTextContent(content);
+}
+
+function sanitizeJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => sanitizeJsonValue(item))
+      .filter((item) => item !== undefined);
+  }
+
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([key]) => !isSensitiveKey(key))
+        .map(([key, item]) => [key, sanitizeJsonValue(item)])
+        .filter(([, item]) => item !== undefined)
+    );
+  }
+
+  if (typeof value === "string" && isSensitiveString(value)) {
+    return undefined;
+  }
+
+  return value;
+}
+
+function sanitizeTextContent(content: string): string {
   return content
     .replace(
-      /"([^"]*(?:api[_-]?key|token|secret|password|authorization)[^"]*)"\s*:\s*"[^"]*"/giu,
-      (_match, key: string) => `"${key}":"[redacted]"`
+      /"[^"]*(?:api[_-]?key|token|secret|password|authorization|credential|cookie)[^"]*"\s*:\s*(?:"[^"]*"|true|false|null|-?\d+(?:\.\d+)?)/giu,
+      "[removed]"
     )
     .replace(
-      /\b(api[_-]?key|token|secret|password|authorization)\b\s*[:=]\s*[^\s"',}]+/giu,
-      "$1=[redacted]"
+      /\b[\w.-]*(?:api[_-]?key|token|secret|password|authorization|credential|cookie)[\w.-]*\b\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s"',}]+)/giu,
+      "[removed]"
+    )
+    .replace(
+      /\bSHOULD_(?:NOT|BE)_[A-Z0-9_]+\b/gu,
+      "[removed]"
     );
+}
+
+function isSensitiveKey(key: string): boolean {
+  return /api[_-]?key|token|secret|password|authorization|credential|cookie/iu.test(
+    key
+  );
+}
+
+function isSensitiveString(value: string): boolean {
+  return (
+    /\bSHOULD_(?:NOT|BE)_[A-Z0-9_]+\b/u.test(value) ||
+    /\b(?:api[_-]?key|token|secret|password|authorization)\b\s*[:=]/iu.test(
+      value
+    )
+  );
 }
 
 function isFailureMemory(content: string, relativePath: string): boolean {
