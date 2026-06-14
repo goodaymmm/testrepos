@@ -25,9 +25,14 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 - read-only Board projection / loopback Board server
 - local lexical RAG index、RAG query CLI、context builder連携
 
-現時点で未完成または後続作業の範囲:
+T67-T75完了後も残る主な後続作業の範囲:
 
-- 24時間以上の連続daemon運用エビデンス取得と運用手順の固定
+- GitHub branch protection live確認のpublic sandbox運用をharness profile化
+- private repositoryでbranch protection APIが403になる場合の診断文言改善
+- 24時間以上の連続daemon運用エビデンス取得とWindows常駐手順の固定
+- Board運用ビュー、Discord通知とBoard linkの対応追跡強化
+- RAG index pruning / compaction など長期運用メンテナンス
+- operation test結果の自動集計とPASS反映支援
 - LangGraph workflow runtime の本格導入
 - merge / deploy の自動実行
 - cloud / public HTTP endpoint でのDiscord Interactions運用
@@ -144,6 +149,8 @@ kairon doctor
 ```
 
 Git、`.gitignore`、config、公式CLI、API key混入、Discord設定、GitHub branch protection、runtime recovery、safety policyを確認し、`pass` / `warning` / `error` と次の対応を表示します。
+
+GitHub branch protectionのlive確認は、`GH_TOKEN` または `GITHUB_TOKEN` を使って GitHub REST API を確認します。両方ある場合は `GH_TOKEN` を優先します。fine-grained PATを使う場合は対象repositoryへのRepository accessと、AdministrationのRead-only権限が必要です。GitHub Freeのprivate repositoryではbranch protection APIが403になる場合があるため、live API疎通はpublic sandbox repositoryで確認する運用にしています。
 
 ### Agent Smoke
 
@@ -389,7 +396,7 @@ T11からT15では、初期ドッキング後の運用に必要なCLI経路を�
 | T14-01 | `kairon approval` | list/show/decide、redaction、approve/reject/request_changes/snooze、二重決定拒否、state反映 |
 | T15-01 | `kairon start` runtime tick | Active Work queue処理、Standby Work制限、承認済みitem処理、Maintenance 1日1回実行、`last-tick.json` 記録 |
 
-T11-T15時点では対象外だったが、後続タスクで実装済みまたは一部実装済みになった範囲:
+T11-T15時点では対象外だったが、T67-T75までに実装済みまたは運用テストPASS済みになった範囲:
 
 - T12-03 persistent PTY / same-day session state
 - T12-04 usage limit / permission detector
@@ -399,6 +406,22 @@ T11-T15時点では対象外だったが、後続タスクで実装済みまた�
 - T15-03 backup / tmp proposal management / cleanup apply / archive
 - Board projection / loopback Board server
 - Runtime recovery target list / resolve / acknowledge
+
+### T67-T75 運用テスト結果の扱い
+
+T67-T75では、local runtimeだけでなくGitHub / Discordを含む外部接続条件も確認しています。外部サービス側の権限やプラン制約で対象project上のlive確認ができない場合は、public sandbox repositoryや手動目視を使って代替エビデンスを残します。
+
+| 区分 | 対象 | 現状 |
+| --- | --- | --- |
+| T67 | GitHub branch protection診断 | public sandbox `goodaymmm/14Forge` でlive API確認済み。private repositoryの403は外部条件として扱う |
+| T68 | Cleanup apply / archive | dry-run、apply、archive、protected path blockを確認済み |
+| T69 | Runtime recovery resolution | stale / partial / ambiguous target、resolve / acknowledge、重複抑止を確認済み |
+| T70 | Discord live decision audit | Gateway live接続、approval通知、button decision、audit artifact記録を確認済み |
+| T71 | Daemon hardening | heartbeat、stop reason、lock、idle tick、last-tickを確認済み |
+| T72 | Board UI | loopback dashboard、projection、redaction、主要state表示を確認済み |
+| T73 | Same-day session / setup_required | CLI availability、setup_required分類、session artifactを確認済み |
+| T74 | RAG query / context連携 | refresh、query、metadata filter、secret/protected除外、context builder連携を確認済み |
+| T75 | Git transaction連携 | review承認後のtransaction queue、metadata、rollback/recovery接続を確認済み |
 
 ## 推奨する次の進め方
 
