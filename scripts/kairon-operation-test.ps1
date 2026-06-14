@@ -21,7 +21,8 @@ param(
     "DiscordSetupError",
     "ApprovalNotificationAudit",
     "DiscordDecisionAuditLive",
-    "RuntimeRecovery"
+    "RuntimeRecovery",
+    "BranchProtectionPublicSandbox"
   )]
   [string[]]$Test = @("All"),
 
@@ -37,6 +38,14 @@ param(
   [string]$DiscordDecisionAuditExpectedAction = "approve",
 
   [int]$DiscordDecisionAuditTimeoutSeconds = 0,
+
+  [string]$BranchProtectionSandboxRoot = "",
+
+  [string]$BranchProtectionSandboxRepoUrl = "",
+
+  [string]$BranchProtectionSandboxBranch = "main",
+
+  [switch]$BranchProtectionRequireToken,
 
   [switch]$SkipRestore
 )
@@ -622,6 +631,55 @@ function Assert-NoSecretLeak {
   }
 
   return $true
+}
+
+function Get-GitHubTokenSecretValues {
+  $values = @()
+  foreach ($name in @("GH_TOKEN", "GITHUB_TOKEN")) {
+    $value = [Environment]::GetEnvironmentVariable($name, "Process")
+    if (-not [string]::IsNullOrWhiteSpace($value) -and $value.Length -ge 6) {
+      $values += $value
+    }
+  }
+
+  @($values | Select-Object -Unique)
+}
+
+function Get-GitHubTokenSource {
+  $ghToken = [Environment]::GetEnvironmentVariable("GH_TOKEN", "Process")
+  if (-not [string]::IsNullOrWhiteSpace($ghToken)) {
+    return "GH_TOKEN"
+  }
+
+  $githubToken = [Environment]::GetEnvironmentVariable("GITHUB_TOKEN", "Process")
+  if (-not [string]::IsNullOrWhiteSpace($githubToken)) {
+    return "GITHUB_TOKEN"
+  }
+
+  return "missing"
+}
+
+function Format-GitHubTokenSnapshot {
+  $lines = @()
+  foreach ($name in @("GH_TOKEN", "GITHUB_TOKEN")) {
+    $value = [Environment]::GetEnvironmentVariable($name, "Process")
+    $state = if ([string]::IsNullOrWhiteSpace($value)) { "missing" } else { "present" }
+    $lines += "$name=$state"
+  }
+  $lines += "token.source=$(Get-GitHubTokenSource)"
+
+  $lines -join [Environment]::NewLine
+}
+
+function Get-BranchProtectionSandboxWorkspace {
+  $base = if ([string]::IsNullOrWhiteSpace($BranchProtectionSandboxRoot)) {
+    Join-Path $script:RunOutputRoot "branch-protection-public-sandbox"
+  } else {
+    $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($BranchProtectionSandboxRoot)
+  }
+
+  New-Directory -Path $base
+  Join-Path $base "workspace-$($script:RunId)"
 }
 
 function Set-DiscordProviderEnabled {
@@ -1466,6 +1524,93 @@ try {
       if ($Evidence -notmatch "decision\.audit\.message_update_status=(updated|skipped|failed|unavailable)") {
         return "message_update_status was missing from audit"
       }
+      return $true
+    }
+  }
+
+  if (Should-Run "BranchProtectionPublicSandbox") {
+    Invoke-Step -Id "BRANCH_PROTECTION_PUBLIC_SANDBOX" -Name "GitHub branch protection public sandbox" -Script {
+      $repoUrl = $BranchProtectionSandboxRepoUrl.Trim()
+      $branch = if ([string]::IsNullOrWhiteSpace($BranchProtectionSandboxBranch)) {
+        "main"
+      } else {
+        $BranchProtectionSandboxBranch.Trim()
+      }
+
+      if ([string]::IsNullOrWhiteSpace($repoUrl)) {
+        @(
+          "setup_required.missing_repo_url=true",
+          "branch_protection.require_token=$($BranchProtectionRequireToken.IsPresent)",
+          "github.env.snapshot",
+          (Format-GitHubTokenSnapshot)
+        ) -join [Environment]::NewLine
+      } elseif ((Get-GitHubTokenSource) -eq "missing") {
+        @(
+          "setup_required.missing_token=true",
+          "branch_protection.require_token=$($BranchProtectionRequireToken.IsPresent)",
+          "github.env.snapshot",
+          (Format-GitHubTokenSnapshot),
+          "branch_protection.repo_url=$repoUrl",
+          "branch_protection.branch=$branch"
+        ) -join [Environment]::NewLine
+      } else {
+        $workspace = Get-BranchProtectionSandboxWorkspace
+        New-Directory -Path $workspace
+
+        Invoke-External -WorkingDirectory $workspace -Script { git init } | Out-Null
+        Invoke-External -WorkingDirectory $workspace -Script { git branch -M $branch } | Out-Null
+        Invoke-External -WorkingDirectory $workspace -Script { git remote add origin $repoUrl } | Out-Null
+        Invoke-External -WorkingDirectory $workspace -Script { kairon init } | Out-Null
+        $doctor = Invoke-Captured {
+          Invoke-InDirectory -Path $workspace -CommandBlock { kairon doctor }
+        }
+
+        @(
+          "github.env.snapshot",
+          (Format-GitHubTokenSnapshot),
+          "branch_protection.workspace=$workspace",
+          "branch_protection.require_token=$($BranchProtectionRequireToken.IsPresent)",
+          "branch_protection.repo_url=$repoUrl",
+          "branch_protection.branch=$branch",
+          "doctor.exit_code=$($doctor.ExitCode)",
+          $doctor.Output
+        ) -join [Environment]::NewLine
+      }
+    } -Assert {
+      param($Evidence)
+
+      $leak = Assert-NoSecretLeak -Text $Evidence -SecretValues (Get-GitHubTokenSecretValues)
+      if ($leak -ne $true) { return $leak }
+
+      if ($Evidence -match "setup_required\.missing_repo_url=true") {
+        return New-StepResult -Status "SETUP_REQUIRED" -Details "missing -BranchProtectionSandboxRepoUrl"
+      }
+
+      if ($Evidence -match "setup_required\.missing_token=true") {
+        return New-StepResult -Status "SETUP_REQUIRED" -Details "missing GH_TOKEN or GITHUB_TOKEN"
+      }
+
+      if ($Evidence -match "auth=missing") {
+        return New-StepResult -Status "SETUP_REQUIRED" -Details "GitHub token was not detected by doctor"
+      }
+
+      if ($Evidence -match "http_status=(403|404)") {
+        return New-StepResult -Status "SETUP_REQUIRED" -Details "GitHub branch protection API returned http_status=$($Matches[1])"
+      }
+
+      if ($Evidence -notmatch "api_status=ok") {
+        return "api_status=ok was not found"
+      }
+      if ($Evidence -notmatch "branch_protection=enabled") {
+        return New-StepResult -Status "SETUP_REQUIRED" -Details "branch protection is not enabled on sandbox branch"
+      }
+      if ($Evidence -notmatch "required_pull_request_reviews=present") {
+        return New-StepResult -Status "SETUP_REQUIRED" -Details "required pull request reviews are not configured"
+      }
+      if ($Evidence -notmatch "required_status_checks=present") {
+        return New-StepResult -Status "SETUP_REQUIRED" -Details "required status checks are not configured"
+      }
+
       return $true
     }
   }

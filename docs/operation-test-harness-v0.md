@@ -45,6 +45,7 @@ operation-test-results/<yyyyMMdd-HHmmss>/backup/kairon-state/
 | `ApprovalNotificationAudit` | Discord approval notification audit artifactを検査 |
 | `DiscordDecisionAuditLive` | 手動Discord button/modal操作後に `decision-interactions.jsonl` が記録されることを確認 |
 | `RuntimeRecovery` | stale gateway / stale git transactionをseedし、runtime recovery evidenceとapproval生成を確認 |
+| `BranchProtectionPublicSandbox` | public sandbox repositoryでGitHub branch protection live API疎通を確認。token不足や403/404は `SETUP_REQUIRED` として扱う |
 
 一部だけ実行する場合:
 
@@ -70,7 +71,7 @@ Discord decision auditをliveで確認する場合は、approvalをseedしてDis
 
 ## GitHub branch protection live確認
 
-T67のGitHub branch protection live確認は、private repositoryのGitHubプラン制約で403になる場合があるため、public sandbox repositoryで代替確認します。現時点では手動手順として扱い、harness profile化は後続タスクで行います。再実行手順は [docs/github-branch-protection-sandbox-v0.md](github-branch-protection-sandbox-v0.md) を参照してください。
+T67のGitHub branch protection live確認は、private repositoryのGitHubプラン制約で403になる場合があるため、public sandbox repositoryで代替確認します。手順の詳細は [docs/github-branch-protection-sandbox-v0.md](github-branch-protection-sandbox-v0.md) を参照してください。
 
 必要な前提:
 
@@ -88,6 +89,21 @@ PASS git.branch_protection GitHub branch protection
   - required_pull_request_reviews=present
   - required_status_checks=present
 ```
+
+profile実行例:
+
+```powershell
+.\scripts\kairon-operation-test.ps1 `
+  -KaironRoot "C:\Users\hikar\Documents\AutoRunner" `
+  -TargetRoot "M:\EnglishApp" `
+  -Test BranchProtectionPublicSandbox `
+  -BranchProtectionSandboxRoot "$env:TEMP\kairon-branch-protection-sandbox" `
+  -BranchProtectionSandboxRepoUrl "https://github.com/goodaymmm/14Forge.git" `
+  -BranchProtectionSandboxBranch main `
+  -BranchProtectionRequireToken
+```
+
+`BranchProtectionPublicSandbox` は `GH_TOKEN` を優先し、未設定時に `GITHUB_TOKEN` を使います。token未設定、403、404、required gate未設定は、コード不具合ではなく外部条件不足として `SETUP_REQUIRED` に記録します。
 
 ## Restore方針
 
