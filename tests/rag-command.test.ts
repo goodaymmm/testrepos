@@ -64,7 +64,7 @@ describe("RAG CLI commands", () => {
     expect(output).toContain("source_type=approval");
     expect(output).toContain("metadata.task_id=TASK-0007");
     expect(output).toContain("metadata.approval_id=APR-0007");
-    expect(output).toContain("api_token\":\"[redacted]");
+    expect(output).not.toContain("api_token");
     expect(output).not.toContain("SHOULD_NOT_LEAK");
   });
 

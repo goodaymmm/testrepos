@@ -597,18 +597,38 @@ async function evaluateCleanupCandidate(options: {
     };
   }
 
-  if (await pathExists(destinationPath)) {
-    return {
-      ...baseResult,
-      status: "blocked_invalid_destination",
-      reason: "destination already exists"
-    };
-  }
+  const availableDestinationPath = await nextAvailableDestinationPath(destinationPath);
+  const destination =
+    availableDestinationPath === destinationPath
+      ? candidate.destination
+      : toProjectPath(options.projectRoot, availableDestinationPath);
 
   return {
     ...baseResult,
-    status: "planned"
+    destination,
+    status: "planned",
+    reason:
+      availableDestinationPath === destinationPath
+        ? undefined
+        : `destination already exists; using ${destination}`
   };
+}
+
+async function nextAvailableDestinationPath(destinationPath: string): Promise<string> {
+  if (!(await pathExists(destinationPath))) {
+    return destinationPath;
+  }
+
+  const parsed = path.parse(destinationPath);
+  for (let suffix = 2; ; suffix += 1) {
+    const candidatePath = path.join(
+      parsed.dir,
+      `${parsed.name}-${suffix}${parsed.ext}`
+    );
+    if (!(await pathExists(candidatePath))) {
+      return candidatePath;
+    }
+  }
 }
 
 function matchesProtectedPath(projectPath: string, patterns: string[]): boolean {

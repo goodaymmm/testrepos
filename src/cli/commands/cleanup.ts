@@ -98,10 +98,11 @@ export function formatCleanupApplyResult(result: CleanupApplyResult): string {
   }
 
   lines.push(
-    ...result.candidates.map(
-      (candidate) =>
-        `- ${candidate.id} ${candidate.status} ${candidate.path} -> ${candidate.destination}`
-    )
+    ...result.candidates.map((candidate) => {
+      const reason =
+        candidate.reason === undefined ? "" : ` reason=${candidate.reason}`;
+      return `- ${candidate.id} ${candidate.status} ${candidate.path} -> ${candidate.destination}${reason}`;
+    })
   );
 
   return lines.join("\n");
