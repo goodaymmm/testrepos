@@ -422,8 +422,17 @@ export function createProgram(): Command {
   rag
     .command("refresh")
     .description("Refresh the local RAG index.")
-    .action(async () => {
-      console.log(await refreshRagIndexCommand(process.cwd()));
+    .option("--since <iso-date>", "Only refresh sources updated at or after this timestamp.")
+    .option("--type <type>", "Source type filter, comma- or whitespace-separated.")
+    .option("--limit <count>", "Maximum candidate sources to refresh.")
+    .option("--prune", "Remove missing, protected, or archived sources from the existing index.")
+    .action(async (options: {
+      since?: string;
+      type?: string;
+      limit?: string;
+      prune?: boolean;
+    }) => {
+      console.log(await refreshRagIndexCommand(process.cwd(), options));
     });
 
   rag

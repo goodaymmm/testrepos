@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeProject } from "../src/cli/commands/init.js";
@@ -83,6 +83,7 @@ describe("RAG lexical memory", () => {
     await writeFile(path.join(root, ".env.local"), "SECRET=1", "utf8");
 
     const result = await buildRagIndex(root);
+    expect(result.skipped_protected_count).toBeGreaterThanOrEqual(1);
     expect(result.index.sources.map((source) => source.path)).not.toContain(
       "docs/api-token-notes.md"
     );
@@ -103,6 +104,33 @@ describe("RAG lexical memory", () => {
         score: expect.any(Number)
       }
     ]);
+  });
+
+  it("prunes missing sources during scoped refresh", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    const keptDoc = path.join(root, "docs", "keep-rag.md");
+    const removedDoc = path.join(root, "docs", "remove-rag.md");
+    await writeFile(keptDoc, "Keep this source in the RAG index.", "utf8");
+    await writeFile(removedDoc, "Remove this source from the RAG index.", "utf8");
+
+    await buildRagIndex(root);
+    await unlink(removedDoc);
+
+    const result = await buildRagIndex(root, {
+      sourceTypes: ["document"],
+      prune: true
+    });
+
+    expect(result.refresh_mode).toBe("scoped");
+    expect(result.pruned_source_count).toBe(1);
+    expect(result.index.sources.map((source) => source.path)).toContain(
+      "docs/keep-rag.md"
+    );
+    expect(result.index.sources.map((source) => source.path)).not.toContain(
+      "docs/remove-rag.md"
+    );
   });
 
   it("indexes decision, review, approval, and failure memories with metadata", async () => {

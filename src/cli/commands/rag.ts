@@ -1,11 +1,19 @@
 import {
   buildRagIndex,
   getRagIndexStatus,
+  type BuildRagIndexOptions,
   type RagCollection,
   type RagSearchRequest,
   searchRagIndex,
   type RagSourceType
 } from "../../rag/lexical-index.js";
+
+export type RagRefreshCommandOptions = {
+  since?: string;
+  type?: string;
+  limit?: string;
+  prune?: boolean;
+};
 
 export type RagQueryCommandOptions = {
   type?: string;
@@ -45,13 +53,26 @@ const collections: RagCollection[] = [
   "documents"
 ];
 
-export async function refreshRagIndexCommand(projectRoot: string): Promise<string> {
-  const result = await buildRagIndex(projectRoot);
+export async function refreshRagIndexCommand(
+  projectRoot: string,
+  options: RagRefreshCommandOptions = {}
+): Promise<string> {
+  const buildOptions: BuildRagIndexOptions = {
+    since: parseSince(options.since),
+    sourceTypes: parseEnumList(options.type, sourceTypes, "source type"),
+    limit: parseOptionalLimit(options.limit),
+    prune: options.prune === true
+  };
+  const result = await buildRagIndex(projectRoot, buildOptions);
   return [
     "Kairon RAG index refreshed.",
     `index=${result.index_path}`,
+    `mode=${result.refresh_mode}`,
     `sources=${result.source_count}`,
     `chunks=${result.chunk_count}`,
+    `skipped_sources=${result.skipped_source_count}`,
+    `skipped_protected=${result.skipped_protected_count}`,
+    `pruned_sources=${result.pruned_source_count}`,
     `updated_at=${result.index.updated_at}`
   ].join("\n");
 }
@@ -65,6 +86,14 @@ export async function statusRagIndexCommand(projectRoot: string): Promise<string
     `exists=${status.exists}`,
     `sources=${status.source_count}`,
     `chunks=${status.chunk_count}`,
+    `skipped_sources=${status.skipped_source_count}`,
+    `skipped_protected=${status.skipped_protected_count}`,
+    ...(status.index_size_bytes === undefined
+      ? []
+      : [`index_size_bytes=${status.index_size_bytes}`]),
+    ...(status.last_refresh_at === undefined
+      ? []
+      : [`last_refresh_at=${status.last_refresh_at}`]),
     ...(status.created_at === undefined ? [] : [`created_at=${status.created_at}`]),
     ...(status.updated_at === undefined ? [] : [`updated_at=${status.updated_at}`])
   ].join("\n");
@@ -135,13 +164,30 @@ function buildFilters(options: RagQueryCommandOptions): RagSearchRequest["filter
 }
 
 function parseLimit(value: string | undefined): number {
+  return parseOptionalLimit(value) ?? 5;
+}
+
+function parseOptionalLimit(value: string | undefined): number | undefined {
   if (value === undefined) {
-    return 5;
+    return undefined;
   }
 
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
     throw new Error(`Invalid RAG limit: ${value}`);
+  }
+
+  return parsed;
+}
+
+function parseSince(value: string | undefined): Date | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid RAG since timestamp: ${value}`);
   }
 
   return parsed;
