@@ -311,7 +311,7 @@ describe("runDoctor", () => {
     );
   });
 
-  it("normalizes GitHub branch protection auth and not found failures into warnings", async () => {
+  it("normalizes GitHub branch protection auth, permission, and not found failures into warnings", async () => {
     const root = await createInitializedGitProject();
     await writeGitHubRemote(root, "https://github.com/goodaymmm/Kairon");
 
@@ -321,14 +321,41 @@ describe("runDoctor", () => {
       env: { GH_TOKEN: "secret-token" },
       githubBranchProtectionClient: async () => ({
         kind: "auth_error",
+        httpStatus: 401
+      })
+    });
+    const authCheck = checkById(authError, "git.branch_protection");
+
+    expect(authError.ok).toBe(true);
+    expect(authCheck?.status).toBe("warning");
+    expect(authCheck?.details).toEqual(
+      expect.arrayContaining(["api_status=auth_error", "http_status=401"])
+    );
+    expect(authCheck?.nextAction).toBe(
+      "Check GH_TOKEN or GITHUB_TOKEN authentication, then retry GitHub branch protection verification."
+    );
+
+    const permissionError = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: { GH_TOKEN: "secret-token" },
+      githubBranchProtectionClient: async () => ({
+        kind: "plan_or_permission_error",
         httpStatus: 403
       })
     });
+    const permissionCheck = checkById(permissionError, "git.branch_protection");
 
-    expect(authError.ok).toBe(true);
-    expect(statusById(authError, "git.branch_protection")).toBe("warning");
-    expect(checkById(authError, "git.branch_protection")?.details).toEqual(
-      expect.arrayContaining(["api_status=auth_error", "http_status=403"])
+    expect(permissionError.ok).toBe(true);
+    expect(permissionCheck?.status).toBe("warning");
+    expect(permissionCheck?.details).toEqual(
+      expect.arrayContaining(["api_status=plan_or_permission_error", "http_status=403"])
+    );
+    expect(permissionCheck?.nextAction).toContain(
+      "Check token repository access and Administration read permission"
+    );
+    expect(permissionCheck?.nextAction).toContain(
+      "public sandbox repository"
     );
 
     const notFound = await runDoctor({
@@ -345,6 +372,9 @@ describe("runDoctor", () => {
     expect(statusById(notFound, "git.branch_protection")).toBe("warning");
     expect(checkById(notFound, "git.branch_protection")?.details).toEqual(
       expect.arrayContaining(["api_status=not_found_or_unprotected", "http_status=404"])
+    );
+    expect(checkById(notFound, "git.branch_protection")?.nextAction).toContain(
+      "public sandbox branch protection check"
     );
   });
 
