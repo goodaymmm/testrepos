@@ -111,6 +111,10 @@ export type GitHubBranchProtectionResult =
       httpStatus: number;
     }
   | {
+      kind: "plan_or_permission_error";
+      httpStatus: number;
+    }
+  | {
       kind: "api_error";
       httpStatus: number;
     }
@@ -567,7 +571,16 @@ async function checkGitHubBranchProtection(
       "git.branch_protection",
       "GitHub branch protection",
       apiDetails,
-      "Check GH_TOKEN or GITHUB_TOKEN permissions for GitHub branch protection read access."
+      "Check GH_TOKEN or GITHUB_TOKEN authentication, then retry GitHub branch protection verification."
+    );
+  }
+
+  if (apiResult.kind === "plan_or_permission_error") {
+    return warning(
+      "git.branch_protection",
+      "GitHub branch protection",
+      apiDetails,
+      "GitHub returned 403. Check token repository access and Administration read permission; for private repositories on plans that do not expose branch protection enforcement, verify live access with a public sandbox repository."
     );
   }
 
@@ -576,7 +589,7 @@ async function checkGitHubBranchProtection(
       "git.branch_protection",
       "GitHub branch protection",
       apiDetails,
-      "Enable branch protection for the default branch or verify the configured GitHub repository and branch."
+      "Enable branch protection for the default branch, verify repository/branch access, or run the public sandbox branch protection check."
     );
   }
 
@@ -761,6 +774,10 @@ function formatGitHubApiDetails(result: GitHubBranchProtectionResult): string[] 
     return ["api_status=auth_error", `http_status=${result.httpStatus}`];
   }
 
+  if (result.kind === "plan_or_permission_error") {
+    return ["api_status=plan_or_permission_error", `http_status=${result.httpStatus}`];
+  }
+
   if (result.kind === "api_error") {
     return ["api_status=api_error", `http_status=${result.httpStatus}`];
   }
@@ -802,8 +819,12 @@ async function fetchGitHubBranchProtection(
       };
     }
 
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       return { kind: "auth_error", httpStatus: response.status };
+    }
+
+    if (response.status === 403) {
+      return { kind: "plan_or_permission_error", httpStatus: response.status };
     }
 
     if (response.status === 404) {

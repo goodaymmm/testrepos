@@ -125,7 +125,7 @@ PASS git.repository Git repository
 
 `warning` は運用前に確認すべき注意、`error` は通常運用前に解消すべき問題を示す。
 
-GitHub branch protection診断は、remote repository、default branch、branch protection API、required pull request reviews、required status checksを確認する。API tokenは `GH_TOKEN` を優先し、未設定時に `GITHUB_TOKEN` を参照する。GitHub Freeのprivate repositoryなど、外部プラン制約でbranch protection APIが403になる場合は、Kairon実装不具合ではなく外部条件として扱い、public sandbox repositoryでlive API確認を代替する。
+GitHub branch protection診断は、remote repository、default branch、branch protection API、required pull request reviews、required status checksを確認する。API tokenは `GH_TOKEN` を優先し、未設定時に `GITHUB_TOKEN` を参照する。GitHub Freeのprivate repositoryなど、外部プラン制約でbranch protection APIが403になる場合は `api_status=plan_or_permission_error` として扱い、Kairon実装不具合ではなく外部条件としてpublic sandbox repositoryでlive API確認を代替する。
 
 ## kairon agent smoke
 

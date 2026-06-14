@@ -149,7 +149,7 @@ PASS git.branch_protection GitHub branch protection
 | --- | --- |
 | `api_status=ok` かつ `branch_protection=enabled` | live API確認PASS |
 | `auth=missing` | token未設定。`GH_TOKEN` または `GITHUB_TOKEN` を設定する |
-| `http_status=403` | token権限不足、repository access不足、またはGitHub側のprivate repository / plan制約 |
+| `api_status=plan_or_permission_error` / `http_status=403` | token権限不足、repository access不足、またはGitHub側のprivate repository / plan制約。public sandboxでlive API疎通を代替確認する |
 | `http_status=404` | repository名、remote URL、tokenのrepository accessを確認する |
 | `required_pull_request_reviews=missing` | Branch protection ruleでpull request review要求を有効にする |
 | `required_status_checks=missing` | Branch protection ruleでrequired status checksを有効にする |
