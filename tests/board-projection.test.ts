@@ -123,13 +123,19 @@ describe("board projection", () => {
     expect(projection.discord.notifications.recent[0]).toMatchObject({
       approval_id: "APR-0001",
       status: "failed",
+      message_id: "discord-message-2",
+      board_anchor: "#approval-APR-0001",
+      board_url: "http://127.0.0.1:8787/#approval-APR-0001",
       reason: "token=[redacted] failed"
     });
     expect(projection.discord.decisions.recent[0]).toMatchObject({
       approval_id: "APR-0001",
       decision: "approve",
       actor_hash: "abcdef1234567890",
-      message_update_status: "updated"
+      message_id: "discord-message-1",
+      command_status: "completed",
+      message_update_status: "updated",
+      message_update_reason: "status message updated"
     });
     expect(projection.git.recent_transactions[0]).toMatchObject({
       transaction_id: "GTX-0002",
@@ -231,6 +237,11 @@ describe("board projection", () => {
     expect(html).toContain("Git Transactions");
     expect(html).toContain("Discord Summary");
     expect(html).toContain("Discord Decision Audit");
+    expect(html).toContain("discord-message-1");
+    expect(html).toContain("discord-message-2");
+    expect(html).toContain("http://127.0.0.1:8787/#approval-APR-0001");
+    expect(html).toContain("#approval-APR-0001");
+    expect(html).toContain("status message updated");
     expect(html).toContain("failedRuns");
     expect(html).toContain("/projection.json");
     expect(html).not.toContain("FULL_DIFF_SHOULD_NOT_APPEAR");
@@ -502,17 +513,21 @@ async function seedBoardArtifacts(root: string): Promise<void> {
         schema_version: "0.1",
         approval_id: "APR-0001",
         status: "sent",
+        message_id: "discord-message-1",
+        board_url: "http://127.0.0.1:8787/#approval-APR-0001",
+        board_anchor: "#approval-APR-0001",
         channel_id: "SHOULD_NOT_BE_EXPOSED",
-        message_id: "SHOULD_NOT_BE_EXPOSED",
         recorded_at: "2026-06-01T00:09:00.000Z"
       }),
       JSON.stringify({
         schema_version: "0.1",
         approval_id: "APR-0001",
         status: "failed",
+        message_id: "discord-message-2",
+        board_url: "http://127.0.0.1:8787/#approval-APR-0001",
+        board_anchor: "#approval-APR-0001",
         reason: "token=SHOULD_NOT_LEAK failed",
         channel_id: "SHOULD_NOT_BE_EXPOSED",
-        message_id: "SHOULD_NOT_BE_EXPOSED",
         recorded_at: "2026-06-01T00:10:00.000Z"
       })
     ].join("\n") + "\n",
@@ -526,8 +541,11 @@ async function seedBoardArtifacts(root: string): Promise<void> {
       decision: "approve",
       status: "applied",
       actor_hash: "abcdef1234567890",
+      message_id: "discord-message-1",
       actor_id: "SHOULD_NOT_BE_EXPOSED",
+      command_status: "completed",
       message_update_status: "updated",
+      message_update_reason: "status message updated",
       recorded_at: "2026-06-01T00:11:00.000Z"
     })}\n`,
     "utf8"

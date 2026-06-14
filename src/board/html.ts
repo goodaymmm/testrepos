@@ -199,6 +199,10 @@ function renderDiscord(
   const notificationRows = notifications.recent.map((record) => [
     text(record.approval_id),
     text(record.status),
+    text(record.message_id),
+    record.board_url === undefined
+      ? text(record.board_anchor)
+      : `<a href="${escapeHtml(record.board_url)}">${escapeHtml(record.board_anchor ?? "Open Board")}</a>`,
     text(record.reason),
     text(record.recorded_at ?? record.updated_at ?? record.sent_at)
   ]);
@@ -207,13 +211,16 @@ function renderDiscord(
     text(record.decision),
     text(record.status),
     text(record.actor_hash),
+    text(record.message_id),
+    text(record.command_status),
     text(record.message_update_status),
+    text(record.message_update_reason),
     text(record.recorded_at)
   ]);
 
   return `<div id="discord">${section("Discord Summary", ["Key", "Value"], summaryRows)}
-${section("Discord Notification Audit", ["Approval", "Status", "Reason", "Recorded"], notificationRows)}
-${section("Discord Decision Audit", ["Approval", "Decision", "Status", "Actor", "Message", "Recorded"], decisionRows)}</div>`;
+${section("Discord Notification Audit", ["Approval", "Status", "Message", "Board", "Reason", "Recorded"], notificationRows)}
+${section("Discord Decision Audit", ["Approval", "Decision", "Status", "Actor", "Message", "Command", "Update", "Update Reason", "Recorded"], decisionRows)}</div>`;
 }
 
 function renderTasks(tasks: BoardTaskSummary[]): string {
