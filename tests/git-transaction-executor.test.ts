@@ -60,6 +60,21 @@ describe("GitTransactionExecutor", () => {
         strategy: "reset_branch_to_parent",
         parent_sha: "parent-sha",
         command_hint: "git reset --hard parent-sha"
+      },
+      pr: {
+        status: "local_commit_ready",
+        transaction_id: "GTX-0001",
+        task_id: "TASK-0001",
+        run_id: "RUN-0001",
+        review_loop_id: "REV-0001",
+        base_branch: "main",
+        head_branch: "auto/TASK-0001/codex",
+        remote: "origin",
+        remote_ref: "auto/TASK-0001/codex",
+        commit_sha: "commit-sha",
+        diff_sha256: expect.stringMatching(/^sha256:/),
+        rollback_strategy: "reset_branch_to_parent",
+        rollback_hint: "git reset --hard parent-sha"
       }
     });
     expect(invocations.map((invocation) => invocation.args)).toEqual([
@@ -113,6 +128,15 @@ describe("GitTransactionExecutor", () => {
         pushed: false,
         approval_id: "APR-0001",
         reason: "auto push is disabled by policy"
+      },
+      pr: {
+        status: "push_approval_required",
+        approval_id: "APR-0001",
+        base_branch: "main",
+        head_branch: "auto/TASK-0001/codex",
+        remote_ref: "auto/TASK-0001/codex",
+        commit_sha: "commit-sha",
+        rollback_hint: "git reset --hard parent-sha"
       }
     });
     expect(invocations.some((invocation) => invocation.args[0] === "push")).toBe(false);
@@ -121,11 +145,18 @@ describe("GitTransactionExecutor", () => {
     ).resolves.toMatchObject({
       type: "git_push",
       status: "pending",
+      title: "Git push approval for TASK-0001",
       transaction_id: "GTX-0001",
       task_id: "TASK-0001",
       run_id: "RUN-0001",
       review_loop_id: "REV-0001",
-      expected_head_sha: "commit-sha"
+      expected_head_sha: "commit-sha",
+      rollback_strategy: "reset_branch_to_parent",
+      rollback_command_hint: "git reset --hard parent-sha",
+      pr: {
+        status: "push_approval_required",
+        approval_id: "APR-0001"
+      }
     });
   });
 
@@ -164,6 +195,15 @@ describe("GitTransactionExecutor", () => {
       rollback: {
         strategy: "revert_commit",
         parent_sha: "parent-sha"
+      },
+      pr: {
+        status: "ready_for_pr",
+        base_branch: "main",
+        head_branch: "auto/TASK-0001/codex",
+        remote_ref: "auto/TASK-0001/codex",
+        approval_id: "APR-0001",
+        rollback_strategy: "revert_commit",
+        rollback_hint: "git revert parent-sha..HEAD"
       }
     });
     expect(invocations.map((invocation) => invocation.args)).toContainEqual([
@@ -175,7 +215,8 @@ describe("GitTransactionExecutor", () => {
       readJsonFile(path.join(root, ".kairon", "git", "transactions", "GTX-0001.json"))
     ).resolves.toMatchObject({
       status: "pushed",
-      push: { pushed: true }
+      push: { pushed: true },
+      pr: { status: "ready_for_pr" }
     });
   });
 
@@ -203,6 +244,11 @@ describe("GitTransactionExecutor", () => {
         remote_ref: "main",
         approval_id: "APR-0001",
         reason: "protected_branch_push requires approval"
+      },
+      pr: {
+        status: "protected_push_approval_required",
+        remote_ref: "main",
+        approval_id: "APR-0001"
       }
     });
     expect(invocations.some((invocation) => invocation.args[0] === "push")).toBe(false);
@@ -210,7 +256,12 @@ describe("GitTransactionExecutor", () => {
       readJsonFile(path.join(root, ".kairon", "approvals", "APR-0001.json"))
     ).resolves.toMatchObject({
       type: "git_protected_branch_push",
-      remote_ref: "main"
+      title: "Git protected branch push approval for TASK-0001",
+      remote_ref: "main",
+      pr: {
+        status: "protected_push_approval_required",
+        remote_ref: "main"
+      }
     });
   });
 

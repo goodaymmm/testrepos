@@ -63,8 +63,9 @@ describe("board projection", () => {
         results_total: 1
       },
       git: {
-        transactions_total: 2,
-        transactions_requiring_approval: 1
+        transactions_total: 3,
+        transactions_requiring_approval: 1,
+        transactions_ready_for_pr: 1
       },
       cleanup: {
         proposals_total: 1
@@ -73,7 +74,9 @@ describe("board projection", () => {
         daily_reports_total: 1,
         latest_daily_report: {
           date: "2026-06-01",
-          failed_runs: 1
+          failed_runs: 1,
+          git_transactions_ready_for_pr: 1,
+          git_transactions_requiring_approval: 1
         }
       },
       discord: {
@@ -139,12 +142,18 @@ describe("board projection", () => {
     });
     expect(projection.git.recent_transactions[0]).toMatchObject({
       transaction_id: "GTX-0002",
-      status: "pushing"
+      status: "pushed",
+      pr_status: "ready_for_pr",
+      pr_base: "main",
+      pr_head: "auto/TASK-0001/claude",
+      rollback_strategy: "revert_commit"
     });
     expect(projection.git.recent_transactions[1]).toMatchObject({
       transaction_id: "GTX-0001",
       status: "approval_required",
-      approval_id: "APR-0001"
+      approval_id: "APR-0001",
+      pr_status: "protected_push_approval_required",
+      rollback_hint: "git reset --hard parent-sha"
     });
     expect(projection.operations.priority).toEqual(
       expect.arrayContaining([
@@ -415,6 +424,8 @@ async function seedBoardArtifacts(root: string): Promise<void> {
       review_loop_id: "REV-0001",
       branch: "auto/TASK-0001/codex",
       status: "approval_required",
+      commit_sha: "commit-sha",
+      diff_sha256: "sha256:diff",
       push: {
         requested: true,
         allowed: false,
@@ -423,6 +434,22 @@ async function seedBoardArtifacts(root: string): Promise<void> {
         pushed: false,
         approval_id: "APR-0001",
         reason: "protected_branch_push requires approval"
+      },
+      rollback: {
+        strategy: "reset_branch_to_parent",
+        parent_sha: "parent-sha",
+        command_hint: "git reset --hard parent-sha"
+      },
+      pr: {
+        status: "protected_push_approval_required",
+        base_branch: "main",
+        head_branch: "auto/TASK-0001/codex",
+        remote: "origin",
+        remote_ref: "main",
+        approval_id: "APR-0001",
+        create_hint: "Approve APR-0001 before pushing auto/TASK-0001/codex to origin/main.",
+        rollback_strategy: "reset_branch_to_parent",
+        rollback_hint: "git reset --hard parent-sha"
       },
       transaction_path: ".kairon/git/transactions/GTX-0001.json",
       created_at: "2026-06-01T00:04:30.000Z",
@@ -438,13 +465,30 @@ async function seedBoardArtifacts(root: string): Promise<void> {
       run_id: "RUN-0002",
       review_loop_id: "REV-0001",
       branch: "auto/TASK-0001/claude",
-      status: "pushing",
+      status: "pushed",
+      commit_sha: "commit-sha-2",
+      diff_sha256: "sha256:diff-2",
       push: {
         requested: true,
         allowed: true,
         remote: "origin",
         remote_ref: "auto/TASK-0001/claude",
-        pushed: false
+        pushed: true
+      },
+      rollback: {
+        strategy: "revert_commit",
+        parent_sha: "parent-sha-2",
+        command_hint: "git revert parent-sha-2..HEAD"
+      },
+      pr: {
+        status: "ready_for_pr",
+        base_branch: "main",
+        head_branch: "auto/TASK-0001/claude",
+        remote: "origin",
+        remote_ref: "auto/TASK-0001/claude",
+        create_hint: "Create a PR from auto/TASK-0001/claude to main after confirming origin/auto/TASK-0001/claude is pushed.",
+        rollback_strategy: "revert_commit",
+        rollback_hint: "git revert parent-sha-2..HEAD"
       },
       transaction_path: ".kairon/git/transactions/GTX-0002.json",
       created_at: "2026-06-01T00:04:40.000Z",
@@ -452,6 +496,28 @@ async function seedBoardArtifacts(root: string): Promise<void> {
     }
   );
 
+  await writeJsonFileAtomic(
+    path.join(root, ".kairon", "git", "transactions", "GTX-0003.json"),
+    {
+      schema_version: "0.1",
+      transaction_id: "GTX-0003",
+      task_id: "TASK-0001",
+      run_id: "RUN-0003",
+      review_loop_id: "REV-0001",
+      branch: "auto/TASK-0001/recovery",
+      status: "pushing",
+      push: {
+        requested: true,
+        allowed: true,
+        remote: "origin",
+        remote_ref: "auto/TASK-0001/recovery",
+        pushed: false
+      },
+      transaction_path: ".kairon/git/transactions/GTX-0003.json",
+      created_at: "2026-06-01T00:04:20.000Z",
+      updated_at: "2026-06-01T00:04:20.000Z"
+    }
+  );
   await writeJsonFileAtomic(
     path.join(root, ".kairon", "reviews", "loops", "REV-0001.json"),
     {
@@ -561,7 +627,9 @@ async function seedBoardArtifacts(root: string): Promise<void> {
         failed_runs: 1,
         setup_required_runs: 0,
         pending_approvals: 1,
-        failed_notifications: 1
+        failed_notifications: 1,
+        git_transactions_ready_for_pr: 1,
+        git_transactions_requiring_approval: 1
       },
       created_at: "2026-06-01T00:12:00.000Z"
     }

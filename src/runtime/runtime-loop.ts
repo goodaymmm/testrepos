@@ -563,6 +563,7 @@ function summarizeGitTransaction(
     branch: record.branch,
     commit_sha: record.commit_sha,
     push: record.push,
+    pr: record.pr,
     transaction_path: record.transaction_path
   };
 }

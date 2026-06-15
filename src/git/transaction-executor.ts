@@ -61,6 +61,34 @@ export type GitRollbackMetadata = {
   command_hint: string;
 };
 
+export type GitTransactionPrStatus =
+  | "planned"
+  | "local_commit_ready"
+  | "push_approval_required"
+  | "protected_push_approval_required"
+  | "ready_for_pr"
+  | "failed";
+
+export type GitTransactionPrMetadata = {
+  status: GitTransactionPrStatus;
+  transaction_id: string;
+  task_id: string;
+  run_id: string;
+  review_loop_id: string;
+  base_branch: string;
+  head_branch: string;
+  remote: string;
+  remote_ref: string | null;
+  commit_sha?: string;
+  diff_sha256: string;
+  approval_id?: string;
+  rollback_strategy?: string;
+  title: string;
+  body_hint: string;
+  create_hint: string;
+  rollback_hint: string;
+};
+
 export type GitTransactionRecord = {
   schema_version: string;
   transaction_id: string;
@@ -79,6 +107,7 @@ export type GitTransactionRecord = {
   checks: GitTransactionCheck[];
   push: GitTransactionPush;
   rollback: GitRollbackMetadata;
+  pr?: GitTransactionPrMetadata;
   workspace: GitWorkspace;
   transaction_path: string;
   created_at: string;
@@ -245,10 +274,20 @@ export class GitTransactionExecutor {
         )
       );
 
+      const committedRollback = rollbackMetadata(policy, "committed_unpushed", parentSha);
       record = updateRecord(record, "committed", this.now().toISOString(), {
         commit_sha: commitSha,
         parent_sha: parentSha,
-        rollback: rollbackMetadata(policy, "committed_unpushed", parentSha)
+        rollback: committedRollback,
+        pr: buildPrMetadata(
+          {
+            ...record,
+            commit_sha: commitSha,
+            parent_sha: parentSha,
+            rollback: committedRollback
+          },
+          "local_commit_ready"
+        )
       });
 
       const pushDecision = await maybePushOrRequestApproval(this.projectRoot, {
@@ -263,7 +302,8 @@ export class GitTransactionExecutor {
         {
           ...record,
           push: pushDecision.push,
-          rollback: pushDecision.rollback ?? record.rollback
+          rollback: pushDecision.rollback ?? record.rollback,
+          pr: pushDecision.pr ?? record.pr
         },
         pushDecision.status,
         this.now().toISOString()
@@ -279,7 +319,8 @@ export class GitTransactionExecutor {
             status: "failed",
             detail: String(error)
           }
-        ]
+        ],
+        pr: buildPrMetadata(record, "failed")
       });
       await writeTransactionRecord(this.projectRoot, failed);
       throw error;
@@ -367,6 +408,7 @@ export class GitTransactionExecutor {
         "push"
       );
 
+      const pushedRollback = rollbackMetadata(policy, "pushed_unmerged", record.parent_sha);
       record = updateRecord(record, "pushed", this.now().toISOString(), {
         push: {
           ...record.push,
@@ -376,7 +418,23 @@ export class GitTransactionExecutor {
           remote_ref: remoteRef,
           pushed: true
         },
-        rollback: rollbackMetadata(policy, "pushed_unmerged", record.parent_sha)
+        rollback: pushedRollback,
+        pr: buildPrMetadata(
+          {
+            ...record,
+            push: {
+              ...record.push,
+              requested: true,
+              allowed: true,
+              remote,
+              remote_ref: remoteRef,
+              pushed: true
+            },
+            rollback: pushedRollback
+          },
+          "ready_for_pr",
+          { remote_ref: remoteRef }
+        )
       });
       await writeTransactionRecord(this.projectRoot, record);
       return record;
@@ -420,6 +478,7 @@ async function maybePushOrRequestApproval(
   status: GitTransactionStatus;
   push: GitTransactionPush;
   rollback?: GitRollbackMetadata;
+  pr?: GitTransactionPrMetadata;
 }> {
   if (input.request.pushRequested !== true) {
     return {
@@ -436,26 +495,26 @@ async function maybePushOrRequestApproval(
   if (protectedTarget) {
     return {
       status: "approval_required",
-      push: await requestPushApproval(projectRoot, {
+      ...(await requestPushApproval(projectRoot, {
         record: input.record,
         policy: input.policy,
         remoteRef,
         type: "git_protected_branch_push",
         reason: "protected_branch_push requires approval"
-      })
+      }))
     };
   }
 
   if (!input.policy.allow_auto_push) {
     return {
       status: "approval_required",
-      push: await requestPushApproval(projectRoot, {
+      ...(await requestPushApproval(projectRoot, {
         record: input.record,
         policy: input.policy,
         remoteRef,
         type: "git_push",
         reason: "auto push is disabled by policy"
-      })
+      }))
     };
   }
 
@@ -464,6 +523,11 @@ async function maybePushOrRequestApproval(
     input.worktreePath,
     ["push", input.policy.remote, `${input.record.branch}:${remoteRef}`],
     "push"
+  );
+  const rollback = rollbackMetadata(
+    input.policy,
+    "pushed_unmerged",
+    input.record.parent_sha
   );
 
   return {
@@ -475,11 +539,11 @@ async function maybePushOrRequestApproval(
       remote_ref: remoteRef,
       pushed: true
     },
-    rollback: rollbackMetadata(
-      input.policy,
-      "pushed_unmerged",
-      input.record.parent_sha
-    )
+    rollback,
+    pr: buildPrMetadata(input.record, "ready_for_pr", {
+      remote_ref: remoteRef,
+      rollback_hint: rollback.command_hint
+    })
   };
 }
 
@@ -492,8 +556,16 @@ async function requestPushApproval(
     type: "git_push" | "git_protected_branch_push";
     reason: string;
   }
-): Promise<GitTransactionPush> {
+): Promise<{ push: GitTransactionPush; pr: GitTransactionPrMetadata }> {
   const approvalId = await nextId(projectRoot, "approval");
+  const prStatus =
+    input.type === "git_protected_branch_push"
+      ? "protected_push_approval_required"
+      : "push_approval_required";
+  const pr = buildPrMetadata(input.record, prStatus, {
+    remote_ref: input.remoteRef,
+    approval_id: approvalId
+  });
   await new StateApplier(projectRoot).appendEvent({
     type: "approval.requested",
     task_id: input.record.task_id,
@@ -503,7 +575,7 @@ async function requestPushApproval(
       approval: {
         id: approvalId,
         type: input.type,
-        title: `Git push approval for ${input.record.task_id}`,
+        title: gitPushApprovalTitle(input.type, input.record.task_id),
         task_id: input.record.task_id,
         run_id: input.record.run_id,
         review_loop_id: input.record.review_loop_id,
@@ -513,19 +585,25 @@ async function requestPushApproval(
         expected_head_sha: input.record.commit_sha,
         remote: input.policy.remote,
         remote_ref: input.remoteRef,
-        reason: input.reason
+        reason: input.reason,
+        rollback_strategy: input.record.rollback.strategy,
+        rollback_command_hint: input.record.rollback.command_hint,
+        pr
       }
     }
   });
 
   return {
-    requested: true,
-    allowed: false,
-    remote: input.policy.remote,
-    remote_ref: input.remoteRef,
-    pushed: false,
-    approval_id: approvalId,
-    reason: input.reason
+    push: {
+      requested: true,
+      allowed: false,
+      remote: input.policy.remote,
+      remote_ref: input.remoteRef,
+      pushed: false,
+      approval_id: approvalId,
+      reason: input.reason
+    },
+    pr
   };
 }
 
@@ -539,7 +617,7 @@ function createInitialRecord(input: {
   transactionPath: string;
   now: string;
 }): GitTransactionRecord {
-  return {
+  const record: GitTransactionRecord = {
     schema_version: "0.1",
     transaction_id: input.transactionId,
     task_id: input.request.taskId,
@@ -565,6 +643,10 @@ function createInitialRecord(input: {
     transaction_path: toProjectPath(input.projectRoot, input.transactionPath),
     created_at: input.now,
     updated_at: input.now
+  };
+  return {
+    ...record,
+    pr: buildPrMetadata(record, "planned")
   };
 }
 
@@ -604,6 +686,96 @@ function rollbackMetadata(
     parent_sha: parentSha,
     command_hint
   };
+}
+
+function buildPrMetadata(
+  record: GitTransactionRecord,
+  status: GitTransactionPrStatus,
+  patch: Partial<GitTransactionPrMetadata> = {}
+): GitTransactionPrMetadata {
+  const remote = patch.remote ?? record.push.remote;
+  const remoteRef = patch.remote_ref ?? record.push.remote_ref ?? record.branch;
+  const baseBranch = patch.base_branch ?? record.base_branch;
+  const headBranch = patch.head_branch ?? record.branch;
+  const commitSha = patch.commit_sha ?? record.commit_sha;
+  const approvalId = patch.approval_id ?? record.push.approval_id;
+  const rollbackHint = patch.rollback_hint ?? record.rollback.command_hint;
+  const rollbackStrategy = patch.rollback_strategy ?? record.rollback.strategy;
+  const title = patch.title ?? `${record.task_id} automated change`;
+
+  return {
+    status,
+    transaction_id: record.transaction_id,
+    task_id: record.task_id,
+    run_id: record.run_id,
+    review_loop_id: record.review_loop_id,
+    base_branch: baseBranch,
+    head_branch: headBranch,
+    remote,
+    remote_ref: remoteRef,
+    commit_sha: commitSha,
+    diff_sha256: record.diff_sha256,
+    approval_id: approvalId,
+    rollback_strategy: rollbackStrategy,
+    title,
+    body_hint:
+      patch.body_hint ??
+      [
+        `Kairon task: ${record.task_id}`,
+        `Run: ${record.run_id}`,
+        `Review loop: ${record.review_loop_id}`,
+        `Diff SHA256: ${record.diff_sha256}`,
+        `Transaction: ${record.transaction_id}`
+      ].join("\n"),
+    create_hint: patch.create_hint ?? prCreateHint(status, {
+      baseBranch,
+      headBranch,
+      remote,
+      remoteRef,
+      title,
+      approvalId
+    }),
+    rollback_hint: rollbackHint
+  };
+}
+
+function prCreateHint(
+  status: GitTransactionPrStatus,
+  input: {
+    baseBranch: string;
+    headBranch: string;
+    remote: string;
+    remoteRef: string | null;
+    title: string;
+    approvalId?: string;
+  }
+): string {
+  if (status === "ready_for_pr") {
+    return `Create a PR from ${input.headBranch} to ${input.baseBranch} after confirming ${input.remote}/${input.remoteRef ?? input.headBranch} is pushed.`;
+  }
+
+  if (status === "push_approval_required" || status === "protected_push_approval_required") {
+    return `Approve ${input.approvalId ?? "the push approval"} before pushing ${input.headBranch} to ${input.remote}/${input.remoteRef ?? input.headBranch}.`;
+  }
+
+  if (status === "local_commit_ready") {
+    return `Push ${input.headBranch} to ${input.remote}/${input.remoteRef ?? input.headBranch}, then open a PR against ${input.baseBranch}.`;
+  }
+
+  if (status === "failed") {
+    return `Do not create a PR until transaction recovery is complete for ${input.headBranch}.`;
+  }
+
+  return `Complete the git transaction, then open a PR from ${input.headBranch} to ${input.baseBranch}.`;
+}
+
+function gitPushApprovalTitle(
+  type: "git_push" | "git_protected_branch_push",
+  taskId: string
+): string {
+  return type === "git_protected_branch_push"
+    ? `Git protected branch push approval for ${taskId}`
+    : `Git push approval for ${taskId}`;
 }
 
 async function assertDiffUnchanged(
