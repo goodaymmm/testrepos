@@ -56,6 +56,7 @@ import {
   createTaskCommand,
   runTaskCommand
 } from "./commands/task.js";
+import { summarizeOperationTestsCommand } from "./commands/test-summary.js";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -349,6 +350,21 @@ export function createProgram(): Command {
     .option("--no-interactive-agents", "Do not dispatch to interactive-only agents such as Antigravity.")
     .action(async (taskId: string, options) => {
       console.log(await runTaskCommand(process.cwd(), taskId, options));
+    });
+
+  const operationTest = program
+    .command("test")
+    .description("Inspect operation test results.");
+
+  operationTest
+    .command("summarize")
+    .description("Summarize operation test logs or result directories without editing docs.")
+    .argument("[logFile]", "PowerShell transcript, pasted text, summary.md, or summary.json.")
+    .option("--result-root <dir>", "Directory containing operation-test-results output.")
+    .action(async (logFile: string | undefined, options: { resultRoot?: string }) => {
+      console.log(
+        await summarizeOperationTestsCommand(process.cwd(), logFile, options)
+      );
     });
 
   const review = program

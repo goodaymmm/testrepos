@@ -28,7 +28,8 @@ describe("createProgram", () => {
       "start",
       "status",
       "stop",
-      "task"
+      "task",
+      "test"
     ]);
   });
 
@@ -157,6 +158,15 @@ describe("createProgram", () => {
         .find((command) => command.name() === "resolve")
         ?.options.map((option) => option.long)
     ).toContain("--reason");
+  });
+
+  it("registers operation test summary command", () => {
+    const test = createProgram().commands.find((command) => command.name() === "test");
+    const summarize = test?.commands.find((command) => command.name() === "summarize");
+
+    expect(test?.description()).toContain("operation test results");
+    expect(summarize?.description()).toContain("without editing docs");
+    expect(summarize?.options.map((option) => option.long)).toContain("--result-root");
   });
 
   it("registers RAG index commands and query filters", () => {

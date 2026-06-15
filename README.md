@@ -364,6 +364,13 @@ cd C:\Users\hikar\Documents\AutoRunner
 
 実行結果は `operation-test-results/<run-id>/summary.json` と `summary.md` に出力されます。対象projectの `.kairon` stateは実行前にbackupされ、既定では終了時にrestoreされます。詳細は [docs/operation-test-harness-v0.md](docs/operation-test-harness-v0.md) を参照してください。
 
+長いPowerShellログや `operation-test-results` の結果を確認する場合は、summaryだけを抽出できます。これは docs の自動書き換えは行わず、PASS / FAIL / SETUP_REQUIRED / OPTIONAL の候補と証跡pathを表示します。
+
+```powershell
+kairon test summarize .\operation-test-results\manual-log.txt
+kairon test summarize --result-root .\operation-test-results
+```
+
 ## PR / Release Checklist
 
 PR作成時は [.github/pull_request_template.md](.github/pull_request_template.md) を使い、目的、変更内容、テスト、manual / operation test、README更新要否、エビデンス、残課題を記録します。
