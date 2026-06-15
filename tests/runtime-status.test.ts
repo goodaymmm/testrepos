@@ -69,6 +69,40 @@ describe("runtime status", () => {
         }
       }
     );
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "reports", "daily", "2026-05-26.json"),
+      {
+        schema_version: "0.1",
+        date: "2026-05-26"
+      }
+    );
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "cleanup", "proposals", "2026-05-26.json"),
+      {
+        schema_version: "0.1",
+        date: "2026-05-26"
+      }
+    );
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "recovery", "REC-20260526000000000.json"),
+      {
+        schema_version: "0.1",
+        recovery_id: "REC-20260526000000000"
+      }
+    );
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "reports", "next-day", "2026-05-26.json"),
+      {
+        schema_version: "0.1",
+        date: "2026-05-26"
+      }
+    );
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "board", "projection.json"),
+      {
+        schema_version: "0.1"
+      }
+    );
 
     const status = await getRuntimeStatus(root);
     expect(status.runtimeLock.locked).toBe(true);
@@ -101,6 +135,24 @@ describe("runtime status", () => {
       "discord.gateway.errorCode=discord_missing_access_approval_channel"
     );
     expect(formatRuntimeStatus(status)).toContain("discord.gateway.httpStatus=403");
+    expect(formatRuntimeStatus(status)).toContain(
+      "artifacts.lastTick=.kairon/runtime/last-tick.json"
+    );
+    expect(formatRuntimeStatus(status)).toContain(
+      "artifacts.latestDailyReport=.kairon/reports/daily/2026-05-26.json"
+    );
+    expect(formatRuntimeStatus(status)).toContain(
+      "artifacts.latestCleanupProposal=.kairon/cleanup/proposals/2026-05-26.json"
+    );
+    expect(formatRuntimeStatus(status)).toContain(
+      "artifacts.latestRecoveryArtifact=.kairon/recovery/REC-20260526000000000.json"
+    );
+    expect(formatRuntimeStatus(status)).toContain(
+      "artifacts.latestNextDayPlan=.kairon/reports/next-day/2026-05-26.json"
+    );
+    expect(formatRuntimeStatus(status)).toContain(
+      "artifacts.boardProjection=.kairon/board/projection.json"
+    );
     expect(formatRuntimeStatus(status)).not.toContain("SHOULD_NOT_LEAK");
   });
 });

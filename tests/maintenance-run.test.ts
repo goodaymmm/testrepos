@@ -77,9 +77,22 @@ describe("runDailyMaintenance", () => {
     expect(output).toContain("Kairon maintenance completed");
     expect(output).toContain("next_day_plan=.kairon/reports/next-day/");
     expect(output).toContain("next_day_action_items=");
+    expect(output).toContain("cleanup_candidates=");
     expect(output).toContain("summary_failed_runs=");
+    expect(output).toContain("recovery_scanned_queue_items=");
+    expect(output).toContain("recovery_scanned_runs=");
+    expect(output).toContain("recovery_scanned_git_transactions=");
+    expect(output).toContain("recovery_stale_locks_cleared=");
+    expect(output).toContain("recovery_gateway_artifacts_recovered=");
+    expect(output).toContain("recovery_existing_approvals=");
+    expect(output).toContain("recovery_git_transaction_issues=");
+    expect(output).toContain("rag_status=skipped");
     expect(output).toContain("rag_index=skipped");
     expect(output).toContain("rag_skip_reason=disabled");
+    expect(output).toContain("next_status_command=kairon status");
+    expect(output).toContain("next_cleanup_command=kairon cleanup show ");
+    expect(output).toContain("next_recovery_command=kairon recovery list");
+    expect(output).toContain("next_board_command=kairon board export");
   });
 
   it("creates next-day action items from unresolved maintenance state", async () => {
@@ -163,8 +176,11 @@ describe("runDailyMaintenance", () => {
     });
 
     const output = await runMaintenance(root, { buildRag: true });
+    expect(output).toContain("rag_status=updated");
     expect(output).toContain("rag_index=.kairon/rag/index.json");
+    expect(output).toContain("rag_sources=");
     expect(output).toContain("rag_chunks=");
+    expect(output).toContain("rag_skipped_sources=");
     expect(output).toContain("rag_skipped_protected=");
     expect(output).toContain("rag_pruned_sources=");
   });
