@@ -1,0 +1,406 @@
+import { readdir, readFile, stat } from "node:fs/promises";
+import path from "node:path";
+import { toPosixPath } from "../core/fs/paths.js";
+
+export type OperationTestStatus = "PASS" | "FAIL" | "SETUP_REQUIRED" | "OPTIONAL";
+
+export type OperationTestSummaryItem = {
+  id: string;
+  status: OperationTestStatus;
+  source: string;
+  name?: string;
+  details?: string;
+};
+
+export type OperationTestSummary = {
+  schema_version: "0.1";
+  sources: string[];
+  summary: {
+    pass: number;
+    fail: number;
+    setup_required: number;
+    optional: number;
+    total: number;
+    source_files: number;
+  };
+  pass_ids: string[];
+  fail_ids: string[];
+  setup_required_ids: string[];
+  optional_ids: string[];
+  results: OperationTestSummaryItem[];
+  warnings: string[];
+};
+
+export type OperationTestSummaryRequest = {
+  projectRoot: string;
+  logFile?: string;
+  resultRoot?: string;
+};
+
+type HarnessSummaryJson = {
+  results?: unknown;
+};
+
+type CandidateFile = {
+  absolutePath: string;
+  projectPath: string;
+};
+
+const statusValues = ["PASS", "FAIL", "SETUP_REQUIRED", "OPTIONAL"] as const;
+const statusSet = new Set<string>(statusValues);
+const textStatusLinePattern =
+  /^\s*\[([A-Z0-9][A-Z0-9_-]*)\]\s+(PASS|FAIL|SETUP_REQUIRED|OPTIONAL)\b([^\r\n]*)/gm;
+const markdownTablePattern =
+  /^\|\s*([A-Z0-9][A-Z0-9_-]*)\s*\|[^|\r\n]*\|\s*(PASS|FAIL|SETUP_REQUIRED|OPTIONAL)\s*\|([^|\r\n]*)/gm;
+
+export async function summarizeOperationTestResults(
+  request: OperationTestSummaryRequest
+): Promise<OperationTestSummary> {
+  const projectRoot = path.resolve(request.projectRoot);
+  const sources = await resolveSources(projectRoot, request);
+  const warnings: string[] = [];
+  const results: OperationTestSummaryItem[] = [];
+
+  for (const source of sources) {
+    try {
+      const text = await readFile(source.absolutePath, "utf8");
+      results.push(...parseSource(projectRoot, source, text));
+    } catch (error) {
+      warnings.push(
+        sanitizeText(
+          `Skipped ${source.projectPath}: ${String((error as Error).message ?? error)}`
+        ) ?? `Skipped ${source.projectPath}`
+      );
+    }
+  }
+
+  const deduped = dedupeResults(results);
+  const passIds = idsForStatus(deduped, "PASS");
+  const failIds = idsForStatus(deduped, "FAIL");
+  const setupRequiredIds = idsForStatus(deduped, "SETUP_REQUIRED");
+  const optionalIds = idsForStatus(deduped, "OPTIONAL");
+
+  return {
+    schema_version: "0.1",
+    sources: sources.map((source) => source.projectPath),
+    summary: {
+      pass: passIds.length,
+      fail: failIds.length,
+      setup_required: setupRequiredIds.length,
+      optional: optionalIds.length,
+      total: passIds.length + failIds.length + setupRequiredIds.length + optionalIds.length,
+      source_files: sources.length
+    },
+    pass_ids: passIds,
+    fail_ids: failIds,
+    setup_required_ids: setupRequiredIds,
+    optional_ids: optionalIds,
+    results: deduped,
+    warnings
+  };
+}
+
+export function formatOperationTestSummary(summary: OperationTestSummary): string {
+  return [
+    "Kairon operation test summary.",
+    `sources=${summary.summary.source_files}`,
+    `total=${summary.summary.total}`,
+    `pass=${summary.summary.pass}`,
+    `fail=${summary.summary.fail}`,
+    `setup_required=${summary.summary.setup_required}`,
+    `optional=${summary.summary.optional}`,
+    `pass_ids=${formatIds(summary.pass_ids)}`,
+    `fail_ids=${formatIds(summary.fail_ids)}`,
+    `setup_required_ids=${formatIds(summary.setup_required_ids)}`,
+    `optional_ids=${formatIds(summary.optional_ids)}`,
+    `evidence_paths=${formatIds(summary.sources)}`,
+    ...summary.results.map(formatResultLine),
+    ...summary.warnings.map((warning) => `warning=${warning}`)
+  ].join("\n");
+}
+
+function parseSource(
+  projectRoot: string,
+  source: CandidateFile,
+  text: string
+): OperationTestSummaryItem[] {
+  if (source.absolutePath.endsWith(".json")) {
+    const parsed = parseHarnessSummaryJson(projectRoot, source, text);
+    if (parsed.length > 0) {
+      return parsed;
+    }
+  }
+
+  return parseTextSummary(source, text);
+}
+
+function parseHarnessSummaryJson(
+  projectRoot: string,
+  source: CandidateFile,
+  text: string
+): OperationTestSummaryItem[] {
+  let parsed: HarnessSummaryJson;
+  try {
+    parsed = JSON.parse(text) as HarnessSummaryJson;
+  } catch {
+    return [];
+  }
+
+  if (!Array.isArray(parsed.results)) {
+    return [];
+  }
+
+  return parsed.results.flatMap((value) => {
+    if (typeof value !== "object" || value === null) {
+      return [];
+    }
+
+    const record = value as Record<string, unknown>;
+    const id = asId(record.id);
+    const status = asStatus(record.status);
+    if (id === undefined || status === undefined) {
+      return [];
+    }
+
+    return [
+      {
+        id,
+        status,
+        source: source.projectPath,
+        name: sanitizeText(asString(record.name)),
+        details: summarizeDetails(projectRoot, source, asString(record.details))
+      }
+    ];
+  });
+}
+
+function parseTextSummary(
+  source: CandidateFile,
+  text: string
+): OperationTestSummaryItem[] {
+  const results: OperationTestSummaryItem[] = [];
+
+  for (const match of text.matchAll(textStatusLinePattern)) {
+    const id = asId(match[1]);
+    const status = asStatus(match[2]);
+    if (id === undefined || status === undefined) {
+      continue;
+    }
+
+    results.push({
+      id,
+      status,
+      source: source.projectPath,
+      details: summarizeInlineDetails(match[3])
+    });
+  }
+
+  for (const match of text.matchAll(markdownTablePattern)) {
+    const id = asId(match[1]);
+    const status = asStatus(match[2]);
+    if (id === undefined || status === undefined) {
+      continue;
+    }
+
+    results.push({
+      id,
+      status,
+      source: source.projectPath,
+      details: summarizeInlineDetails(match[3])
+    });
+  }
+
+  return results;
+}
+
+async function resolveSources(
+  projectRoot: string,
+  request: OperationTestSummaryRequest
+): Promise<CandidateFile[]> {
+  const sources: CandidateFile[] = [];
+
+  if (request.logFile !== undefined) {
+    sources.push(toCandidateFile(projectRoot, request.logFile));
+  }
+
+  if (request.resultRoot !== undefined) {
+    sources.push(...(await collectResultRootSources(projectRoot, request.resultRoot)));
+  }
+
+  if (sources.length === 0) {
+    throw new Error("Specify a log file or --result-root.");
+  }
+
+  return dedupeSources(sources).sort((left, right) =>
+    left.projectPath.localeCompare(right.projectPath)
+  );
+}
+
+async function collectResultRootSources(
+  projectRoot: string,
+  resultRoot: string
+): Promise<CandidateFile[]> {
+  const root = path.resolve(projectRoot, resultRoot);
+  const entries = await collectFiles(root);
+  return entries
+    .filter((filePath) => isSummarySource(filePath))
+    .map((filePath) => toCandidateFile(projectRoot, filePath));
+}
+
+async function collectFiles(directoryPath: string): Promise<string[]> {
+  const entries = await readdir(directoryPath, { withFileTypes: true });
+  const output: string[] = [];
+
+  for (const entry of entries) {
+    const entryPath = path.join(directoryPath, entry.name);
+    if (entry.isDirectory()) {
+      if ([".git", "backup", "node_modules"].includes(entry.name)) {
+        continue;
+      }
+
+      output.push(...(await collectFiles(entryPath)));
+      continue;
+    }
+
+    if (entry.isFile() && (await isReasonableTextFile(entryPath))) {
+      output.push(entryPath);
+    }
+  }
+
+  return output;
+}
+
+async function isReasonableTextFile(filePath: string): Promise<boolean> {
+  const stats = await stat(filePath);
+  return stats.size <= 2_000_000;
+}
+
+function isSummarySource(filePath: string): boolean {
+  const name = path.basename(filePath).toLowerCase();
+  return (
+    name === "summary.json" ||
+    name === "summary.md" ||
+    name.endsWith(".log") ||
+    name.endsWith(".txt")
+  );
+}
+
+function toCandidateFile(projectRoot: string, filePath: string): CandidateFile {
+  const absolutePath = path.resolve(projectRoot, filePath);
+  return {
+    absolutePath,
+    projectPath: toDisplayPath(projectRoot, absolutePath)
+  };
+}
+
+function toDisplayPath(projectRoot: string, filePath: string): string {
+  const relative = path.relative(projectRoot, filePath);
+  return sanitizeText(
+    relative.startsWith("..") || path.isAbsolute(relative)
+      ? toPosixPath(filePath)
+      : toPosixPath(relative)
+  ) ?? "";
+}
+
+function dedupeSources(sources: CandidateFile[]): CandidateFile[] {
+  const seen = new Set<string>();
+  return sources.filter((source) => {
+    const key = source.absolutePath.toLowerCase();
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeResults(
+  results: OperationTestSummaryItem[]
+): OperationTestSummaryItem[] {
+  const byStatusAndId = new Map<string, OperationTestSummaryItem>();
+
+  for (const result of results) {
+    byStatusAndId.set(`${result.status}:${result.id}`, result);
+  }
+
+  return [...byStatusAndId.values()].sort((left, right) =>
+    left.id === right.id
+      ? left.status.localeCompare(right.status)
+      : left.id.localeCompare(right.id)
+  );
+}
+
+function idsForStatus(
+  results: OperationTestSummaryItem[],
+  status: OperationTestStatus
+): string[] {
+  return results
+    .filter((result) => result.status === status)
+    .map((result) => result.id)
+    .sort((left, right) => left.localeCompare(right));
+}
+
+function formatIds(ids: string[]): string {
+  return ids.length === 0 ? "(none)" : ids.join(",");
+}
+
+function formatResultLine(result: OperationTestSummaryItem): string {
+  return [
+    `result.id=${result.id}`,
+    `status=${result.status}`,
+    `source=${result.source}`,
+    result.name === undefined ? undefined : `name=${result.name}`,
+    result.details === undefined ? undefined : `details=${result.details}`
+  ]
+    .filter((value): value is string => value !== undefined && value.length > 0)
+    .join(" ");
+}
+
+function summarizeDetails(
+  projectRoot: string,
+  source: CandidateFile,
+  value: string | undefined
+): string | undefined {
+  return summarizeInlineDetails(value)?.replaceAll(projectRoot, "<project_root>")
+    .replaceAll(source.absolutePath, source.projectPath);
+}
+
+function summarizeInlineDetails(value: string | undefined): string | undefined {
+  const sanitized = sanitizeText(value);
+  if (sanitized === undefined || sanitized.length === 0) {
+    return undefined;
+  }
+
+  return sanitized.length > 180 ? `${sanitized.slice(0, 177)}...` : sanitized;
+}
+
+function sanitizeText(value: string | undefined): string | undefined {
+  return value
+    ?.replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*["']?[^"',;\s]+/gi, "$1=[redacted]")
+    .replace(/\bBearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function asId(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const id = value.trim();
+  return /^[A-Z0-9][A-Z0-9_-]*$/.test(id) ? id : undefined;
+}
+
+function asStatus(value: unknown): OperationTestStatus | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const status = value.trim().toUpperCase();
+  return statusSet.has(status) ? (status as OperationTestStatus) : undefined;
+}
