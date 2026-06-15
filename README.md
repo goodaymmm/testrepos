@@ -276,7 +276,8 @@ local lexical RAG indexを `.kairon/rag/index.json` に作成し、metadata filt
 kairon status
 ```
 
-schedule mode、runtime lock、queue、approval の状態を表示します。
+schedule mode、runtime lock、queue、approval、recovery target、session、Discord gateway、最新artifact の状態を表示します。
+daily report / cleanup proposal / recovery artifact / next-day plan / board projection が存在する場合は、次に確認するパスも `artifacts.*` として表示します。
 
 ### Active Work 終了
 
@@ -304,6 +305,7 @@ kairon maintenance run --build-rag
 - `.kairon/rag/index.json` (`--build-rag` または `rag.json` 有効時)
 
 cleanup は直接削除せず、Morning Review で確認する proposal として作成されます。
+CLI出力には `cleanup_candidates`、`recovery_*`、`rag_status`、`next_status_command`、`next_cleanup_command`、`next_recovery_command`、`next_board_command` が含まれます。maintenance後は `kairon status` で最新artifactを確認し、必要に応じて `kairon cleanup show <date>`、`kairon recovery list`、`kairon board export` を続けます。
 
 ### 停止
 

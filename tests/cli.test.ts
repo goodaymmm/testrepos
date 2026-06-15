@@ -71,6 +71,19 @@ describe("createProgram", () => {
     const run = maintenance?.commands.find((command) => command.name() === "run");
 
     expect(run?.options.map((option) => option.long)).toContain("--build-rag");
+    expect(maintenance?.description()).toContain("operator artifacts");
+    expect(run?.description()).toContain("daily report");
+    expect(run?.description()).toContain("cleanup proposal");
+    expect(run?.description()).toContain("recovery artifact");
+  });
+
+  it("documents status and recovery operational scope", () => {
+    const program = createProgram();
+    const status = program.commands.find((command) => command.name() === "status");
+    const recovery = program.commands.find((command) => command.name() === "recovery");
+
+    expect(status?.description()).toContain("artifact status");
+    expect(recovery?.description()).toContain("Inspect and resolve");
   });
 
   it("registers board export and serve commands", () => {

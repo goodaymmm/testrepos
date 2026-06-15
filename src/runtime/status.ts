@@ -1,7 +1,7 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { readJsonFile } from "../core/fs/json-file.js";
-import { getKaironPaths } from "../core/fs/paths.js";
+import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
 import { WorkQueue } from "../queue/work-queue.js";
 import { inspectRuntimeRecoveryTargets } from "../recovery/runtime-recovery.js";
 import { readRuntimeLockStatus } from "./runtime-lock.js";
@@ -54,6 +54,14 @@ export type RuntimeStatus = {
     next_action?: string;
     http_status?: number;
   };
+  artifacts: {
+    last_tick: string;
+    latest_daily_report?: string;
+    latest_cleanup_proposal?: string;
+    latest_recovery_artifact?: string;
+    latest_next_day_plan?: string;
+    board_projection?: string;
+  };
 };
 
 export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStatus> {
@@ -64,7 +72,8 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     pendingApprovals,
     recovery,
     sessions,
-    discordGateway
+    discordGateway,
+    artifacts
   ] = await Promise.all([
     getScheduleStatus(projectRoot),
     readRuntimeLockStatus(projectRoot),
@@ -72,7 +81,8 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     countPendingApprovals(projectRoot),
     inspectRuntimeRecoveryTargets(projectRoot),
     readLatestSessionSummary(projectRoot),
-    readDiscordGatewaySummary(projectRoot)
+    readDiscordGatewaySummary(projectRoot),
+    readOperationalArtifacts(projectRoot)
   ]);
 
   return {
@@ -103,7 +113,8 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     },
     recovery: recovery.summary,
     sessions,
-    discordGateway
+    discordGateway,
+    artifacts
   };
 }
 
@@ -190,10 +201,93 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
       : `discord.gateway.httpStatus=${status.discordGateway.http_status}`,
     status.discordGateway?.next_action === undefined
       ? null
-      : `discord.gateway.nextAction=${status.discordGateway.next_action}`
+      : `discord.gateway.nextAction=${status.discordGateway.next_action}`,
+    `artifacts.lastTick=${status.artifacts.last_tick}`,
+    status.artifacts.latest_daily_report === undefined
+      ? null
+      : `artifacts.latestDailyReport=${status.artifacts.latest_daily_report}`,
+    status.artifacts.latest_cleanup_proposal === undefined
+      ? null
+      : `artifacts.latestCleanupProposal=${status.artifacts.latest_cleanup_proposal}`,
+    status.artifacts.latest_recovery_artifact === undefined
+      ? null
+      : `artifacts.latestRecoveryArtifact=${status.artifacts.latest_recovery_artifact}`,
+    status.artifacts.latest_next_day_plan === undefined
+      ? null
+      : `artifacts.latestNextDayPlan=${status.artifacts.latest_next_day_plan}`,
+    status.artifacts.board_projection === undefined
+      ? null
+      : `artifacts.boardProjection=${status.artifacts.board_projection}`
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
+}
+
+async function readOperationalArtifacts(
+  projectRoot: string
+): Promise<RuntimeStatus["artifacts"]> {
+  const paths = getKaironPaths(projectRoot);
+
+  return {
+    last_tick: toProjectPath(projectRoot, path.join(paths.runtimeDir, "last-tick.json")),
+    latest_daily_report: await latestJsonPath(
+      projectRoot,
+      path.join(paths.reportsDir, "daily")
+    ),
+    latest_cleanup_proposal: await latestJsonPath(
+      projectRoot,
+      path.join(paths.cleanupDir, "proposals")
+    ),
+    latest_recovery_artifact: await latestJsonPath(projectRoot, paths.recoveryDir),
+    latest_next_day_plan: await latestJsonPath(
+      projectRoot,
+      path.join(paths.reportsDir, "next-day")
+    ),
+    board_projection: await optionalJsonPath(
+      projectRoot,
+      path.join(paths.kaironDir, "board", "projection.json")
+    )
+  };
+}
+
+async function latestJsonPath(
+  projectRoot: string,
+  directoryPath: string
+): Promise<string | undefined> {
+  try {
+    const entries = await readdir(directoryPath, { withFileTypes: true });
+    const latest = entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map((entry) => entry.name)
+      .sort()
+      .at(-1);
+
+    return latest === undefined
+      ? undefined
+      : toProjectPath(projectRoot, path.join(directoryPath, latest));
+  } catch (error) {
+    if (String(error).includes("ENOENT")) {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+async function optionalJsonPath(
+  projectRoot: string,
+  filePath: string
+): Promise<string | undefined> {
+  try {
+    await readJsonFile<unknown>(filePath);
+    return toProjectPath(projectRoot, filePath);
+  } catch (error) {
+    if (String(error).includes("ENOENT")) {
+      return undefined;
+    }
+
+    throw error;
+  }
 }
 
 async function readLatestSessionSummary(
@@ -254,6 +348,10 @@ function sanitizeStatusText(value: string | undefined): string | undefined {
     ?.replace(/(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+/gi, "$1=[redacted]")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function toProjectPath(projectRoot: string, filePath: string): string {
+  return toPosixPath(path.relative(projectRoot, filePath));
 }
 
 async function countPendingApprovals(projectRoot: string): Promise<number> {

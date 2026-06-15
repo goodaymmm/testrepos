@@ -316,7 +316,7 @@ export function createProgram(): Command {
 
   program
     .command("status")
-    .description("Show runtime, queue, session, and approval status.")
+    .description("Show runtime, queue, session, approval, and artifact status.")
     .action(async () => {
       console.log(await getStatusText(process.cwd()));
     });
@@ -357,7 +357,7 @@ export function createProgram(): Command {
 
   const recovery = program
     .command("recovery")
-    .description("Run runtime recovery workflows.");
+    .description("Inspect and resolve runtime recovery targets.");
 
   recovery
     .command("list")
@@ -435,11 +435,11 @@ export function createProgram(): Command {
 
   const maintenance = program
     .command("maintenance")
-    .description("Run maintenance workflows.");
+    .description("Run maintenance workflows and write operator artifacts.");
 
   maintenance
     .command("run")
-    .description("Run daily maintenance manually.")
+    .description("Create daily report, cleanup proposal, recovery artifact, next-day plan, and optional RAG index.")
     .option(
       "--build-rag",
       "Build the local RAG index even when rag.json disables automatic maintenance indexing."
