@@ -326,6 +326,24 @@ describe("RuntimeLoop", () => {
             parent_sha: "parent-sha",
             command_hint: "git reset --hard parent-sha"
           },
+          pr: {
+            status: "local_commit_ready",
+            transaction_id: "GTX-0001",
+            task_id: request.taskId,
+            run_id: request.runId,
+            review_loop_id: request.reviewLoopId,
+            base_branch: "main",
+            head_branch: "auto/TASK-0001/codex",
+            remote: "origin",
+            remote_ref: "auto/TASK-0001/codex",
+            commit_sha: "commit-sha",
+            diff_sha256: "diff-sha",
+            rollback_strategy: "reset_branch_to_parent",
+            title: "TASK-0001 automated change",
+            body_hint: "Kairon task: TASK-0001",
+            create_hint: "Push auto/TASK-0001/codex to origin/auto/TASK-0001/codex, then open a PR against main.",
+            rollback_hint: "git reset --hard parent-sha"
+          },
           workspace: {
             schema_version: "0.1",
             task_id: request.taskId,
@@ -379,7 +397,11 @@ describe("RuntimeLoop", () => {
           review_loop_id: "REV-0001",
           status: "committed",
           branch: "auto/TASK-0001/codex",
-          commit_sha: "commit-sha"
+          commit_sha: "commit-sha",
+          pr: {
+            status: "local_commit_ready",
+            head_branch: "auto/TASK-0001/codex"
+          }
         }
       }
     ]);
@@ -436,6 +458,24 @@ describe("RuntimeLoop", () => {
             parent_sha: "parent-sha",
             command_hint: "git revert parent-sha..HEAD"
           },
+          pr: {
+            status: "ready_for_pr",
+            transaction_id: "GTX-0001",
+            task_id: "TASK-0001",
+            run_id: "RUN-0001",
+            review_loop_id: "REV-0001",
+            base_branch: "main",
+            head_branch: "auto/TASK-0001/codex",
+            remote: "origin",
+            remote_ref: "auto/TASK-0001/codex",
+            commit_sha: "commit-sha",
+            diff_sha256: "diff-sha",
+            rollback_strategy: "revert_commit",
+            title: "TASK-0001 automated change",
+            body_hint: "Kairon task: TASK-0001",
+            create_hint: "Create a PR from auto/TASK-0001/codex to main after confirming origin/auto/TASK-0001/codex is pushed.",
+            rollback_hint: "git revert parent-sha..HEAD"
+          },
           workspace: {
             schema_version: "0.1",
             task_id: "TASK-0001",
@@ -482,6 +522,9 @@ describe("RuntimeLoop", () => {
           status: "pushed",
           push: {
             pushed: true
+          },
+          pr: {
+            status: "ready_for_pr"
           }
         }
       }

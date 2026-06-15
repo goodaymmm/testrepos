@@ -77,7 +77,7 @@ export function renderBoardHtml(projection: BoardProjection): string {
       ${stat("Queue Ready", String(projection.queue.ready), `failed=${projection.queue.failed}`)}
       ${stat("Approvals", String(projection.approvals.pending), "pending")}
       ${stat("Recovery", String(projection.runtime.recovery.targets), "targets")}
-      ${stat("Git Push", String(projection.git.transactions_requiring_approval), "approval required")}
+      ${stat("Git Push", String(projection.git.transactions_requiring_approval), `approval required | pr=${projection.git.transactions_ready_for_pr}`)}
       ${stat("Discord", projection.discord.gateway?.status ?? "unknown", `audit=${projection.discord.notifications.total}/${projection.discord.decisions.total}`)}
     </div>
     ${renderOperations(projection.operations.priority)}
@@ -169,7 +169,9 @@ function renderMaintenance(report: BoardDailyReportSummary | undefined): string 
       ["failedRuns", text(optionalNumber(report.failed_runs))],
       ["setupRequiredRuns", text(optionalNumber(report.setup_required_runs))],
       ["pendingApprovals", text(optionalNumber(report.pending_approvals))],
-      ["failedNotifications", text(optionalNumber(report.failed_notifications))]
+      ["failedNotifications", text(optionalNumber(report.failed_notifications))],
+      ["gitTransactionsReadyForPr", text(optionalNumber(report.git_transactions_ready_for_pr))],
+      ["gitTransactionsRequiringApproval", text(optionalNumber(report.git_transactions_requiring_approval))]
     ].map(([key, value]) => [code(String(key)), value]),
     "maintenance"
   );
@@ -312,14 +314,16 @@ ${section("Review Results", ["Review", "Run", "Status", "Score", "Highest Severi
 function renderGitTransactions(transactions: BoardGitTransactionSummary[]): string {
   return section(
     "Git Transactions",
-    ["Transaction", "Status", "Task", "Branch", "Remote Ref", "Approval", "Updated"],
+    ["Transaction", "Status", "Task", "Branch", "PR", "Remote Ref", "Approval", "Rollback", "Updated"],
     transactions.map((transaction) => [
       `<a id="${gitTransactionAnchor(transaction.transaction_id)}" href="#${gitTransactionAnchor(transaction.transaction_id)}"><code>${escapeHtml(transaction.transaction_id)}</code></a>`,
       text(transaction.status),
       text(transaction.task_id),
       text(transaction.branch),
+      `${text(transaction.pr_status)}<div class="subvalue">${escapeHtml(transaction.pr_base ?? "-")} &larr; ${escapeHtml(transaction.pr_head ?? "-")}</div>`,
       text(transaction.remote_ref ?? undefined),
       text(transaction.approval_id),
+      `${text(transaction.rollback_strategy)}<div class="subvalue">${escapeHtml(transaction.rollback_hint ?? "-")}</div>`,
       text(transaction.updated_at ?? transaction.created_at)
     ]),
     "git"

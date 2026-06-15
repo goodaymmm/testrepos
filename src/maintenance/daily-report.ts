@@ -31,6 +31,8 @@ export type DailyReport = {
     failed_notifications: number;
     review_loops_by_status: Record<string, number>;
     git_transactions_by_status: Record<string, number>;
+    git_transactions_ready_for_pr: number;
+    git_transactions_requiring_approval: number;
     recovery_approvals_requested: number;
   };
   runs: {
@@ -117,6 +119,11 @@ export async function createDailyReport(
       failed_notifications: notifications.discord.failed,
       review_loops_by_status: reviewLoopStatusCounts,
       git_transactions_by_status: gitTransactionStatusCounts,
+      git_transactions_ready_for_pr: git.transactions.filter(
+        (transaction) => readNestedString(transaction, ["pr", "status"]) === "ready_for_pr"
+      ).length,
+      git_transactions_requiring_approval:
+        gitTransactionStatusCounts.approval_required ?? 0,
       recovery_approvals_requested: sumRecoveryApprovalsRequested(recovery)
     },
     runs: {
@@ -432,6 +439,22 @@ function compareUnknownByUpdatedAt(
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function readNestedString(
+  value: Record<string, unknown>,
+  path: string[]
+): string | undefined {
+  let current: unknown = value;
+  for (const key of path) {
+    if (typeof current !== "object" || current === null || Array.isArray(current)) {
+      return undefined;
+    }
+
+    current = (current as Record<string, unknown>)[key];
+  }
+
+  return optionalString(current);
 }
 
 function sumRecoveryApprovalsRequested(recovery: Record<string, unknown>[]): number {

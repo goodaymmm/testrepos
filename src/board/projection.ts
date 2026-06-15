@@ -47,6 +47,7 @@ export type BoardProjection = {
   git: {
     transactions_total: number;
     transactions_requiring_approval: number;
+    transactions_ready_for_pr: number;
     recent_transactions: BoardGitTransactionSummary[];
   };
   cleanup: {
@@ -205,6 +206,14 @@ export type BoardGitTransactionSummary = {
   remote_ref?: string | null;
   approval_id?: string;
   reason?: string;
+  commit_sha?: string;
+  diff_sha256?: string;
+  pr_status?: string;
+  pr_base?: string;
+  pr_head?: string;
+  pr_create_hint?: string;
+  rollback_strategy?: string;
+  rollback_hint?: string;
   transaction_path?: string;
   created_at?: string;
   updated_at?: string;
@@ -226,6 +235,8 @@ export type BoardDailyReportSummary = {
   setup_required_runs?: number;
   pending_approvals?: number;
   failed_notifications?: number;
+  git_transactions_ready_for_pr?: number;
+  git_transactions_requiring_approval?: number;
   created_at?: string;
 };
 
@@ -310,6 +321,8 @@ type DailyReportArtifact = {
     setup_required_runs?: number;
     pending_approvals?: number;
     failed_notifications?: number;
+    git_transactions_ready_for_pr?: number;
+    git_transactions_requiring_approval?: number;
   };
   created_at?: string;
 };
@@ -326,6 +339,23 @@ type GitTransactionArtifact = {
     remote_ref?: string | null;
     approval_id?: string;
     reason?: string;
+  };
+  commit_sha?: string;
+  diff_sha256?: string;
+  rollback?: {
+    strategy?: string;
+    command_hint?: string;
+  };
+  pr?: {
+    status?: string;
+    base_branch?: string;
+    head_branch?: string;
+    remote?: string;
+    remote_ref?: string | null;
+    approval_id?: string;
+    create_hint?: string;
+    rollback_strategy?: string;
+    rollback_hint?: string;
   };
   transaction_path?: string;
   created_at?: string;
@@ -452,6 +482,9 @@ export async function createBoardProjection(
       transactions_total: gitTransactions.length,
       transactions_requiring_approval: gitTransactions.filter(
         (transaction) => transaction.status === "approval_required"
+      ).length,
+      transactions_ready_for_pr: gitTransactions.filter(
+        (transaction) => transaction.pr?.status === "ready_for_pr"
       ).length,
       recent_transactions: gitTransactionSummaries.slice(0, recentLimit)
     },
@@ -744,6 +777,9 @@ function summarizeGitTransaction(
   transaction: GitTransactionArtifact
 ): BoardGitTransactionSummary {
   const reason = transaction.push?.reason;
+  const prCreateHint = transaction.pr?.create_hint;
+  const rollbackHint =
+    transaction.pr?.rollback_hint ?? transaction.rollback?.command_hint;
 
   return compact({
     transaction_id: transaction.transaction_id ?? "unknown",
@@ -756,6 +792,17 @@ function summarizeGitTransaction(
     remote_ref: transaction.push?.remote_ref,
     approval_id: transaction.push?.approval_id,
     reason: reason === undefined ? undefined : sanitizeInline(reason),
+    commit_sha: transaction.commit_sha,
+    diff_sha256: transaction.diff_sha256,
+    pr_status: transaction.pr?.status,
+    pr_base: transaction.pr?.base_branch,
+    pr_head: transaction.pr?.head_branch,
+    pr_create_hint:
+      prCreateHint === undefined ? undefined : sanitizeInline(prCreateHint),
+    rollback_strategy:
+      transaction.pr?.rollback_strategy ?? transaction.rollback?.strategy,
+    rollback_hint:
+      rollbackHint === undefined ? undefined : sanitizeInline(rollbackHint),
     transaction_path: transaction.transaction_path,
     created_at: transaction.created_at,
     updated_at: transaction.updated_at
@@ -876,6 +923,9 @@ function summarizeDailyReport(report: DailyReportArtifact): BoardDailyReportSumm
     setup_required_runs: report.summary?.setup_required_runs,
     pending_approvals: report.summary?.pending_approvals,
     failed_notifications: report.summary?.failed_notifications,
+    git_transactions_ready_for_pr: report.summary?.git_transactions_ready_for_pr,
+    git_transactions_requiring_approval:
+      report.summary?.git_transactions_requiring_approval,
     created_at: report.created_at
   });
 }

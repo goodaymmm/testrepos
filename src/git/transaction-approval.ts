@@ -50,6 +50,16 @@ export async function handleGitPushApprovalDecision(
       ...record.push,
       reason: `push approval ${input.decision}`
     },
+    pr:
+      record.pr === undefined
+        ? undefined
+        : {
+            ...record.pr,
+            status: "failed",
+            rollback_strategy: record.rollback.strategy,
+            rollback_hint: record.rollback.command_hint,
+            create_hint: `Do not create a PR until transaction recovery is complete for ${record.branch}.`
+          },
     checks: [
       ...record.checks,
       {

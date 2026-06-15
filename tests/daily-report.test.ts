@@ -78,7 +78,11 @@ describe("createDailyReport", () => {
     await writeJsonFileAtomic(path.join(root, ".kairon", "git", "transactions", "GTX-0001.json"), {
       schema_version: "0.1",
       id: "GTX-0001",
-      status: "completed",
+      transaction_id: "GTX-0001",
+      status: "approval_required",
+      pr: {
+        status: "ready_for_pr"
+      },
       created_at: "2026-05-25T06:00:00.000Z"
     });
     await writeJsonFileAtomic(path.join(root, ".kairon", "recovery", "REC-20260525070000000.json"), {
@@ -119,7 +123,9 @@ describe("createDailyReport", () => {
       pending_approvals: 1,
       failed_notifications: 1,
       recovery_approvals_requested: 2,
-      git_transactions_by_status: { completed: 1 },
+      git_transactions_by_status: { approval_required: 1 },
+      git_transactions_ready_for_pr: 1,
+      git_transactions_requiring_approval: 1,
       review_loops_by_status: { running: 1 }
     });
     expect(report.approvals).toMatchObject({
