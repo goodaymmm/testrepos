@@ -66,3 +66,9 @@ Get-Content docs\pr-release-checklist-v0.md -Raw -Encoding UTF8
 - [ ] manual / operation testの実施有無と結果がPR本文に記録されている。
 - [ ] README更新要否が判断済み。
 - [ ] generated artifactやlocal stateを誤ってcommitしていない。
+
+release判断まで行う場合は、追加で `docs/release-checklist-v0.md` を確認する。
+
+- [ ] `package.json` と `src/index.ts` のversionが一致している。
+- [ ] version更新が必要か判断した。
+- [ ] release notesを更新する必要がある場合は `docs/release-notes-v0.md` に記録した。

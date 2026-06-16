@@ -33,6 +33,33 @@ describe("PR and release documentation", () => {
     expect(readme).toContain("docs/operation-test-harness-v0.md");
     expect(readme).toContain("docs/manual-test-results-v0.md");
     expect(readme).toContain("docs/pr-release-checklist-v0.md");
+    expect(readme).toContain("docs/release-checklist-v0.md");
+    expect(readme).toContain("docs/release-notes-v0.md");
+  });
+
+  it("documents release readiness and versioning policy", async () => {
+    const checklist = await readUtf8("docs/release-checklist-v0.md");
+    const notes = await readUtf8("docs/release-notes-v0.md");
+    const prChecklist = await readUtf8("docs/pr-release-checklist-v0.md");
+
+    expect(checklist).toContain("<!-- kairon:release-readiness -->");
+    expect(checklist).toContain("<!-- kairon:versioning-policy -->");
+    expect(checklist).toContain("<!-- kairon:release-evidence -->");
+    expect(checklist).toContain("npm run build");
+    expect(checklist).toContain("npm test");
+    expect(notes).toContain("<!-- kairon:release-notes-unreleased -->");
+    expect(notes).toContain("<!-- kairon:versioning-policy -->");
+    expect(prChecklist).toContain("docs/release-checklist-v0.md");
+    expect(prChecklist).toContain("docs/release-notes-v0.md");
+  });
+
+  it("keeps package and CLI versions synchronized", async () => {
+    const packageJson = JSON.parse(await readUtf8("package.json")) as {
+      version: string;
+    };
+    const index = await readUtf8("src/index.ts");
+
+    expect(index).toContain(`KAIRON_VERSION = "${packageJson.version}"`);
   });
 });
 
