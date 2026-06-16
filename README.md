@@ -392,6 +392,9 @@ README更新が必要な代表条件:
 
 詳細は [docs/pr-release-checklist-v0.md](docs/pr-release-checklist-v0.md) を参照してください。
 
+release判断では [docs/release-checklist-v0.md](docs/release-checklist-v0.md) を使い、`npm run build`、`npm test`、対象operation test、secret / generated artifact確認、README更新要否、version同期を確認します。
+release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在のbaseline versionは `0.1.0` で、versionを変更する場合は `package.json` と `src/index.ts` の `KAIRON_VERSION` を同時に更新します。
+
 ### T11-T15 運用テスト対象
 
 T11からT15では、初期ドッキング後の運用に必要なCLI経路を追加しています。運用テストでは、次の単位で確認します。
