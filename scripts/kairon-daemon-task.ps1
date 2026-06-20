@@ -202,14 +202,23 @@ function Register-KaironTask {
     -AllowStartIfOnBatteries `
     -ExecutionTimeLimit (New-TimeSpan -Days 1)
 
-  Register-ScheduledTask `
-    -TaskName $Name `
-    -Action $action `
-    -Trigger $trigger `
-    -Principal $principal `
-    -Settings $settings `
-    -Description "Runs kairon start --daemon for $Root. Secrets are read from user environment variables." `
-    -Force | Out-Null
+  try {
+    Register-ScheduledTask `
+      -TaskName $Name `
+      -Action $action `
+      -Trigger $trigger `
+      -Principal $principal `
+      -Settings $settings `
+      -Description "Runs kairon start --daemon for $Root. Secrets are read from user environment variables." `
+      -Force `
+      -ErrorAction Stop | Out-Null
+  } catch {
+    Write-Host "task_register_failed=$Name"
+    Write-Host "project_root=$Root"
+    Write-Host "log_root=$DaemonLogRoot"
+    Write-Host "error=$($_.Exception.Message)"
+    throw
+  }
 
   Write-Host "task_registered=$Name"
   Write-Host "project_root=$Root"
