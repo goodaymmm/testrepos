@@ -2,6 +2,7 @@
 
 この文書は、Windows環境で `kairon start --daemon` を日常運用するための手順です。
 Task Schedulerにはsecret値を渡さず、ユーザー環境変数からKaironが読み取る前提にします。
+登録・起動・停止には `scripts/kairon-daemon-task.ps1` を使います。
 
 ## 前提
 
