@@ -19,6 +19,22 @@ export type DailyRunSummary = {
   finished_at?: string;
 };
 
+export type DailyApprovalSummary = {
+  id: string;
+  status: string;
+  type?: string;
+  title?: string;
+  task_id?: string;
+  run_id?: string;
+  actions?: string[];
+  decision?: string;
+  reason?: string;
+  snooze_until?: string;
+  created_at?: string;
+  updated_at?: string;
+  decided_at?: string;
+};
+
 export type DailyReport = {
   schema_version: string;
   date: string;
@@ -45,7 +61,7 @@ export type DailyReport = {
     pending: number;
     decided: number;
     by_status: Record<string, number>;
-    items: Record<string, unknown>[];
+    items: DailyApprovalSummary[];
   };
   reviews: {
     loops_total: number;
@@ -233,7 +249,7 @@ async function readRunSummary(
 async function collectApprovals(
   projectRoot: string,
   date: string
-): Promise<Record<string, unknown>[]> {
+): Promise<DailyApprovalSummary[]> {
   const approvalsDir = getKaironPaths(projectRoot).approvalsDir;
   const approvals = await readJsonFilesInDir(approvalsDir);
 
@@ -249,7 +265,31 @@ async function collectApprovals(
         date
       )
     )
-    .sort(compareUnknownByUpdatedAt);
+    .map(summarizeApprovalForDailyReport)
+    .sort(compareDailyApprovalByUpdatedAt);
+}
+
+function summarizeApprovalForDailyReport(
+  approval: Record<string, unknown>
+): DailyApprovalSummary {
+  const title = optionalString(approval.title);
+  const reason = optionalString(approval.reason);
+
+  return compact({
+    id: String(approval.id ?? approval.approval_id ?? "unknown"),
+    status: String(approval.status ?? "unknown"),
+    type: optionalString(approval.type),
+    title: title === undefined ? undefined : sanitizeInlineText(title),
+    task_id: optionalString(approval.task_id),
+    run_id: optionalString(approval.run_id),
+    actions: optionalStringArray(approval.actions ?? approval.allowed_actions),
+    decision: optionalString(approval.decision),
+    reason: reason === undefined ? undefined : sanitizeInlineText(reason),
+    snooze_until: optionalString(approval.snooze_until),
+    created_at: optionalString(approval.created_at),
+    updated_at: optionalString(approval.updated_at),
+    decided_at: optionalString(approval.decided_at)
+  });
 }
 
 async function collectReviews(
@@ -428,6 +468,15 @@ function compareByCreatedAt(left: DailyRunSummary, right: DailyRunSummary): numb
   return String(left.created_at ?? "").localeCompare(String(right.created_at ?? ""));
 }
 
+function compareDailyApprovalByUpdatedAt(
+  left: DailyApprovalSummary,
+  right: DailyApprovalSummary
+): number {
+  return String(left.updated_at ?? left.created_at ?? "").localeCompare(
+    String(right.updated_at ?? right.created_at ?? "")
+  );
+}
+
 function compareUnknownByUpdatedAt(
   left: Record<string, unknown>,
   right: Record<string, unknown>
@@ -439,6 +488,33 @@ function compareUnknownByUpdatedAt(
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function optionalStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const strings = value.filter((item): item is string => typeof item === "string");
+  return strings.length === 0 ? undefined : strings;
+}
+
+function sanitizeInlineText(value: string): string {
+  const collapsed = value.replace(/\s+/g, " ").trim();
+  const redacted = collapsed
+    .replace(
+      /(api[_-]?key|api[_-]?token|token|secret|password|authorization|cookie)\s*[:=]\s*["']?[^"',;\s]+/gi,
+      "$1=[redacted]"
+    )
+    .replace(/\bBearer\s+[A-Za-z0-9._-]+/gi, "Bearer [redacted]");
+
+  return redacted.length > 240 ? `${redacted.slice(0, 237)}...` : redacted;
+}
+
+function compact<T extends Record<string, unknown>>(value: T): T {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined)
+  ) as T;
 }
 
 function readNestedString(

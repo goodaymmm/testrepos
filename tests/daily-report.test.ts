@@ -53,6 +53,14 @@ describe("createDailyReport", () => {
       id: "APR-0001",
       status: "pending",
       type: "merge",
+      title: "Merge approval token=SHOULD_NOT_LEAK",
+      actions: ["approve", "reject", "request_changes"],
+      reason: "Authorization Bearer SHOULD_NOT_LEAK_TOKEN",
+      diff: "SHOULD_BE_OMITTED",
+      stdout: "SHOULD_BE_OMITTED",
+      stderr: "SHOULD_BE_OMITTED",
+      api_token: "SHOULD_BE_REDACTED",
+      password: "SHOULD_NOT_LEAK",
       created_at: "2026-05-25T02:00:00.000Z",
       updated_at: "2026-05-25T02:00:00.000Z"
     });
@@ -130,8 +138,25 @@ describe("createDailyReport", () => {
     });
     expect(report.approvals).toMatchObject({
       total: 1,
-      pending: 1
+      pending: 1,
+      items: [
+        {
+          id: "APR-0001",
+          status: "pending",
+          type: "merge",
+          title: "Merge approval token=[redacted]",
+          reason: "Authorization Bearer [redacted]"
+        }
+      ]
     });
+    expect(report.approvals.items[0]).not.toHaveProperty("diff");
+    expect(report.approvals.items[0]).not.toHaveProperty("stdout");
+    expect(report.approvals.items[0]).not.toHaveProperty("stderr");
+    expect(report.approvals.items[0]).not.toHaveProperty("api_token");
+    expect(report.approvals.items[0]).not.toHaveProperty("password");
+    expect(JSON.stringify(report)).not.toContain("SHOULD_BE_OMITTED");
+    expect(JSON.stringify(report)).not.toContain("SHOULD_BE_REDACTED");
+    expect(JSON.stringify(report)).not.toContain("SHOULD_NOT_LEAK");
     expect(report.reviews).toMatchObject({
       loops_total: 1,
       results_total: 1
@@ -150,13 +175,17 @@ describe("createDailyReport", () => {
       gateway_status: "setup_required",
       last_error_code: "discord_missing_access"
     });
-    await expect(
-      readJsonFile(path.join(root, ".kairon", "reports", "daily", "2026-05-25.json"))
-    ).resolves.toMatchObject({
+    const persistedReport = await readJsonFile(
+      path.join(root, ".kairon", "reports", "daily", "2026-05-25.json")
+    );
+    expect(persistedReport).toMatchObject({
       date: "2026-05-25",
       runs: { total: 3 },
       recovery: { total: 1 },
       summary: { failed_runs: 1 }
     });
+    expect(JSON.stringify(persistedReport)).not.toContain("SHOULD_BE_OMITTED");
+    expect(JSON.stringify(persistedReport)).not.toContain("SHOULD_BE_REDACTED");
+    expect(JSON.stringify(persistedReport)).not.toContain("SHOULD_NOT_LEAK");
   });
 });
