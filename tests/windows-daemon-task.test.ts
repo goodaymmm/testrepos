@@ -11,6 +11,8 @@ describe("kairon-daemon-task.ps1", () => {
     const script = await readScript();
 
     expect(script).toContain("Register-ScheduledTask");
+    expect(script).toContain("-ErrorAction Stop");
+    expect(script).toContain("task_register_failed");
     expect(script).toContain("Start-ScheduledTask");
     expect(script).toContain("Stop-ScheduledTask");
     expect(script).toContain("Unregister-ScheduledTask");
