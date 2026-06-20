@@ -229,6 +229,9 @@ describe("board projection", () => {
     expect(html).toContain("<title>Kairon Board</title>");
     expect(html).toContain('href="#operations"');
     expect(html).toContain('id="operations"');
+    expect(html).toContain('data-kairon-section="operations-priority"');
+    expect(html).toContain('data-kairon-priority-count="5"');
+    expect(html).toContain("Operations Priority");
     expect(html).toContain('href="#runtime"');
     expect(html).toContain('id="runtime"');
     expect(html).toContain('id="recovery"');
@@ -259,6 +262,23 @@ describe("board projection", () => {
     expect(html).not.toContain("SHOULD_NOT_BE_EXPOSED");
   });
 
+  it("renders an empty operations priority marker for machine checks", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+
+    const projection = await createBoardProjection(root, {
+      now: () => new Date("2026-06-01T00:00:00.000Z")
+    });
+    const html = renderBoardHtml(projection);
+
+    expect(projection.operations.priority).toHaveLength(0);
+    expect(html).toContain('id="operations"');
+    expect(html).toContain('data-kairon-section="operations-priority"');
+    expect(html).toContain('data-kairon-priority-count="0"');
+    expect(html).toContain("Operations Priority");
+    expect(html).toContain("No priority operations");
+  });
+
   it("serves the board on loopback only", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
@@ -280,7 +300,11 @@ describe("board projection", () => {
 
       const htmlResponse = await fetch(server.board_url);
       expect(htmlResponse.status).toBe(200);
-      expect(await htmlResponse.text()).toContain("Kairon Board");
+      const html = await htmlResponse.text();
+      expect(html).toContain("Kairon Board");
+      expect(html).toContain('data-kairon-section="operations-priority"');
+      expect(html).toContain('data-kairon-priority-count="5"');
+      expect(html).toContain("Operations Priority");
 
       const projectionResponse = await fetch(`${server.board_url}projection.json`);
       expect(projectionResponse.status).toBe(200);
