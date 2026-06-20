@@ -249,10 +249,12 @@ export type BoardDiscordAuditSummary = {
 export type BoardDiscordNotificationAuditSummary = {
   approval_id?: string;
   status?: string;
+  decision_status?: "received" | "missing";
   message_id?: string;
   board_anchor?: string;
   board_url?: string;
   reason?: string;
+  next_action?: string;
   recorded_at?: string;
   sent_at?: string;
   updated_at?: string;
@@ -260,6 +262,8 @@ export type BoardDiscordNotificationAuditSummary = {
 
 export type BoardDiscordDecisionAuditSummary = {
   total: number;
+  status: "present" | "missing";
+  next_action?: string;
   by_status: Record<string, number>;
   by_decision: Record<string, number>;
   recent: BoardDiscordDecisionAuditRecordSummary[];
@@ -389,6 +393,8 @@ type DiscordDecisionAuditRecord = {
 
 const defaultRecentLimit = 10;
 const secretKeyPattern = /(secret|token|password|api[_-]?key|authorization|cookie|credential)/i;
+const discordDecisionAuditNextAction =
+  "click Discord approval button and rerun DiscordDecisionAuditLive";
 
 export async function createBoardProjection(
   projectRoot: string,
@@ -506,6 +512,7 @@ export async function createBoardProjection(
       gateway: runtime.discordGateway,
       notifications: summarizeDiscordNotificationAudits(
         discordAudits.notifications,
+        discordAudits.decisions,
         recentLimit
       ),
       decisions: summarizeDiscordDecisionAudits(discordAudits.decisions, recentLimit)
@@ -932,8 +939,15 @@ function summarizeDailyReport(report: DailyReportArtifact): BoardDailyReportSumm
 
 function summarizeDiscordNotificationAudits(
   records: DiscordNotificationAuditRecord[],
+  decisions: DiscordDecisionAuditRecord[],
   recentLimit: number
 ): BoardDiscordAuditSummary {
+  const decidedApprovalIds = new Set(
+    decisions
+      .map((record) => record.approval_id)
+      .filter((approvalId): approvalId is string => approvalId !== undefined && approvalId.length > 0)
+  );
+
   return {
     total: records.length,
     by_status: countBy(records, (record) => record.status ?? "unknown"),
@@ -944,10 +958,20 @@ function summarizeDiscordNotificationAudits(
         compact({
           approval_id: record.approval_id,
           status: record.status,
+          decision_status:
+            record.approval_id === undefined
+              ? undefined
+              : decidedApprovalIds.has(record.approval_id)
+                ? "received"
+                : "missing",
           message_id: record.message_id,
           board_anchor: record.board_anchor,
           board_url: sanitizeLocalBoardUrl(record.board_url),
           reason: record.reason === undefined ? undefined : sanitizeInline(record.reason),
+          next_action:
+            record.approval_id === undefined || decidedApprovalIds.has(record.approval_id)
+              ? undefined
+              : discordDecisionAuditNextAction,
           recorded_at: record.recorded_at,
           sent_at: record.sent_at,
           updated_at: record.updated_at
@@ -960,8 +984,11 @@ function summarizeDiscordDecisionAudits(
   records: DiscordDecisionAuditRecord[],
   recentLimit: number
 ): BoardDiscordDecisionAuditSummary {
+  const hasRecords = records.length > 0;
   return {
     total: records.length,
+    status: hasRecords ? "present" : "missing",
+    next_action: hasRecords ? undefined : discordDecisionAuditNextAction,
     by_status: countBy(records, (record) => record.status ?? "unknown"),
     by_decision: countBy(records, (record) => record.decision ?? "unknown"),
     recent: records

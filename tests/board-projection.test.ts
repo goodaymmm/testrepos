@@ -92,6 +92,7 @@ describe("board projection", () => {
         },
         decisions: {
           total: 1,
+          status: "present",
           by_status: {
             applied: 1
           },
@@ -126,6 +127,7 @@ describe("board projection", () => {
     expect(projection.discord.notifications.recent[0]).toMatchObject({
       approval_id: "APR-0001",
       status: "failed",
+      decision_status: "received",
       message_id: "discord-message-2",
       board_anchor: "#approval-APR-0001",
       board_url: "http://127.0.0.1:8787/#approval-APR-0001",
@@ -140,6 +142,7 @@ describe("board projection", () => {
       message_update_status: "updated",
       message_update_reason: "status message updated"
     });
+    expect(projection.discord.decisions.next_action).toBeUndefined();
     expect(projection.git.recent_transactions[0]).toMatchObject({
       transaction_id: "GTX-0002",
       status: "pushed",
@@ -249,6 +252,8 @@ describe("board projection", () => {
     expect(html).toContain("Git Transactions");
     expect(html).toContain("Discord Summary");
     expect(html).toContain("Discord Decision Audit");
+    expect(html).toContain("decision_audit.status");
+    expect(html).toContain("received");
     expect(html).toContain("discord-message-1");
     expect(html).toContain("discord-message-2");
     expect(html).toContain("http://127.0.0.1:8787/#approval-APR-0001");
@@ -260,6 +265,47 @@ describe("board projection", () => {
     expect(html).not.toContain("FULL_STDOUT_SHOULD_NOT_APPEAR");
     expect(html).not.toContain("SHOULD_NOT_LEAK");
     expect(html).not.toContain("SHOULD_NOT_BE_EXPOSED");
+  });
+
+  it("classifies missing Discord decision audit with an operator next action", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await mkdir(path.join(root, ".kairon", "runtime", "discord"), {
+      recursive: true
+    });
+    await writeFile(
+      path.join(root, ".kairon", "runtime", "discord", "approval-notifications.jsonl"),
+      `${JSON.stringify({
+        schema_version: "0.1",
+        approval_id: "APR-MISSING",
+        status: "sent",
+        message_id: "discord-message-missing",
+        board_anchor: "#approval-APR-MISSING",
+        recorded_at: "2026-06-01T00:09:00.000Z"
+      })}\n`,
+      "utf8"
+    );
+
+    const projection = await createBoardProjection(root, {
+      now: () => new Date("2026-06-01T00:00:00.000Z")
+    });
+    const html = renderBoardHtml(projection);
+
+    expect(projection.discord.decisions).toMatchObject({
+      total: 0,
+      status: "missing",
+      next_action: "click Discord approval button and rerun DiscordDecisionAuditLive"
+    });
+    expect(projection.discord.notifications.recent[0]).toMatchObject({
+      approval_id: "APR-MISSING",
+      status: "sent",
+      decision_status: "missing",
+      next_action: "click Discord approval button and rerun DiscordDecisionAuditLive"
+    });
+    expect(html).toContain("decision_audit.status");
+    expect(html).toContain("decision_audit.next_action");
+    expect(html).toContain("click Discord approval button and rerun DiscordDecisionAuditLive");
+    expect(html).toContain("discord-message-missing");
   });
 
   it("renders an empty operations priority marker for machine checks", async () => {
