@@ -31,10 +31,30 @@ describe("PR and release documentation", () => {
     const readme = await readUtf8("README.md");
 
     expect(readme).toContain("docs/operation-test-harness-v0.md");
+    expect(readme).toContain("docs/github-branch-protection-sandbox-v0.md");
     expect(readme).toContain("docs/manual-test-results-v0.md");
     expect(readme).toContain("docs/pr-release-checklist-v0.md");
     expect(readme).toContain("docs/release-checklist-v0.md");
     expect(readme).toContain("docs/release-notes-v0.md");
+  });
+
+  it("documents GitHub branch protection sandbox and token redaction policy", async () => {
+    const sandbox = await readUtf8("docs/github-branch-protection-sandbox-v0.md");
+    const harness = await readUtf8("docs/operation-test-harness-v0.md");
+
+    expect(sandbox).toContain("token値を出力しない");
+    expect(sandbox).toContain("GH_TOKEN");
+    expect(sandbox).toContain("GITHUB_TOKEN");
+    expect(sandbox).toContain("present");
+    expect(sandbox).toContain("missing");
+    expect(sandbox).toContain("goodaymmm/14Forge");
+    expect(sandbox).toContain("Administration: Read-only");
+    expect(sandbox).toContain("api_status=plan_or_permission_error");
+    expect(sandbox).toContain("http_status=403");
+    expect(sandbox).toContain("public sandbox");
+    expect(harness).toContain("BranchProtectionPublicSandbox");
+    expect(harness).toContain("SETUP_REQUIRED");
+    expect(harness).toContain("token値を出力しない");
   });
 
   it("documents release readiness and versioning policy", async () => {

@@ -79,6 +79,7 @@ T67のGitHub branch protection live確認は、private repositoryのGitHubプラ
 - fine-grained PATの場合、対象public sandbox repositoryへのRepository accessがあること。
 - Administration permissionがRead-onlyで付与されていること。
 - sandbox repositoryの対象branchにBranch protection ruleが設定され、required pull request reviewsとrequired status checksが有効であること。
+- token値を出力しない。`GH_TOKEN` / `GITHUB_TOKEN` は値ではなく `present` / `missing` のみ記録します。
 
 期待する `kairon doctor` evidence:
 
@@ -104,6 +105,7 @@ profile実行例:
 ```
 
 `BranchProtectionPublicSandbox` は `GH_TOKEN` を優先し、未設定時に `GITHUB_TOKEN` を使います。token未設定、403、404、required gate未設定は、コード不具合ではなく外部条件不足として `SETUP_REQUIRED` に記録します。
+EnglishAppなどの個人アカウントprivate repositoryで `api_status=plan_or_permission_error` / `http_status=403` になる場合も、public sandbox repositoryで `api_status=ok` を確認できればKairon実装側のlive API疎通は確認済みとして扱います。
 
 ## Restore方針
 
