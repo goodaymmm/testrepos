@@ -78,6 +78,45 @@ function Assert-WindowsTaskScheduler {
   $null = Get-Command Register-ScheduledTask -ErrorAction Stop
 }
 
+function Get-KaironScheduledTask {
+  param([string]$Name)
+
+  Assert-WindowsTaskScheduler
+  return Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
+}
+
+function Require-KaironScheduledTask {
+  param([string]$Name)
+
+  $task = Get-KaironScheduledTask -Name $Name
+  if ($null -eq $task) {
+    Write-Host "task.exists=false"
+    throw "Scheduled task was not found: $Name"
+  }
+
+  return $task
+}
+
+function Invoke-KaironStop {
+  param(
+    [string]$Root,
+    [string]$Command
+  )
+
+  $exitCode = 1
+  Push-Location -LiteralPath $Root
+  try {
+    & $Command stop
+    $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
+  } finally {
+    Pop-Location
+  }
+
+  if ($exitCode -ne 0) {
+    throw "kairon stop failed with exit code $exitCode"
+  }
+}
+
 function Invoke-KaironDaemon {
   param(
     [string]$Root,
@@ -89,15 +128,21 @@ function Invoke-KaironDaemon {
   New-Item -ItemType Directory -Force -Path $DaemonLogRoot | Out-Null
   $timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
   $logPath = Join-Path $DaemonLogRoot "kairon-daemon-$timestamp.log"
+  $exitCode = 1
 
-  Set-Location -LiteralPath $Root
-  "started_at=$(Get-Date -Format o)" | Out-File -FilePath $logPath -Encoding utf8
-  "project_root=$Root" | Out-File -FilePath $logPath -Encoding utf8 -Append
-  "command=$Command start --daemon --interval-ms $TickIntervalMs" |
-    Out-File -FilePath $logPath -Encoding utf8 -Append
+  Push-Location -LiteralPath $Root
+  try {
+    "started_at=$(Get-Date -Format o)" | Out-File -FilePath $logPath -Encoding utf8
+    "project_root=$Root" | Out-File -FilePath $logPath -Encoding utf8 -Append
+    "command=$Command start --daemon --interval-ms $TickIntervalMs" |
+      Out-File -FilePath $logPath -Encoding utf8 -Append
 
-  & $Command start --daemon --interval-ms $TickIntervalMs *>> $logPath
-  $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
+    & $Command start --daemon --interval-ms $TickIntervalMs *>> $logPath
+    $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
+  } finally {
+    Pop-Location
+  }
+
   "finished_at=$(Get-Date -Format o)" | Out-File -FilePath $logPath -Encoding utf8 -Append
   "exit_code=$exitCode" | Out-File -FilePath $logPath -Encoding utf8 -Append
   Write-Host "daemon_log=$logPath"
@@ -149,7 +194,7 @@ function Register-KaironTask {
   $principal = New-ScheduledTaskPrincipal `
     -UserId $principalUserId `
     -LogonType Interactive `
-    -RunLevel LeastPrivilege
+    -RunLevel Limited
   $settings = New-ScheduledTaskSettingsSet `
     -MultipleInstances IgnoreNew `
     -RestartCount 3 `
@@ -174,8 +219,7 @@ function Register-KaironTask {
 function Show-KaironTaskStatus {
   param([string]$Name)
 
-  Assert-WindowsTaskScheduler
-  $task = Get-ScheduledTask -TaskName $Name -ErrorAction SilentlyContinue
+  $task = Get-KaironScheduledTask -Name $Name
   if ($null -eq $task) {
     Write-Host "task.exists=false"
     return
@@ -204,21 +248,24 @@ switch ($Action) {
       -UseStartupTrigger ([bool]$AtStartup)
   }
   "Start" {
-    Assert-WindowsTaskScheduler
+    $null = Require-KaironScheduledTask -Name $TaskName
     Start-ScheduledTask -TaskName $TaskName
     Write-Host "task_started=$TaskName"
   }
   "Stop" {
-    Set-Location -LiteralPath $resolvedProjectRoot
-    & $KaironCommand stop
-    Assert-WindowsTaskScheduler
+    Invoke-KaironStop -Root $resolvedProjectRoot -Command $KaironCommand
+    $task = Get-KaironScheduledTask -Name $TaskName
+    if ($null -eq $task) {
+      Write-Host "task.exists=false"
+      return
+    }
+
     Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     Write-Host "task_stopped=$TaskName"
   }
   "Restart" {
-    Set-Location -LiteralPath $resolvedProjectRoot
-    & $KaironCommand stop
-    Assert-WindowsTaskScheduler
+    Invoke-KaironStop -Root $resolvedProjectRoot -Command $KaironCommand
+    $null = Require-KaironScheduledTask -Name $TaskName
     Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
     Start-ScheduledTask -TaskName $TaskName
     Write-Host "task_restarted=$TaskName"
@@ -227,7 +274,12 @@ switch ($Action) {
     Show-KaironTaskStatus -Name $TaskName
   }
   "Unregister" {
-    Assert-WindowsTaskScheduler
+    $task = Get-KaironScheduledTask -Name $TaskName
+    if ($null -eq $task) {
+      Write-Host "task.exists=false"
+      return
+    }
+
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
     Write-Host "task_unregistered=$TaskName"
   }
