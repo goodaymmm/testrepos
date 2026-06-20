@@ -43,7 +43,7 @@ operation-test-results/<yyyyMMdd-HHmmss>/backup/kairon-state/
 | `DiscordInvalidEnv` | 一時的にinvalid envを注入し、診断とsecret非漏洩を確認 |
 | `DiscordSetupError` | 権限不足や設定不一致のsetup errorを誘発し、raw Discord errorやsecretが出ないことを確認 |
 | `ApprovalNotificationAudit` | Discord approval notification audit artifactを検査 |
-| `DiscordDecisionAuditLive` | 手動Discord button/modal操作後に `decision-interactions.jsonl` が記録されることを確認 |
+| `DiscordDecisionAuditLive` | 手動Discord button/modal操作後に `decision-interactions.jsonl` が記録されることを確認。timeout未指定時はOPTIONAL、timeout指定後にdecision auditが無い場合はSETUP_REQUIRED |
 | `RuntimeRecovery` | stale gateway / stale git transactionをseedし、runtime recovery evidenceとapproval生成を確認 |
 | `BranchProtectionPublicSandbox` | public sandbox repositoryでGitHub branch protection live API疎通を確認。token不足や403/404は `SETUP_REQUIRED` として扱う |
 
@@ -57,6 +57,8 @@ operation-test-results/<yyyyMMdd-HHmmss>/backup/kairon-state/
 ```
 
 Discord decision auditをliveで確認する場合は、approvalをseedしてDiscord上で期待actionをクリックするまで待機させます。
+manual timeout未指定で実行した場合は `decision_audit.status=missing` と `decision_audit.next_action=click Discord approval button and rerun DiscordDecisionAuditLive` を出してOPTIONAL扱いにします。
+timeout指定後も `decision-interactions.jsonl` に対象approval / decisionが記録されない場合は、コードFAILではなく手動操作またはDiscord疎通の外部条件不足としてSETUP_REQUIREDにします。
 
 ```powershell
 .\scripts\kairon-operation-test.ps1 `
@@ -133,4 +135,5 @@ EnglishAppなどの個人アカウントprivate repositoryで `api_status=plan_o
 - review loopは `approved` / `changes_requested` / `setup_required` を許容するが、CLI引数エラーや `review_result`欠落・schema validation失敗を evidenceに含む場合はFAILにする。
 - RuntimeActiveは `base_mode=active_work`、`active_work_closed=False`、`action=processed-item` に加え、`tick.item_type=maintenance.run` と `expected_item_id == tick.item_id` をPASS条件にする。
 - Discord系profileはenv不足や手動操作待ちを `SETUP_REQUIRED` / `OPTIONAL` として扱い、secret漏洩があればFAILにする。
+- Discord decision auditは、timeout未指定のmissingを `OPTIONAL`、timeout指定後のmissingを `SETUP_REQUIRED` として扱う。Boardでは `decision_audit.status` と `decision_audit.next_action` を確認する。
 - RuntimeRecoveryは `git_transaction_issues` と `approvals_requested` または既存approvalの検出をevidenceとして確認する。

@@ -793,7 +793,11 @@ function Format-DiscordDecisionAuditRecord {
   param($Record)
 
   if ($null -eq $Record) {
-    return "decision.audit.record=missing"
+    return @(
+      "decision.audit.record=missing",
+      "decision_audit.status=missing",
+      "decision_audit.next_action=click Discord approval button and rerun DiscordDecisionAuditLive"
+    ) -join [Environment]::NewLine
   }
 
   $fields = @(
@@ -807,7 +811,10 @@ function Format-DiscordDecisionAuditRecord {
     "command_status",
     "recorded_at"
   )
-  $lines = @("decision.audit.record=found")
+  $lines = @(
+    "decision.audit.record=found",
+    "decision_audit.status=present"
+  )
   foreach ($field in $fields) {
     $value = Get-ObjectPropertyValue -Object $Record -Name $field
     if ($null -ne $value) {
@@ -1418,6 +1425,8 @@ try {
 
         if ($DiscordDecisionAuditTimeoutSeconds -le 0) {
           @(
+            "decision_audit.status=missing",
+            "decision_audit.next_action=click Discord approval button and rerun DiscordDecisionAuditLive",
             "manual_action.required=true",
             "manual_action.approval_id=$approvalId",
             "manual_action.expected_decision=$DiscordDecisionAuditExpectedAction",
@@ -1512,7 +1521,7 @@ try {
       }
 
       if ($Evidence -notmatch "decision\.audit\.record=found") {
-        return New-StepResult -Status "OPTIONAL" -Details "decision audit record was not found before timeout"
+        return New-StepResult -Status "SETUP_REQUIRED" -Details "decision audit record was not found before timeout; click the expected Discord approval action and rerun"
       }
 
       if ($Evidence -notmatch "decision\.audit\.approval_id=") { return "approval_id was missing from decision audit" }

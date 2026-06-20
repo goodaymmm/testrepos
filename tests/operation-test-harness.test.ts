@@ -367,6 +367,10 @@ describe("kairon-operation-test.ps1", () => {
       id: "DISCORD_DECISION_AUDIT_LIVE",
       status: "OPTIONAL"
     });
+    expect(summary.results[0].evidence).toContain("decision_audit.status=missing");
+    expect(summary.results[0].evidence).toContain(
+      "decision_audit.next_action=click Discord approval button and rerun DiscordDecisionAuditLive"
+    );
   });
 
   runIfPowerShell("passes DiscordDecisionAuditLive when the decision audit record exists", async () => {
@@ -439,7 +443,7 @@ describe("kairon-operation-test.ps1", () => {
     expect(JSON.stringify(summary)).not.toContain("444444444444444444");
   });
 
-  runIfPowerShell("records DiscordDecisionAuditLive optional when live decision times out", async () => {
+  runIfPowerShell("records DiscordDecisionAuditLive setup_required when live decision times out", async () => {
     const root = await createTempProject();
     const kaironRoot = path.join(root, "kairon");
     const targetRoot = path.join(root, "target");
@@ -495,19 +499,23 @@ describe("kairon-operation-test.ps1", () => {
     );
 
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("[DISCORD_DECISION_AUDIT_LIVE] OPTIONAL");
+    expect(result.stdout).toContain("[DISCORD_DECISION_AUDIT_LIVE] SETUP_REQUIRED");
     expect(result.stdout).not.toContain("secret-token-for-test");
     expect(result.stdout).not.toContain("444444444444444444");
     const summary = await readSummaryFromStdout(result.stdout);
     expect(summary.summary).toMatchObject({
-      optional: 1,
+      setup_required: 1,
       total: 1
     });
     expect(summary.results[0]).toMatchObject({
       id: "DISCORD_DECISION_AUDIT_LIVE",
-      status: "OPTIONAL"
+      status: "SETUP_REQUIRED"
     });
     expect(summary.results[0].evidence).toContain("hidden_approval_count=1");
+    expect(summary.results[0].evidence).toContain("decision_audit.status=missing");
+    expect(summary.results[0].evidence).toContain(
+      "decision_audit.next_action=click Discord approval button and rerun DiscordDecisionAuditLive"
+    );
     await expect(readFile(staleApprovalPath, "utf8")).resolves.toContain(
       "APR-STALE-PENDING"
     );

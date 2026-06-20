@@ -192,6 +192,10 @@ function renderDiscord(
       `notifications.${status}`,
       count
     ]),
+    ["decision_audit.status", decisions.status],
+    ...(decisions.next_action === undefined
+      ? []
+      : [["decision_audit.next_action", decisions.next_action]]),
     ["decisions.total", decisions.total],
     ...Object.entries(decisions.by_status).map(([status, count]) => [
       `decisions.status.${status}`,
@@ -206,11 +210,13 @@ function renderDiscord(
   const notificationRows = notifications.recent.map((record) => [
     text(record.approval_id),
     text(record.status),
+    text(record.decision_status),
     text(record.message_id),
     record.board_url === undefined
       ? text(record.board_anchor)
       : `<a href="${escapeHtml(record.board_url)}">${escapeHtml(record.board_anchor ?? "Open Board")}</a>`,
     text(record.reason),
+    text(record.next_action),
     text(record.recorded_at ?? record.updated_at ?? record.sent_at)
   ]);
   const decisionRows = decisions.recent.map((record) => [
@@ -226,7 +232,7 @@ function renderDiscord(
   ]);
 
   return `<div id="discord">${section("Discord Summary", ["Key", "Value"], summaryRows)}
-${section("Discord Notification Audit", ["Approval", "Status", "Message", "Board", "Reason", "Recorded"], notificationRows)}
+${section("Discord Notification Audit", ["Approval", "Status", "Decision", "Message", "Board", "Reason", "Next Action", "Recorded"], notificationRows)}
 ${section("Discord Decision Audit", ["Approval", "Decision", "Status", "Actor", "Message", "Command", "Update", "Update Reason", "Recorded"], decisionRows)}</div>`;
 }
 
