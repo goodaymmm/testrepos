@@ -24,6 +24,7 @@ T67の運用テストでは `goodaymmm/14Forge` をpublic sandboxとして使い
 
 Kaironは `GH_TOKEN` を優先し、未設定の場合に `GITHUB_TOKEN` を参照する。
 両方を同時に設定している場合、意図しないtokenを使わないように `GH_TOKEN` を明示する。
+`GH_TOKEN` / `GITHUB_TOKEN` は値を表示せず、doctor / harnessでは `present` / `missing` のみを記録する。
 
 ## GitHub側の設定
 
@@ -68,7 +69,7 @@ Repository permissions:
   Administration: Read-only
 ```
 
-token値はコマンドログ、Markdown、`.kairon/` artifactに保存しない。
+token値を出力しない。token値はコマンドログ、Markdown、`.kairon/` artifactに保存しない。
 
 ## Harnessでの実行
 
@@ -155,10 +156,12 @@ PASS git.branch_protection GitHub branch protection
 | `required_status_checks=missing` | Branch protection ruleでrequired status checksを有効にする |
 
 private repositoryで403になっても、public sandboxで上記PASSが取れるなら、Kaironのbranch protection API実装はlive疎通済みとして扱う。
+EnglishAppのような個人アカウントprivate repositoryで `api_status=plan_or_permission_error` / `http_status=403` になる場合は、GitHub側のplan / enforcement / API制約として扱い、public sandboxで `api_status=ok` を確認する。
 
 ## ログ方針
 
-- token値は出力しない。
+- token値を出力しない。
+- `GH_TOKEN` / `GITHUB_TOKEN` は値ではなく `present` / `missing` のみ記録する。
 - `Get-ChildItem Env:*TOKEN*` の値は貼らない。
 - doctor出力は `present` / `missing`、`api_status`、`http_status` だけを記録する。
 - public sandbox repository名は記録してよい。
