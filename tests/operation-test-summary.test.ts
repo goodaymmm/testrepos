@@ -103,6 +103,70 @@ describe("operation test result summary", () => {
     expect(output).toContain("password=[redacted]");
   });
 
+  it("ignores backed-up Kairon state and non-summary logs inside result roots", async () => {
+    const root = await createTempProject();
+    const resultRoot = path.join(root, "operation-test-results", "manual-run");
+    const currentRunRoot = path.join(resultRoot, "20260620-112253");
+    const backupRunRoot = path.join(
+      resultRoot,
+      "target-kairon-state-backup",
+      "tmp",
+      "2026-06-13",
+      "operation-test-results",
+      "old-run",
+      "20260612-190014"
+    );
+    await mkdir(currentRunRoot, { recursive: true });
+    await mkdir(backupRunRoot, { recursive: true });
+
+    await writeFile(
+      path.join(currentRunRoot, "summary.json"),
+      JSON.stringify(
+        {
+          schema_version: "0.1",
+          results: [
+            {
+              id: "CURRENT_RESULT",
+              name: "Current result",
+              status: "PASS",
+              details: "passed"
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+    await writeFile(
+      path.join(backupRunRoot, "summary.md"),
+      [
+        "| ID | Name | Status | Details |",
+        "|---|---|---|---|",
+        "| STALE_BACKUP_RESULT | Old failure | FAIL | stale backup should be ignored |"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(
+      path.join(resultRoot, "pasted-log.txt"),
+      "[LOG_ONLY_RESULT] FAIL this non-summary log should be ignored for result roots\n",
+      "utf8"
+    );
+
+    const output = await summarizeOperationTestsCommand(root, undefined, {
+      resultRoot: path.join("operation-test-results", "manual-run")
+    });
+
+    expect(output).toContain("sources=1");
+    expect(output).toContain("total=1");
+    expect(output).toContain("pass_ids=CURRENT_RESULT");
+    expect(output).toContain("fail_ids=(none)");
+    expect(output).not.toContain("STALE_BACKUP_RESULT");
+    expect(output).not.toContain("LOG_ONLY_RESULT");
+    expect(output).not.toContain("target-kairon-state-backup");
+    expect(output).not.toContain("pasted-log.txt");
+  });
+
   it("requires either a log file or a result root", async () => {
     const root = await createTempProject();
 

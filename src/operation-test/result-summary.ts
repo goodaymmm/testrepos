@@ -48,6 +48,18 @@ type CandidateFile = {
 
 const statusValues = ["PASS", "FAIL", "SETUP_REQUIRED", "OPTIONAL"] as const;
 const statusSet = new Set<string>(statusValues);
+const ignoredResultRootDirectoryNames = new Set([
+  ".git",
+  ".kairon",
+  "backup",
+  "node_modules",
+  "runs",
+  "runtime",
+  "sessions",
+  "target-kairon-state-backup",
+  "terminals",
+  "worktrees"
+]);
 const textStatusLinePattern =
   /^\s*\[([A-Z0-9][A-Z0-9_-]*)\]\s+(PASS|FAIL|SETUP_REQUIRED|OPTIONAL)\b([^\r\n]*)/gm;
 const markdownTablePattern =
@@ -243,7 +255,7 @@ async function collectResultRootSources(
   const root = path.resolve(projectRoot, resultRoot);
   const entries = await collectFiles(root);
   return entries
-    .filter((filePath) => isSummarySource(filePath))
+    .filter((filePath) => isResultRootSummarySource(filePath))
     .map((filePath) => toCandidateFile(projectRoot, filePath));
 }
 
@@ -254,7 +266,7 @@ async function collectFiles(directoryPath: string): Promise<string[]> {
   for (const entry of entries) {
     const entryPath = path.join(directoryPath, entry.name);
     if (entry.isDirectory()) {
-      if ([".git", "backup", "node_modules"].includes(entry.name)) {
+      if (ignoredResultRootDirectoryNames.has(entry.name.toLowerCase())) {
         continue;
       }
 
@@ -275,14 +287,9 @@ async function isReasonableTextFile(filePath: string): Promise<boolean> {
   return stats.size <= 2_000_000;
 }
 
-function isSummarySource(filePath: string): boolean {
+function isResultRootSummarySource(filePath: string): boolean {
   const name = path.basename(filePath).toLowerCase();
-  return (
-    name === "summary.json" ||
-    name === "summary.md" ||
-    name.endsWith(".log") ||
-    name.endsWith(".txt")
-  );
+  return name === "summary.json" || name === "summary.md";
 }
 
 function toCandidateFile(projectRoot: string, filePath: string): CandidateFile {
