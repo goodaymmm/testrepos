@@ -105,7 +105,7 @@ function stat(label: string, value: string, subvalue?: string): string {
 
 function renderOperations(items: BoardOperationPriorityItem[]): string {
   return section(
-    "Operations",
+    "Operations Priority",
     ["Severity", "Kind", "Target", "Status", "Detail"],
     items.map((item) => [
       `<span class="severity-${escapeAttribute(item.severity)}">${escapeHtml(item.severity)}</span>`,
@@ -114,7 +114,12 @@ function renderOperations(items: BoardOperationPriorityItem[]): string {
       text(item.status),
       text(item.detail)
     ]),
-    "operations"
+    "operations",
+    {
+      dataKaironSection: "operations-priority",
+      dataKaironPriorityCount: items.length,
+      emptyText: "No priority operations"
+    }
   );
 }
 
@@ -344,13 +349,37 @@ function renderCleanup(proposals: BoardCleanupProposalSummary[]): string {
   );
 }
 
-function section(title: string, headers: string[], rows: string[][], id?: string): string {
-  const idAttribute = id === undefined ? "" : ` id="${escapeAttribute(id)}"`;
+type SectionOptions = {
+  dataKaironSection?: string;
+  dataKaironPriorityCount?: number;
+  emptyText?: string;
+};
+
+function section(
+  title: string,
+  headers: string[],
+  rows: string[][],
+  id?: string,
+  options: SectionOptions = {}
+): string {
+  const attributes = [
+    id === undefined ? undefined : `id="${escapeAttribute(id)}"`,
+    options.dataKaironSection === undefined
+      ? undefined
+      : `data-kairon-section="${escapeAttribute(options.dataKaironSection)}"`,
+    options.dataKaironPriorityCount === undefined
+      ? undefined
+      : `data-kairon-priority-count="${escapeAttribute(String(options.dataKaironPriorityCount))}"`
+  ]
+    .filter((attribute): attribute is string => attribute !== undefined)
+    .join(" ");
+  const attributeText = attributes.length === 0 ? "" : ` ${attributes}`;
+
   if (rows.length === 0) {
-    return `<section${idAttribute}><h2>${escapeHtml(title)}</h2><div class="empty">No items</div></section>`;
+    return `<section${attributeText}><h2>${escapeHtml(title)}</h2><div class="empty">${escapeHtml(options.emptyText ?? "No items")}</div></section>`;
   }
 
-  return `<section${idAttribute}><h2>${escapeHtml(title)}</h2><table><thead><tr>${headers
+  return `<section${attributeText}><h2>${escapeHtml(title)}</h2><table><thead><tr>${headers
     .map((header) => `<th>${escapeHtml(header)}</th>`)
     .join("")}</tr></thead><tbody>${rows
     .map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`)
