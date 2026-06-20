@@ -109,7 +109,7 @@ function buildActionItems(
   for (const approval of report.approvals.items.filter(
     (item) => item.status === "pending"
   )) {
-    const approvalId = String(approval.id ?? approval.approval_id ?? "unknown");
+    const approvalId = approval.id;
     items.push({
       id: `next-${approvalId}`,
       type: "pending_approval",
