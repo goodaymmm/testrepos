@@ -30,6 +30,7 @@ describe("PR and release documentation", () => {
   it("keeps README links to the operation test and release documents", async () => {
     const readme = await readUtf8("README.md");
 
+    expect(readme).toContain(".github/workflows/ci.yml");
     expect(readme).toContain("docs/operation-test-harness-v0.md");
     expect(readme).toContain("docs/github-branch-protection-sandbox-v0.md");
     expect(readme).toContain("docs/manual-test-results-v0.md");
@@ -80,6 +81,28 @@ describe("PR and release documentation", () => {
     const index = await readUtf8("src/index.ts");
 
     expect(index).toContain(`KAIRON_VERSION = "${packageJson.version}"`);
+  });
+
+  it("keeps CI scoped to deterministic local checks", async () => {
+    const workflow = await readUtf8(".github/workflows/ci.yml");
+    const packageJson = JSON.parse(await readUtf8("package.json")) as {
+      scripts: Record<string, string>;
+    };
+
+    expect(packageJson.scripts["test:docs"]).toBe(
+      "vitest run tests/pr-release-docs.test.ts"
+    );
+    expect(workflow).toContain("windows-latest");
+    expect(workflow).toContain("node-version: 22");
+    expect(workflow).toContain("npm ci");
+    expect(workflow).toContain("npm run test:docs");
+    expect(workflow).toContain("npm run build");
+    expect(workflow).toContain("npm test");
+    expect(workflow).not.toContain("GH_TOKEN");
+    expect(workflow).not.toContain("GITHUB_TOKEN");
+    expect(workflow).not.toContain("KAIRON_DISCORD_BOT_TOKEN");
+    expect(workflow).not.toContain("kairon doctor");
+    expect(workflow).not.toContain("kairon start");
   });
 });
 

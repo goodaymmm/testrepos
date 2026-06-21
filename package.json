@@ -11,6 +11,7 @@
     "kairon": "tsx src/cli/main.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:docs": "vitest run tests/pr-release-docs.test.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

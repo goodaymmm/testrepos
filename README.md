@@ -378,6 +378,8 @@ kairon test summarize --result-root .\operation-test-results
 
 ## PR / Release Checklist
 
+PRごとの基本検証は [.github/workflows/ci.yml](.github/workflows/ci.yml) で自動実行します。CIは `npm ci`、`npm run test:docs`、`npm run build`、`npm test` だけを対象にし、GitHub branch protection live確認、Discord live接続、Board目視確認などの外部環境に依存するoperation testは実行しません。
+
 PR作成時は [.github/pull_request_template.md](.github/pull_request_template.md) を使い、目的、変更内容、テスト、manual / operation test、README更新要否、エビデンス、残課題を記録します。
 
 manual / operation test結果は、まずPR本文に概要を書きます。repo履歴として残す必要がある結果だけ [docs/manual-test-results-v0.md](docs/manual-test-results-v0.md) に追記します。generated summary artifactは原則commitしません。
