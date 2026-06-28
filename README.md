@@ -225,7 +225,7 @@ runtime lock を取得し、現在のscheduleに基づいて runtime tick を実
 - `standby_work`: command inboxを優先し、standby指定または承認済みの安全なqueue itemだけを処理します。
 - `maintenance`: 日次メンテナンスを同一日1回だけ実行し、重複時はskipします。
 
-実行結果は `.kairon/runtime/last-tick.json` に記録されます。daemon実行時は `--max-ticks`、`--max-idle-ticks`、`kairon stop` により停止できます。
+実行結果は `.kairon/runtime/last-tick.json` に記録されます。daemon実行時は `--max-ticks`、`--max-idle-ticks`、`kairon stop` により停止できます。直近daemonの状態は `kairon status` の `daemon.health.*` と `artifacts.latestDaemonLog` でも確認できます。
 
 ### Board
 
@@ -276,8 +276,8 @@ local lexical RAG indexを `.kairon/rag/index.json` に作成し、metadata filt
 kairon status
 ```
 
-schedule mode、runtime lock、queue、approval、recovery target、session、Discord gateway、最新artifact の状態を表示します。
-daily report / cleanup proposal / recovery artifact / next-day plan / board projection が存在する場合は、次に確認するパスも `artifacts.*` として表示します。
+schedule mode、runtime lock、daemon health、queue、approval、recovery target、session、Discord gateway、最新artifact の状態を表示します。
+daily report / cleanup proposal / recovery artifact / next-day plan / board projection / daemon log が存在する場合は、次に確認するパスも `artifacts.*` として表示します。
 
 ### Active Work 終了
 
