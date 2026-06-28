@@ -149,7 +149,7 @@ kairon doctor
 
 Git、`.gitignore`、config、公式CLI、API key混入、Discord設定、GitHub branch protection、runtime recovery、safety policyを確認し、`pass` / `warning` / `error` と次の対応を表示します。
 
-GitHub branch protectionのlive確認は、`GH_TOKEN` または `GITHUB_TOKEN` を使って GitHub REST API を確認します。両方ある場合は `GH_TOKEN` を優先します。fine-grained PATを使う場合は対象repositoryへのRepository accessと、AdministrationのRead-only権限が必要です。GitHub Freeのprivate repositoryではbranch protection APIが403になる場合があるため、live API疎通はpublic sandbox repositoryで確認する運用にしています。手順は [docs/github-branch-protection-sandbox-v0.md](docs/github-branch-protection-sandbox-v0.md) を参照してください。
+GitHub branch protectionのlive確認は、`GH_TOKEN` または `GITHUB_TOKEN` を使って GitHub REST API を確認します。両方ある場合は `GH_TOKEN` を優先します。Windowsでは `KAIRON_GH_TOKEN_CREDENTIAL_TARGET` / `KAIRON_GITHUB_TOKEN_CREDENTIAL_TARGET` でWindows Credential Manager targetを指定すると、envが未設定の場合だけfallbackとして読み取れます。fine-grained PATを使う場合は対象repositoryへのRepository accessと、AdministrationのRead-only権限が必要です。GitHub Freeのprivate repositoryではbranch protection APIが403になる場合があるため、live API疎通はpublic sandbox repositoryで確認する運用にしています。手順は [docs/github-branch-protection-sandbox-v0.md](docs/github-branch-protection-sandbox-v0.md) を参照してください。
 
 ### Agent Smoke
 
@@ -318,7 +318,7 @@ runtime lock を解放します。
 ### Windows 常駐運用
 
 Windows Task Schedulerで `kairon start --daemon` を日常運用する場合は、[docs/windows-daemon-ops-v0.md](docs/windows-daemon-ops-v0.md) を参照してください。
-`scripts/kairon-daemon-task.ps1` でTask登録、開始、停止、再起動、状態確認、登録解除を補助します。Discord / GitHub tokenなどのsecretはTask引数に書かず、ユーザー環境変数から読み取ります。
+`scripts/kairon-daemon-task.ps1` でTask登録、開始、停止、再起動、状態確認、登録解除を補助します。Discord / GitHub tokenなどのsecretはTask引数に書かず、ユーザー環境変数または明示設定したWindows Credential Manager targetから読み取ります。
 
 ## 実 CLI の確認
 

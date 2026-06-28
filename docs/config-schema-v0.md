@@ -198,6 +198,12 @@
       "approval_channel_id_env": "KAIRON_DISCORD_APPROVAL_CHANNEL_ID",
       "owner_user_id_env": "KAIRON_DISCORD_OWNER_USER_ID",
       "allowed_user_ids_env": "KAIRON_DISCORD_ALLOWED_USER_IDS",
+      "secrets": {
+        "bot_token": {
+          "provider": "windows_credential",
+          "target": "Kairon/Discord/BotToken"
+        }
+      },
       "use_dm": false,
       "register_commands_on_start": true
     }
@@ -248,6 +254,6 @@
 - `policies.git.allow_auto_push` は MVP では false を既定にする。
 - `policies.git.require_review_before_commit` は true。
 - `policies.review.required_for_code` は true。
-- Discord は env が揃わない限り disabled でもよい。
+- Discord は env が揃わない限り disabled でもよい。secret値はenvを優先し、必要な場合だけ `secrets.*.provider=windows_credential` でWindows Credential Manager targetを参照できる。
 - Discord Gateway の詳細は `docs/discord-gateway-v0.md` に分離する。
 - RAG は既定disabledで開始してよい。local lexical indexは `kairon rag refresh` または `kairon maintenance run --build-rag` で作成できる。

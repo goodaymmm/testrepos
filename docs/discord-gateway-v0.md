@@ -17,7 +17,7 @@ MVP では個人利用を前提に、公開 HTTP endpoint を持たず、ロー�
 
 - MVP は Discord Gateway mode を採用する。
 - HTTP Interactions Endpoint は cloud 化フェーズまで後回しにする。
-- Discord bot token は env から読み、repository / `.kairon/` に保存しない。
+- Discord bot token は env、または明示設定したWindows Credential Manager targetから読み、repository / `.kairon/` に値を保存しない。
 - Discord message には判断に必要な要約情報だけを載せる。
 - 長い diff、stdout、stderr、全文 review は Discord へ送らない。
 - Button / Modal / Slash Command の interaction は短時間で ack し、重い処理は内部 queue で行う。
@@ -80,6 +80,12 @@ Runtime が停止している場合、Discord interaction は処理できない�
       "approval_channel_id_env": "KAIRON_DISCORD_APPROVAL_CHANNEL_ID",
       "owner_user_id_env": "KAIRON_DISCORD_OWNER_USER_ID",
       "allowed_user_ids_env": "KAIRON_DISCORD_ALLOWED_USER_IDS",
+      "secrets": {
+        "bot_token": {
+          "provider": "windows_credential",
+          "target": "Kairon/Discord/BotToken"
+        }
+      },
       "use_dm": false,
       "register_commands_on_start": true
     }
@@ -102,6 +108,7 @@ Runtime が停止している場合、Discord interaction は処理できない�
 ```
 
 `ack_timeout_ms` は Discord interaction の初期応答に余裕を持たせるための Kairon 内部予算である。
+`secrets.bot_token` は任意であり、envが設定されている場合はenvを優先する。Credential Manager target名だけをconfigへ書き、token値そのものは保存しない。
 
 ## Environment Variables
 

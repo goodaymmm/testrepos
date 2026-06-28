@@ -8,6 +8,7 @@ import {
   type GitHubBranchProtectionClient
 } from "../src/diagnostics/doctor.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
+import { createDefaultSecretResolver } from "../src/core/secrets/secret-resolver.js";
 import { createTempProject } from "./test-utils.js";
 
 const discordIds = {
@@ -127,6 +128,55 @@ describe("runDoctor", () => {
     expect(text).not.toContain("secret-bot-token");
     expect(text).not.toContain(discordIds.channel);
     expect(text).not.toContain(`${discordIds.owner},${discordIds.teammate}`);
+  });
+
+  it("reports Discord readiness from configured Windows credentials without leaking values", async () => {
+    const root = await createInitializedGitProject();
+    await enableDiscordProvider(root);
+    const notificationsPath = path.join(root, ".kairon", "config", "notifications.json");
+    const notifications = await readJsonFile<Record<string, unknown>>(notificationsPath);
+    const providers = notifications.providers as Record<string, unknown>;
+    const discord = providers.discord as Record<string, unknown>;
+    discord.secrets = {
+      bot_token: {
+        provider: "windows_credential",
+        target: "Kairon/Discord/BotToken"
+      }
+    };
+    await writeJsonFileAtomic(notificationsPath, notifications);
+    const env = {
+      KAIRON_DISCORD_APPLICATION_ID: discordIds.application,
+      KAIRON_DISCORD_GUILD_ID: discordIds.guild,
+      KAIRON_DISCORD_APPROVAL_CHANNEL_ID: discordIds.channel,
+      KAIRON_DISCORD_OWNER_USER_ID: discordIds.owner,
+      KAIRON_DISCORD_ALLOWED_USER_IDS: discordIds.teammate
+    };
+    const secretResolver = createDefaultSecretResolver({
+      env,
+      platform: "win32",
+      windowsCredentialReader: async (target) =>
+        target === "Kairon/Discord/BotToken" ? "secret-bot-token" : undefined
+    });
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env,
+      secretResolver
+    });
+    const text = formatDoctorResult(result);
+
+    expect(result.ok).toBe(true);
+    expect(statusById(result, "discord.config")).toBe("pass");
+    expect(checkById(result, "discord.config")?.details).toEqual(
+      expect.arrayContaining([
+        "KAIRON_DISCORD_BOT_TOKEN=present",
+        "KAIRON_DISCORD_BOT_TOKEN_provider=windows_credential",
+        "KAIRON_DISCORD_APPLICATION_ID_provider=env"
+      ])
+    );
+    expect(text).not.toContain("secret-bot-token");
+    expect(text).not.toContain(discordIds.channel);
   });
 
   it("warns when Discord gateway env is ready but live approval env is incomplete", async () => {
@@ -276,6 +326,51 @@ describe("runDoctor", () => {
     );
     expect(text).not.toContain("secret-token");
     expect(text).not.toContain("git@github.com");
+  });
+
+  it("can verify GitHub branch protection using a configured Windows credential target", async () => {
+    const root = await createInitializedGitProject();
+    await writeGitHubRemote(root, "git@github.com:goodaymmm/Kairon.git");
+    const env = {
+      KAIRON_GH_TOKEN_CREDENTIAL_TARGET: "Kairon/GH_TOKEN"
+    };
+    const secretResolver = createDefaultSecretResolver({
+      env,
+      platform: "win32",
+      windowsCredentialReader: async (target) =>
+        target === "Kairon/GH_TOKEN" ? "secret-token" : undefined
+    });
+    const requests: Parameters<GitHubBranchProtectionClient>[0][] = [];
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env,
+      secretResolver,
+      githubBranchProtectionClient: async (request) => {
+        requests.push(request);
+        return {
+          kind: "protected",
+          requiredPullRequestReviews: true,
+          requiredStatusChecks: true,
+          enforceAdmins: true
+        };
+      }
+    });
+    const text = formatDoctorResult(result);
+
+    expect(result.ok).toBe(true);
+    expect(statusById(result, "git.branch_protection")).toBe("pass");
+    expect(requests[0]?.token).toBe("secret-token");
+    expect(checkById(result, "git.branch_protection")?.details).toEqual(
+      expect.arrayContaining([
+        "auth=present",
+        "auth_provider=windows_credential",
+        "auth_source=Kairon/GH_TOKEN",
+        "api_status=ok"
+      ])
+    );
+    expect(text).not.toContain("secret-token");
   });
 
   it("warns when authenticated GitHub branch protection is missing required gates", async () => {
