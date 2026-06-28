@@ -1,10 +1,11 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { readJsonFile } from "../core/fs/json-file.js";
+import { readJsonLines } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
 import { WorkQueue } from "../queue/work-queue.js";
 import { inspectRuntimeRecoveryTargets } from "../recovery/runtime-recovery.js";
-import { readRuntimeLockStatus } from "./runtime-lock.js";
+import { readRuntimeLockStatus, type RuntimeLockStatus } from "./runtime-lock.js";
 import { getScheduleStatus, type ScheduleStatus } from "./schedule-engine.js";
 import type { SameDaySessionSummary } from "../agents/session-host.js";
 
@@ -46,6 +47,24 @@ export type RuntimeStatus = {
     resolved_targets: number;
   };
   sessions?: SameDaySessionSummary;
+  daemonHealth?: {
+    status: "running" | "stopped" | "fatal_error" | "stale_lock" | "unknown";
+    latest_log?: string;
+    started_at?: string;
+    latest_event_at?: string;
+    ticks?: number;
+    idle_ticks?: number;
+    processed_ticks?: number;
+    fatal_errors?: number;
+    stop_reason?: string;
+    last_action?: string;
+    stale_lock_suspected?: boolean;
+    last_error?: {
+      code?: string;
+      message?: string;
+      at?: string;
+    };
+  };
   discordGateway?: {
     status?: string;
     commands_registered?: boolean;
@@ -61,6 +80,7 @@ export type RuntimeStatus = {
     latest_recovery_artifact?: string;
     latest_next_day_plan?: string;
     board_projection?: string;
+    latest_daemon_log?: string;
   };
 };
 
@@ -84,6 +104,8 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     readDiscordGatewaySummary(projectRoot),
     readOperationalArtifacts(projectRoot)
   ]);
+
+  const daemonHealth = await readDaemonHealth(projectRoot, lock);
 
   return {
     schedule,
@@ -113,6 +135,7 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     },
     recovery: recovery.summary,
     sessions,
+    daemonHealth,
     discordGateway,
     artifacts
   };
@@ -184,6 +207,52 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
     status.sessions?.usage_limited === undefined
       ? null
       : `sessions.usageLimited=${status.sessions.usage_limited}`,
+    status.daemonHealth?.status === undefined
+      ? null
+      : `daemon.health.status=${status.daemonHealth.status}`,
+    status.daemonHealth?.latest_log === undefined
+      ? null
+      : `daemon.health.latestLog=${status.daemonHealth.latest_log}`,
+    status.daemonHealth?.started_at === undefined
+      ? null
+      : `daemon.health.startedAt=${status.daemonHealth.started_at}`,
+    status.daemonHealth?.latest_event_at === undefined
+      ? null
+      : `daemon.health.latestEventAt=${status.daemonHealth.latest_event_at}`,
+    status.daemonHealth?.ticks === undefined
+      ? null
+      : `daemon.health.ticks=${status.daemonHealth.ticks}`,
+    status.daemonHealth?.idle_ticks === undefined
+      ? null
+      : `daemon.health.idleTicks=${status.daemonHealth.idle_ticks}`,
+    status.daemonHealth?.processed_ticks === undefined
+      ? null
+      : `daemon.health.processedTicks=${status.daemonHealth.processed_ticks}`,
+    status.daemonHealth?.fatal_errors === undefined
+      ? null
+      : `daemon.health.fatalErrors=${status.daemonHealth.fatal_errors}`,
+    status.daemonHealth?.stop_reason === undefined
+      ? null
+      : `daemon.health.stopReason=${status.daemonHealth.stop_reason}`,
+    status.daemonHealth?.last_action === undefined
+      ? null
+      : `daemon.health.lastAction=${status.daemonHealth.last_action}`,
+    status.daemonHealth?.stale_lock_suspected === undefined
+      ? null
+      : `daemon.health.staleLockSuspected=${status.daemonHealth.stale_lock_suspected}`,
+    status.daemonHealth?.last_error?.code === undefined
+      ? null
+      : `daemon.health.lastErrorCode=${sanitizeStatusText(
+          status.daemonHealth.last_error.code
+        )}`,
+    status.daemonHealth?.last_error?.message === undefined
+      ? null
+      : `daemon.health.lastErrorMessage=${sanitizeStatusText(
+          status.daemonHealth.last_error.message
+        )}`,
+    status.daemonHealth?.last_error?.at === undefined
+      ? null
+      : `daemon.health.lastErrorAt=${status.daemonHealth.last_error.at}`,
     status.discordGateway?.status === undefined
       ? null
       : `discord.gateway.status=${status.discordGateway.status}`,
@@ -217,7 +286,10 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
       : `artifacts.latestNextDayPlan=${status.artifacts.latest_next_day_plan}`,
     status.artifacts.board_projection === undefined
       ? null
-      : `artifacts.boardProjection=${status.artifacts.board_projection}`
+      : `artifacts.boardProjection=${status.artifacts.board_projection}`,
+    status.artifacts.latest_daemon_log === undefined
+      ? null
+      : `artifacts.latestDaemonLog=${status.artifacts.latest_daemon_log}`
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
@@ -246,7 +318,87 @@ async function readOperationalArtifacts(
     board_projection: await optionalJsonPath(
       projectRoot,
       path.join(paths.kaironDir, "board", "projection.json")
+    ),
+    latest_daemon_log: await latestJsonlPath(
+      projectRoot,
+      path.join(paths.runtimeDir, "daemon")
     )
+  };
+}
+
+async function readDaemonHealth(
+  projectRoot: string,
+  lock: RuntimeLockStatus
+): Promise<RuntimeStatus["daemonHealth"] | undefined> {
+  const daemonDir = path.join(getKaironPaths(projectRoot).runtimeDir, "daemon");
+  const latestLogPath = await latestFilePath(daemonDir, ".jsonl");
+  const events =
+    latestLogPath === undefined
+      ? []
+      : await readJsonLines<Record<string, unknown>>(latestLogPath);
+  const latestEvent = events.at(-1);
+  const latestTick = findLastEvent(events, "tick");
+  const latestStarted = findLastEvent(events, "started");
+  const latestStopped = findLastEvent(events, "stopped");
+  const latestFatal = findLastEvent(events, "fatal_error");
+  const hasDaemonLock = lock.locked && lock.data.mode === "daemon";
+
+  if (latestLogPath === undefined && !hasDaemonLock) {
+    return undefined;
+  }
+
+  const stopReason = asString(latestStopped?.stop_reason);
+  const running = hasDaemonLock && !lock.stale;
+  const status = running
+    ? "running"
+    : hasDaemonLock && lock.stale
+      ? "stale_lock"
+      : stopReason === "fatal_error" || latestEvent?.event === "fatal_error"
+        ? "fatal_error"
+        : latestEvent?.event === "stopped"
+          ? "stopped"
+          : "unknown";
+  const ticks =
+    lock.locked && lock.data.mode === "daemon"
+      ? lock.data.tick_count
+      : asNumber(latestStopped?.ticks) ?? maxEventNumber(events, "tick_count");
+  const idleTicks =
+    lock.locked && lock.data.mode === "daemon"
+      ? lock.data.idle_count
+      : asNumber(latestStopped?.idle_ticks) ?? maxEventNumber(events, "idle_count");
+  const fatalErrorSource = lock.locked
+    ? lock.data.last_error
+    : asErrorRecord(latestStopped?.last_error) ?? asErrorRecord(latestFatal?.error);
+
+  return {
+    status,
+    latest_log:
+      latestLogPath === undefined ? undefined : toProjectPath(projectRoot, latestLogPath),
+    started_at: asString(latestStarted?.started_at) ?? (lock.locked ? lock.data.created_at : undefined),
+    latest_event_at:
+      (lock.locked && lock.data.mode === "daemon"
+        ? lock.data.heartbeat_at ?? lock.data.updated_at
+        : undefined) ?? asString(latestEvent?.created_at),
+    ticks,
+    idle_ticks: idleTicks,
+    processed_ticks: events.filter(
+      (event) => event.event === "tick" && asString(event.action) !== "idle"
+    ).length,
+    fatal_errors: events.filter((event) => event.event === "fatal_error").length,
+    stop_reason: stopReason,
+    last_action:
+      lock.locked && lock.data.mode === "daemon"
+        ? lock.data.last_action
+        : asString(latestTick?.action),
+    stale_lock_suspected: hasDaemonLock ? lock.stale : undefined,
+    last_error:
+      fatalErrorSource === undefined
+        ? undefined
+        : {
+            code: sanitizeStatusText(asString(fatalErrorSource.code)),
+            message: sanitizeStatusText(asString(fatalErrorSource.message)),
+            at: asString(fatalErrorSource.at)
+          }
   };
 }
 
@@ -254,17 +406,31 @@ async function latestJsonPath(
   projectRoot: string,
   directoryPath: string
 ): Promise<string | undefined> {
+  const latest = await latestFilePath(directoryPath, ".json");
+  return latest === undefined ? undefined : toProjectPath(projectRoot, latest);
+}
+
+async function latestJsonlPath(
+  projectRoot: string,
+  directoryPath: string
+): Promise<string | undefined> {
+  const latest = await latestFilePath(directoryPath, ".jsonl");
+  return latest === undefined ? undefined : toProjectPath(projectRoot, latest);
+}
+
+async function latestFilePath(
+  directoryPath: string,
+  extension: ".json" | ".jsonl"
+): Promise<string | undefined> {
   try {
     const entries = await readdir(directoryPath, { withFileTypes: true });
     const latest = entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .filter((entry) => entry.isFile() && entry.name.endsWith(extension))
       .map((entry) => entry.name)
       .sort()
       .at(-1);
 
-    return latest === undefined
-      ? undefined
-      : toProjectPath(projectRoot, path.join(directoryPath, latest));
+    return latest === undefined ? undefined : path.join(directoryPath, latest);
   } catch (error) {
     if (String(error).includes("ENOENT")) {
       return undefined;
@@ -341,6 +507,36 @@ function asBoolean(value: unknown): boolean | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" ? value : undefined;
+}
+
+function asErrorRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function findLastEvent(
+  events: Record<string, unknown>[],
+  eventName: string
+): Record<string, unknown> | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.event === eventName) {
+      return event;
+    }
+  }
+
+  return undefined;
+}
+
+function maxEventNumber(
+  events: Record<string, unknown>[],
+  property: string
+): number | undefined {
+  const values = events
+    .map((event) => asNumber(event[property]))
+    .filter((value): value is number => value !== undefined);
+  return values.length === 0 ? undefined : Math.max(...values);
 }
 
 function sanitizeStatusText(value: string | undefined): string | undefined {

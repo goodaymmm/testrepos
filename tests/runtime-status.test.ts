@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { writeJsonFileAtomic } from "../src/core/fs/json-file.js";
+import { appendJsonLine } from "../src/core/fs/jsonl-file.js";
 import { WorkQueue } from "../src/queue/work-queue.js";
 import {
   acquireRuntimeLock,
@@ -103,6 +104,27 @@ describe("runtime status", () => {
         schema_version: "0.1"
       }
     );
+    await appendJsonLine(
+      path.join(root, ".kairon", "runtime", "daemon", "2026-05-26.jsonl"),
+      {
+        schema_version: "0.1",
+        event: "started",
+        pid: 1234,
+        started_at: "2026-05-26T00:00:00.000Z",
+        created_at: "2026-05-26T00:00:00.000Z"
+      }
+    );
+    await appendJsonLine(
+      path.join(root, ".kairon", "runtime", "daemon", "2026-05-26.jsonl"),
+      {
+        schema_version: "0.1",
+        event: "tick",
+        tick_count: 1,
+        idle_count: 0,
+        action: "processed-item",
+        created_at: "2026-05-26T00:00:01.000Z"
+      }
+    );
 
     const status = await getRuntimeStatus(root);
     expect(status.runtimeLock.locked).toBe(true);
@@ -130,6 +152,24 @@ describe("runtime status", () => {
     expect(formatRuntimeStatus(status)).toContain("sessions.initialized=3");
     expect(formatRuntimeStatus(status)).toContain("sessions.setupRequired=1");
     expect(formatRuntimeStatus(status)).toContain("sessions.usageLimited=1");
+    expect(formatRuntimeStatus(status)).toContain("daemon.health.status=stale_lock");
+    expect(formatRuntimeStatus(status)).toContain(
+      "daemon.health.latestLog=.kairon/runtime/daemon/2026-05-26.jsonl"
+    );
+    expect(formatRuntimeStatus(status)).toContain(
+      "daemon.health.latestEventAt=2026-05-26T00:00:10.000Z"
+    );
+    expect(formatRuntimeStatus(status)).toContain("daemon.health.ticks=7");
+    expect(formatRuntimeStatus(status)).toContain("daemon.health.idleTicks=2");
+    expect(formatRuntimeStatus(status)).toContain("daemon.health.processedTicks=1");
+    expect(formatRuntimeStatus(status)).toContain("daemon.health.fatalErrors=0");
+    expect(formatRuntimeStatus(status)).toContain("daemon.health.lastAction=idle");
+    expect(formatRuntimeStatus(status)).toContain(
+      "daemon.health.staleLockSuspected=true"
+    );
+    expect(formatRuntimeStatus(status)).toContain(
+      "daemon.health.lastErrorMessage=token=[redacted] failed"
+    );
     expect(formatRuntimeStatus(status)).toContain("discord.gateway.status=setup_required");
     expect(formatRuntimeStatus(status)).toContain(
       "discord.gateway.errorCode=discord_missing_access_approval_channel"
@@ -152,6 +192,9 @@ describe("runtime status", () => {
     );
     expect(formatRuntimeStatus(status)).toContain(
       "artifacts.boardProjection=.kairon/board/projection.json"
+    );
+    expect(formatRuntimeStatus(status)).toContain(
+      "artifacts.latestDaemonLog=.kairon/runtime/daemon/2026-05-26.jsonl"
     );
     expect(formatRuntimeStatus(status)).not.toContain("SHOULD_NOT_LEAK");
   });

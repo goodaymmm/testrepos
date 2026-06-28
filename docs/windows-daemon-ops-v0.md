@@ -55,10 +55,16 @@ cd C:\Users\hikar\Documents\AutoRunner
 既定ではlogon時に起動します。OS起動時に登録する場合は `-AtStartup` を追加します。
 ただし `-AtStartup` は権限やログオン状態の影響を受けるため、まずはlogon triggerで検証してください。
 
-ログは既定で次に出ます。
+Task Scheduler helperの起動ログは既定で次に出ます。
 
 ```text
 <ProjectRoot>\.kairon\logs\daemon\kairon-daemon-YYYYMMDD-HHMMSS.log
+```
+
+Kairon runtime daemon自体の正規event logは次に出ます。`kairon status` はこのJSONLを読み、停止後も直近daemonのhealth summaryを表示します。
+
+```text
+<ProjectRoot>\.kairon\runtime\daemon\YYYY-MM-DD.jsonl
 ```
 
 ## 起動・停止・再起動
@@ -79,11 +85,14 @@ cd C:\Users\hikar\Documents\AutoRunner
 ```powershell
 cd M:\EnglishApp
 kairon status
+kairon status | Select-String -Pattern "runtime.locked|runtime.stale|daemon.health|artifacts.latestDaemonLog|discord.gateway"
 Get-Content .kairon\runtime\last-tick.json -Raw | ConvertFrom-Json
+Get-ChildItem .kairon\runtime\daemon -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3 FullName,Length,LastWriteTime
 Get-ChildItem .kairon\logs\daemon -File | Sort-Object LastWriteTime -Descending | Select-Object -First 3 FullName,Length,LastWriteTime
 ```
 
-`runtime.locked=true` かつ `runtime.stale=false` であれば、daemonは稼働中です。
+`daemon.health.status=running` かつ `runtime.locked=true`、`runtime.stale=false` であれば、daemonは稼働中です。
+停止後は `daemon.health.status=stopped`、異常終了時は `daemon.health.status=fatal_error` と `daemon.health.lastError*` を確認します。
 `runtime.lastErrorCode` や `discord.gateway.errorCode` が出る場合は、先に `kairon doctor` と該当artifactを確認します。
 
 ## stale lock復旧
@@ -124,6 +133,6 @@ cd C:\Users\hikar\Documents\AutoRunner
 
 - Task SchedulerのAction引数にtokenやAPI keyを書かない。
 - `kairon doctor` のDiscord表示は `present/missing` のみを確認し、値は共有しない。
-- `.kairon/logs/daemon/*.log` はlocal evidenceであり、原則commitしない。
+- `.kairon/logs/daemon/*.log` と `.kairon/runtime/daemon/*.jsonl` はlocal evidenceであり、原則commitしない。
 - `.kairon/runtime/lock.json` を手動削除する前に `kairon recovery run` を使う。
 - 変更後は短い `--max-ticks` daemon testではなく、Task Scheduler経由で起動・停止を1回ずつ確認する。

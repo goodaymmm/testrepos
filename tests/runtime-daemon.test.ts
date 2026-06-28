@@ -8,6 +8,7 @@ import {
   acquireRuntimeLock,
   readRuntimeLockStatus
 } from "../src/runtime/runtime-lock.js";
+import { formatRuntimeStatus, getRuntimeStatus } from "../src/runtime/status.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("RuntimeDaemon", () => {
@@ -67,6 +68,21 @@ describe("RuntimeDaemon", () => {
       stop_reason: "max_ticks",
       ticks: 2
     });
+
+    const status = await getRuntimeStatus(root);
+    expect(status.daemonHealth).toMatchObject({
+      status: "stopped",
+      ticks: 2,
+      idle_ticks: 0,
+      processed_ticks: 1,
+      fatal_errors: 0,
+      stop_reason: "max_ticks",
+      last_action: "processed-item"
+    });
+    expect(formatRuntimeStatus(status)).toContain("daemon.health.status=stopped");
+    expect(formatRuntimeStatus(status)).toContain(
+      "artifacts.latestDaemonLog=.kairon/runtime/daemon/2026-06-13.jsonl"
+    );
   });
 
   it("records sanitized fatal errors without leaking token-like values", async () => {
