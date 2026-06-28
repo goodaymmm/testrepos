@@ -64,8 +64,12 @@ describe("kairon-operation-test.ps1", () => {
 
     expect(script).toContain("BranchProtectionPublicSandbox");
     expect(script).toContain("BranchProtectionSandboxRoot");
+    expect(script).toContain("BranchProtectionSandboxFixture");
     expect(script).toContain("BranchProtectionSandboxRepoUrl");
     expect(script).toContain("BranchProtectionSandboxBranch");
+    expect(script).toContain("Goodaymmm14Forge");
+    expect(script).toContain("branch_protection.fixture=");
+    expect(script).toContain("branch_protection.expected_repository=");
     expect(script).toContain("BRANCH_PROTECTION_PUBLIC_SANDBOX");
     expect(script).toContain("api_status=ok");
     expect(script).toContain("required_pull_request_reviews=present");
@@ -211,11 +215,7 @@ describe("kairon-operation-test.ps1", () => {
       },
       [
         "-BranchProtectionSandboxRoot",
-        sandboxRoot,
-        "-BranchProtectionSandboxRepoUrl",
-        "https://github.com/goodaymmm/14Forge.git",
-        "-BranchProtectionSandboxBranch",
-        "main"
+        sandboxRoot
       ]
     );
 
@@ -227,6 +227,13 @@ describe("kairon-operation-test.ps1", () => {
       id: "BRANCH_PROTECTION_PUBLIC_SANDBOX",
       status: "PASS"
     });
+    expect(summary.results[0].evidence).toContain("branch_protection.fixture=Goodaymmm14Forge");
+    expect(summary.results[0].evidence).toContain(
+      "branch_protection.repo_url=https://github.com/goodaymmm/14Forge.git"
+    );
+    expect(summary.results[0].evidence).toContain(
+      "branch_protection.expected_repository=goodaymmm/14Forge"
+    );
     expect(JSON.stringify(summary)).not.toContain("secret-gh-token-for-test");
   });
 

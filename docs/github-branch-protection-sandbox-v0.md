@@ -49,7 +49,7 @@ Require status checks to pass before merging: enabled
 ```
 
 required status checksは、対象repositoryで一度CIを走らせてcheck名を作ってから選択する。
-CIを使わないsandboxでは、手動でbranch protection API検証用の最小workflowを追加するか、次回のharness化で専用fixtureを使う。
+CIを使わないsandboxでは、手動でbranch protection API検証用の最小workflowを追加するか、harnessの `Goodaymmm14Forge` fixtureを使う。
 
 ### Fine-grained PAT
 
@@ -74,6 +74,7 @@ token値を出力しない。token値はコマンドログ、Markdown、`.kairon
 ## Harnessでの実行
 
 T80以降はoperation test harnessから実行できる。
+T99以降は `Goodaymmm14Forge` fixtureが既定のため、`-BranchProtectionSandboxRepoUrl` を省略しても `https://github.com/goodaymmm/14Forge.git` / `main` を使います。
 
 ```powershell
 cd C:\Users\hikar\Documents\AutoRunner
@@ -83,13 +84,14 @@ cd C:\Users\hikar\Documents\AutoRunner
   -TargetRoot "M:\EnglishApp" `
   -Test BranchProtectionPublicSandbox `
   -BranchProtectionSandboxRoot "$env:TEMP\kairon-branch-protection-sandbox" `
-  -BranchProtectionSandboxRepoUrl "https://github.com/goodaymmm/14Forge.git" `
+  -BranchProtectionSandboxFixture Goodaymmm14Forge `
   -BranchProtectionSandboxBranch main `
   -BranchProtectionRequireToken
 ```
 
 このprofileは一時workspaceを作成して `git init`、`git remote add origin`、`kairon init`、`kairon doctor` を実行する。
 token未設定、403、404、required gate未設定は `SETUP_REQUIRED` としてsummaryに記録する。
+別のpublic sandbox repositoryを使う場合は `-BranchProtectionSandboxFixture Custom` と `-BranchProtectionSandboxRepoUrl` を指定する。
 
 ## 手動実行手順
 
@@ -168,4 +170,4 @@ EnglishAppのような個人アカウントprivate repositoryで `api_status=pla
 
 ## 後続
 
-今後はpublic sandbox repository自体をfixture化するか、CI側のbranch protection検証と連携させる。
+今後はCI側のbranch protection検証と連携させるか、sandbox repository側のrequired check名をより厳密に検証する。

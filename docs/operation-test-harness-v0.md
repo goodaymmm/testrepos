@@ -83,6 +83,8 @@ T67のGitHub branch protection live確認は、private repositoryのGitHubプラ
 - sandbox repositoryの対象branchにBranch protection ruleが設定され、required pull request reviewsとrequired status checksが有効であること。
 - token値を出力しない。`GH_TOKEN` / `GITHUB_TOKEN` は値ではなく `present` / `missing` のみ記録します。
 
+既定fixtureは `Goodaymmm14Forge` です。`-BranchProtectionSandboxRepoUrl` を省略した場合は `https://github.com/goodaymmm/14Forge.git`、branchは `main` を使います。別のpublic sandbox repositoryを使う場合は `-BranchProtectionSandboxFixture Custom` と `-BranchProtectionSandboxRepoUrl` を指定します。
+
 期待する `kairon doctor` evidence:
 
 ```text
@@ -101,7 +103,7 @@ profile実行例:
   -TargetRoot "M:\EnglishApp" `
   -Test BranchProtectionPublicSandbox `
   -BranchProtectionSandboxRoot "$env:TEMP\kairon-branch-protection-sandbox" `
-  -BranchProtectionSandboxRepoUrl "https://github.com/goodaymmm/14Forge.git" `
+  -BranchProtectionSandboxFixture Goodaymmm14Forge `
   -BranchProtectionSandboxBranch main `
   -BranchProtectionRequireToken
 ```

@@ -41,6 +41,9 @@ param(
 
   [string]$BranchProtectionSandboxRoot = "",
 
+  [ValidateSet("Goodaymmm14Forge", "Custom")]
+  [string]$BranchProtectionSandboxFixture = "Goodaymmm14Forge",
+
   [string]$BranchProtectionSandboxRepoUrl = "",
 
   [string]$BranchProtectionSandboxBranch = "main",
@@ -669,6 +672,46 @@ function Format-GitHubTokenSnapshot {
   $lines += "token.source=$(Get-GitHubTokenSource)"
 
   $lines -join [Environment]::NewLine
+}
+
+function Get-BranchProtectionSandboxFixtureConfig {
+  if ($BranchProtectionSandboxFixture -eq "Goodaymmm14Forge") {
+    return [PSCustomObject]@{
+      Name = "Goodaymmm14Forge"
+      RepoUrl = "https://github.com/goodaymmm/14Forge.git"
+      Branch = "main"
+      ExpectedRepository = "goodaymmm/14Forge"
+    }
+  }
+
+  [PSCustomObject]@{
+    Name = "Custom"
+    RepoUrl = ""
+    Branch = "main"
+    ExpectedRepository = ""
+  }
+}
+
+function Resolve-BranchProtectionSandboxConfig {
+  $fixture = Get-BranchProtectionSandboxFixtureConfig
+  $repoUrl = if ([string]::IsNullOrWhiteSpace($BranchProtectionSandboxRepoUrl)) {
+    [string]$fixture.RepoUrl
+  } else {
+    $BranchProtectionSandboxRepoUrl.Trim()
+  }
+
+  $branch = if ([string]::IsNullOrWhiteSpace($BranchProtectionSandboxBranch)) {
+    [string]$fixture.Branch
+  } else {
+    $BranchProtectionSandboxBranch.Trim()
+  }
+
+  [PSCustomObject]@{
+    Fixture = [string]$fixture.Name
+    RepoUrl = $repoUrl
+    Branch = $branch
+    ExpectedRepository = [string]$fixture.ExpectedRepository
+  }
 }
 
 function Get-BranchProtectionSandboxWorkspace {
@@ -1539,16 +1582,14 @@ try {
 
   if (Should-Run "BranchProtectionPublicSandbox") {
     Invoke-Step -Id "BRANCH_PROTECTION_PUBLIC_SANDBOX" -Name "GitHub branch protection public sandbox" -Script {
-      $repoUrl = $BranchProtectionSandboxRepoUrl.Trim()
-      $branch = if ([string]::IsNullOrWhiteSpace($BranchProtectionSandboxBranch)) {
-        "main"
-      } else {
-        $BranchProtectionSandboxBranch.Trim()
-      }
+      $sandboxConfig = Resolve-BranchProtectionSandboxConfig
+      $repoUrl = $sandboxConfig.RepoUrl
+      $branch = $sandboxConfig.Branch
 
       if ([string]::IsNullOrWhiteSpace($repoUrl)) {
         @(
           "setup_required.missing_repo_url=true",
+          "branch_protection.fixture=$($sandboxConfig.Fixture)",
           "branch_protection.require_token=$($BranchProtectionRequireToken.IsPresent)",
           "github.env.snapshot",
           (Format-GitHubTokenSnapshot)
@@ -1559,6 +1600,7 @@ try {
           "branch_protection.require_token=$($BranchProtectionRequireToken.IsPresent)",
           "github.env.snapshot",
           (Format-GitHubTokenSnapshot),
+          "branch_protection.fixture=$($sandboxConfig.Fixture)",
           "branch_protection.repo_url=$repoUrl",
           "branch_protection.branch=$branch"
         ) -join [Environment]::NewLine
@@ -1578,9 +1620,11 @@ try {
           "github.env.snapshot",
           (Format-GitHubTokenSnapshot),
           "branch_protection.workspace=$workspace",
+          "branch_protection.fixture=$($sandboxConfig.Fixture)",
           "branch_protection.require_token=$($BranchProtectionRequireToken.IsPresent)",
           "branch_protection.repo_url=$repoUrl",
           "branch_protection.branch=$branch",
+          "branch_protection.expected_repository=$($sandboxConfig.ExpectedRepository)",
           "doctor.exit_code=$($doctor.ExitCode)",
           $doctor.Output
         ) -join [Environment]::NewLine
