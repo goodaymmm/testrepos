@@ -3,6 +3,7 @@ import path from "node:path";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { readJsonLines } from "../src/core/fs/jsonl-file.js";
+import { createDefaultSecretResolver } from "../src/core/secrets/secret-resolver.js";
 import {
   buildKaironSlashCommands,
   prepareDiscordGateway,
@@ -85,6 +86,41 @@ describe("prepareDiscordGateway", () => {
         enabled: true,
         max_backoff_seconds: 60
       }
+    });
+  });
+
+  it("resolves configured bot token from Windows credential provider", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await enableDiscordProvider(root);
+    const notificationsPath = path.join(root, ".kairon", "config", "notifications.json");
+    const notifications = await readJsonFile<DiscordGatewayConfig>(notificationsPath);
+    notifications.providers.discord.secrets = {
+      bot_token: {
+        provider: "windows_credential",
+        target: "Kairon/Discord/BotToken"
+      }
+    };
+    await writeJsonFileAtomic(notificationsPath, notifications);
+    const env = {
+      KAIRON_DISCORD_APPLICATION_ID: discordIds.application,
+      KAIRON_DISCORD_GUILD_ID: discordIds.guild,
+      KAIRON_DISCORD_APPROVAL_CHANNEL_ID: discordIds.channel,
+      KAIRON_DISCORD_OWNER_USER_ID: discordIds.owner,
+      KAIRON_DISCORD_ALLOWED_USER_IDS: discordIds.teammate
+    };
+    const secretResolver = createDefaultSecretResolver({
+      env,
+      platform: "win32",
+      windowsCredentialReader: async (target) =>
+        target === "Kairon/Discord/BotToken" ? "credential-token" : undefined
+    });
+
+    await expect(prepareDiscordGateway(root, env, secretResolver)).resolves.toMatchObject({
+      status: "ready",
+      bot_token: "credential-token",
+      application_id: discordIds.application,
+      allowed_user_ids: [discordIds.owner, discordIds.teammate]
     });
   });
 

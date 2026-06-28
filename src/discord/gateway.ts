@@ -4,6 +4,11 @@ import { loadConfigFile } from "../core/config/load-config.js";
 import { writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
 import {
+  resolveSecret,
+  type SecretReference,
+  type SecretResolver
+} from "../core/secrets/secret-resolver.js";
+import {
   normalizeDiscordApprovalInteraction,
   normalizeDiscordLeaveCommand,
   normalizeDiscordStatusCommand,
@@ -41,8 +46,22 @@ export type DiscordProviderConfig = {
   approval_channel_id_env: string;
   owner_user_id_env: string;
   allowed_user_ids_env?: string;
+  secrets?: Partial<Record<DiscordSecretKey, SecretReferenceConfig>>;
   use_dm: boolean;
   register_commands_on_start: boolean;
+};
+
+type DiscordSecretKey =
+  | "bot_token"
+  | "application_id"
+  | "guild_id"
+  | "approval_channel_id"
+  | "owner_user_id"
+  | "allowed_user_ids";
+
+type SecretReferenceConfig = {
+  provider: "windows_credential";
+  target: string;
 };
 
 export type DiscordGatewayConfig = {
@@ -179,6 +198,7 @@ export type DiscordGatewayHandle = {
 
 export type StartDiscordGatewayOptions = {
   env?: NodeJS.ProcessEnv;
+  secretResolver?: SecretResolver;
   now?: () => Date;
   readyTimeoutMs?: number;
   clientFactory?: (
@@ -218,13 +238,17 @@ type GatewayInteractionSideEffect = DiscordDecisionAuditSideEffect & {
 
 export async function prepareDiscordGateway(
   projectRoot: string,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  secretResolver?: SecretResolver
 ): Promise<PreparedDiscordGateway> {
   const config = await loadConfigFile<DiscordGatewayConfig>(
     projectRoot,
     "notifications.json"
   );
-  return prepareDiscordGatewayFromConfig(config, env);
+  return prepareDiscordGatewayFromConfigWithSecrets(config, {
+    env,
+    secretResolver
+  });
 }
 
 export function prepareDiscordGatewayFromConfig(
@@ -306,12 +330,54 @@ export function prepareDiscordGatewayFromConfig(
   };
 }
 
+export async function prepareDiscordGatewayFromConfigWithSecrets(
+  config: DiscordGatewayConfig,
+  options: {
+    env?: NodeJS.ProcessEnv;
+    secretResolver?: SecretResolver;
+  } = {}
+): Promise<PreparedDiscordGateway> {
+  const env = options.env ?? process.env;
+  const provider = config.providers.discord;
+  const resolvedEnv: NodeJS.ProcessEnv = { ...env };
+  const secretFields: Array<{ key: DiscordSecretKey; envName?: string }> = [
+    { key: "bot_token", envName: provider.bot_token_env },
+    { key: "application_id", envName: provider.application_id_env },
+    { key: "guild_id", envName: provider.guild_id_env },
+    { key: "approval_channel_id", envName: provider.approval_channel_id_env },
+    { key: "owner_user_id", envName: provider.owner_user_id_env },
+    { key: "allowed_user_ids", envName: provider.allowed_user_ids_env }
+  ];
+
+  for (const field of secretFields) {
+    if (field.envName === undefined || field.envName.length === 0) {
+      continue;
+    }
+
+    const resolved = await resolveSecret({
+      env,
+      envName: field.envName,
+      references: discordSecretReferences(provider, field.key),
+      resolver: options.secretResolver
+    });
+    if (resolved.status === "present") {
+      resolvedEnv[field.envName] = resolved.value;
+    }
+  }
+
+  return prepareDiscordGatewayFromConfig(config, resolvedEnv);
+}
+
 export async function startDiscordGateway(
   projectRoot: string,
   options: StartDiscordGatewayOptions = {}
 ): Promise<DiscordGatewayHandle> {
   const now = options.now ?? (() => new Date());
-  const prepared = await prepareDiscordGateway(projectRoot, options.env ?? process.env);
+  const prepared = await prepareDiscordGateway(
+    projectRoot,
+    options.env ?? process.env,
+    options.secretResolver
+  );
   const statusPath = discordGatewayStatusPath(projectRoot);
 
   if (prepared.status === "disabled") {
@@ -1186,6 +1252,23 @@ function isKaironChatCommand(interaction: DiscordGatewayInteraction): boolean {
 
 function hasEnvValue(env: NodeJS.ProcessEnv, name: string): boolean {
   return (env[name] ?? "").trim().length > 0;
+}
+
+function discordSecretReferences(
+  provider: DiscordProviderConfig,
+  key: DiscordSecretKey
+): SecretReference[] {
+  const reference = provider.secrets?.[key];
+  if (reference === undefined) {
+    return [];
+  }
+
+  return [
+    {
+      provider: "windows_credential",
+      target: reference.target
+    }
+  ];
 }
 
 function toProjectPath(projectRoot: string, filePath: string): string {

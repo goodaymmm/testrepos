@@ -9,6 +9,12 @@ import {
 import { agentIds } from "../agents/types.js";
 import { loadConfigFile, validateAllConfigs } from "../core/config/load-config.js";
 import { getKaironPaths, resolveInside } from "../core/fs/paths.js";
+import {
+  resolveSecret,
+  type ResolvedSecret,
+  type SecretReference,
+  type SecretResolver
+} from "../core/secrets/secret-resolver.js";
 import { validateDiscordEnvValues } from "../discord/env-validation.js";
 import { inspectRuntimeRecoveryTargets } from "../recovery/runtime-recovery.js";
 
@@ -33,6 +39,7 @@ export type DoctorOptions = {
   commandAvailability?: CommandAvailabilityChecker;
   env?: NodeJS.ProcessEnv;
   githubBranchProtectionClient?: GitHubBranchProtectionClient;
+  secretResolver?: SecretResolver;
 };
 
 type AgentsConfig = {
@@ -58,8 +65,22 @@ type NotificationsConfig = {
       approval_channel_id_env?: string;
       owner_user_id_env?: string;
       allowed_user_ids_env?: string;
+      secrets?: Partial<Record<DiscordSecretKey, SecretReferenceConfig>>;
     };
   };
+};
+
+type DiscordSecretKey =
+  | "bot_token"
+  | "application_id"
+  | "guild_id"
+  | "approval_channel_id"
+  | "owner_user_id"
+  | "allowed_user_ids";
+
+type SecretReferenceConfig = {
+  provider: "windows_credential";
+  target: string;
 };
 
 type PoliciesConfig = {
@@ -137,12 +158,13 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkAgentConfig(options.projectRoot));
   checks.push(await checkAgentCliAvailability(options.projectRoot, commandAvailability));
   checks.push(checkApiKeyContamination(env));
-  checks.push(await checkDiscordConfig(options.projectRoot, env));
+  checks.push(await checkDiscordConfig(options.projectRoot, env, options.secretResolver));
   checks.push(await checkGitPolicy(options.projectRoot));
   checks.push(
     await checkGitHubBranchProtection(
       options.projectRoot,
       env,
+      options.secretResolver,
       options.githubBranchProtectionClient ?? fetchGitHubBranchProtection
     )
   );
@@ -349,7 +371,8 @@ function checkApiKeyContamination(env: NodeJS.ProcessEnv): DoctorCheck {
 
 async function checkDiscordConfig(
   projectRoot: string,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  secretResolver?: SecretResolver
 ): Promise<DoctorCheck> {
   const config = await loadConfigFile<NotificationsConfig>(projectRoot, "notifications.json");
   const discord = config.providers?.discord;
@@ -378,11 +401,20 @@ async function checkDiscordConfig(
     discord.approval_channel_id_env,
     discord.owner_user_id_env
   ].filter((value): value is string => value !== undefined && value.length > 0);
-  const present = envNames.filter((name) => hasEnvValue(env, name));
-  const missing = envNames.filter((name) => !hasEnvValue(env, name));
-  const gatewayMissing = gatewayEnvNames.filter((name) => !hasEnvValue(env, name));
+  const secretResolutions = await resolveDiscordSecrets(discord, env, secretResolver);
+  const resolvedEnv = { ...env };
+  for (const [name, resolution] of secretResolutions.entries()) {
+    if (resolution.status === "present") {
+      resolvedEnv[name] = resolution.value;
+    }
+  }
+  const isResolved = (name: string) =>
+    secretResolutions.get(name)?.status === "present";
+  const present = envNames.filter((name) => isResolved(name));
+  const missing = envNames.filter((name) => !isResolved(name));
+  const gatewayMissing = gatewayEnvNames.filter((name) => !isResolved(name));
   const envValidation = validateDiscordEnvValues({
-    env,
+    env: resolvedEnv,
     applicationIdEnv: discord.application_id_env,
     guildIdEnv: discord.guild_id_env,
     approvalChannelIdEnv: discord.approval_channel_id_env,
@@ -402,7 +434,8 @@ async function checkDiscordConfig(
     `live_missing_env=${missing.length === 0 ? "none" : missing.join(",")}`,
     `gateway_invalid_env=${gatewayInvalid.length === 0 ? "none" : gatewayInvalid.join(",")}`,
     `live_invalid_env=${liveInvalid.length === 0 ? "none" : liveInvalid.join(",")}`,
-    ...envNames.map((name) => `${name}=${hasEnvValue(env, name) ? "present" : "missing"}`)
+    ...envNames.map((name) => `${name}=${isResolved(name) ? "present" : "missing"}`),
+    ...envNames.map((name) => `${name}_provider=${providerName(secretResolutions.get(name))}`)
   ];
 
   if (discord.enabled === true && gatewayMissing.length > 0) {
@@ -494,6 +527,7 @@ async function checkGitPolicy(projectRoot: string): Promise<DoctorCheck> {
 async function checkGitHubBranchProtection(
   projectRoot: string,
   env: NodeJS.ProcessEnv,
+  secretResolver: SecretResolver | undefined,
   client: GitHubBranchProtectionClient
 ): Promise<DoctorCheck> {
   const config = await loadConfigFile<PoliciesConfig>(projectRoot, "policies.json");
@@ -523,20 +557,22 @@ async function checkGitHubBranchProtection(
     );
   }
 
-  const tokenEnv = getGitHubTokenEnv(env);
+  const token = await resolveGitHubToken(env, secretResolver);
   const details = [
     `remote=${remote.name}`,
     `repository=${repository.owner}/${repository.repo}`,
     `branch=${branch}`,
-    `auth=${tokenEnv === undefined ? "missing" : "present"}`
+    `auth=${token.status === "present" ? "present" : "missing"}`,
+    `auth_provider=${token.status === "present" ? token.provider : "none"}`,
+    `auth_source=${token.status === "present" ? token.source : "none"}`
   ];
 
-  if (tokenEnv === undefined) {
+  if (token.status === "missing") {
     return warning(
       "git.branch_protection",
       "GitHub branch protection",
       [...details, "network_check=skipped"],
-      "Set GH_TOKEN or GITHUB_TOKEN, then verify branch protection with GitHub before unattended protected branch operations."
+      "Set GH_TOKEN or GITHUB_TOKEN, or configure KAIRON_GH_TOKEN_CREDENTIAL_TARGET / KAIRON_GITHUB_TOKEN_CREDENTIAL_TARGET, then verify branch protection with GitHub before unattended protected branch operations."
     );
   }
 
@@ -544,7 +580,7 @@ async function checkGitHubBranchProtection(
     owner: repository.owner,
     repo: repository.repo,
     branch,
-    token: env[tokenEnv] ?? ""
+    token: token.value
   });
   const apiDetails = [...details, "network_check=completed", ...formatGitHubApiDetails(apiResult)];
 
@@ -740,16 +776,101 @@ function normalizeGitHubRepository(
   return { owner: normalizedOwner, repo: normalizedRepo };
 }
 
-function getGitHubTokenEnv(env: NodeJS.ProcessEnv): "GH_TOKEN" | "GITHUB_TOKEN" | undefined {
-  if (hasEnvValue(env, "GH_TOKEN")) {
-    return "GH_TOKEN";
+async function resolveDiscordSecrets(
+  discord: NonNullable<NonNullable<NotificationsConfig["providers"]>["discord"]>,
+  env: NodeJS.ProcessEnv,
+  resolver?: SecretResolver
+): Promise<Map<string, ResolvedSecret>> {
+  const fields: Array<{ key: DiscordSecretKey; envName?: string }> = [
+    { key: "bot_token", envName: discord.bot_token_env },
+    { key: "application_id", envName: discord.application_id_env },
+    { key: "guild_id", envName: discord.guild_id_env },
+    { key: "approval_channel_id", envName: discord.approval_channel_id_env },
+    { key: "owner_user_id", envName: discord.owner_user_id_env },
+    { key: "allowed_user_ids", envName: discord.allowed_user_ids_env }
+  ];
+  const results = new Map<string, ResolvedSecret>();
+
+  for (const field of fields) {
+    if (field.envName === undefined || field.envName.length === 0) {
+      continue;
+    }
+
+    results.set(
+      field.envName,
+      await resolveSecret({
+        env,
+        envName: field.envName,
+        references: discordSecretReferences(discord, field.key),
+        resolver
+      })
+    );
   }
 
-  if (hasEnvValue(env, "GITHUB_TOKEN")) {
-    return "GITHUB_TOKEN";
+  return results;
+}
+
+async function resolveGitHubToken(
+  env: NodeJS.ProcessEnv,
+  resolver?: SecretResolver
+): Promise<ResolvedSecret> {
+  const ghToken = await resolveSecret({
+    env,
+    envName: "GH_TOKEN",
+    references: githubCredentialReferences(env, "KAIRON_GH_TOKEN_CREDENTIAL_TARGET"),
+    resolver
+  });
+  if (ghToken.status === "present") {
+    return ghToken;
   }
 
-  return undefined;
+  return resolveSecret({
+    env,
+    envName: "GITHUB_TOKEN",
+    references: githubCredentialReferences(
+      env,
+      "KAIRON_GITHUB_TOKEN_CREDENTIAL_TARGET"
+    ),
+    resolver
+  });
+}
+
+function discordSecretReferences(
+  discord: NonNullable<NonNullable<NotificationsConfig["providers"]>["discord"]>,
+  key: DiscordSecretKey
+): SecretReference[] {
+  const reference = discord.secrets?.[key];
+  if (reference === undefined) {
+    return [];
+  }
+
+  return [
+    {
+      provider: "windows_credential",
+      target: reference.target
+    }
+  ];
+}
+
+function githubCredentialReferences(
+  env: NodeJS.ProcessEnv,
+  targetEnvName: string
+): SecretReference[] {
+  const target = env[targetEnvName]?.trim();
+  if (target === undefined || target.length === 0) {
+    return [];
+  }
+
+  return [
+    {
+      provider: "windows_credential",
+      target
+    }
+  ];
+}
+
+function providerName(resolution: ResolvedSecret | undefined): string {
+  return resolution?.status === "present" ? resolution.provider : "none";
 }
 
 function formatGitHubApiDetails(result: GitHubBranchProtectionResult): string[] {

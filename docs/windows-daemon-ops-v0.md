@@ -10,10 +10,10 @@ Task Schedulerにはsecret値を渡さず、ユーザー環境変数からKairon
 - Target project: 例 `M:\EnglishApp`
 - `npm run build` と `npm link` が完了している
 - `kairon doctor` が `doctor.ok=true`、または残課題が把握済み
-- Discord / GitHub などのsecretはユーザー環境変数に設定済み
+- Discord / GitHub などのsecretはユーザー環境変数、または明示設定したWindows Credential Manager targetから取得できる
 
 secretをTask Schedulerの引数、説明、ログ名へ直接書かないでください。
-Windows Credential Manager連携は後続候補です。
+Kaironはenv値を優先し、envが未設定でconfigにWindows credential targetがある場合だけCredential Managerをfallbackとして読みます。
 
 ## 事前確認
 
@@ -36,6 +36,29 @@ Discord live連携を使う場合は、値の有無だけを確認します。�
 Get-ChildItem Env:KAIRON_DISCORD_BOT_TOKEN,Env:KAIRON_DISCORD_APPLICATION_ID,Env:KAIRON_DISCORD_GUILD_ID,Env:KAIRON_DISCORD_APPROVAL_CHANNEL_ID,Env:KAIRON_DISCORD_OWNER_USER_ID,Env:KAIRON_DISCORD_ALLOWED_USER_IDS -ErrorAction SilentlyContinue |
   Select-Object Name,@{Name="Present";Expression={-not [string]::IsNullOrWhiteSpace($_.Value)}}
 ```
+
+Discord bot tokenをWindows Credential Managerから読む場合は、`.kairon/config/notifications.json` のDiscord providerへ次のような参照を追加します。値そのものはconfigへ書きません。
+
+```json
+{
+  "secrets": {
+    "bot_token": {
+      "provider": "windows_credential",
+      "target": "Kairon/Discord/BotToken"
+    }
+  }
+}
+```
+
+GitHub PATをWindows Credential Managerから読む場合は、target名だけを環境変数で指定します。
+
+```powershell
+$env:KAIRON_GH_TOKEN_CREDENTIAL_TARGET = "Kairon/GH_TOKEN"
+# GITHUB_TOKEN fallbackを使う場合:
+$env:KAIRON_GITHUB_TOKEN_CREDENTIAL_TARGET = "Kairon/GITHUB_TOKEN"
+```
+
+`kairon doctor` はsecret値ではなく `provider=env` / `provider=windows_credential` と `present` / `missing` だけを表示します。
 
 ## Task Scheduler登録
 
