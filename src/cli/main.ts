@@ -361,7 +361,17 @@ export function createProgram(): Command {
     .description("Summarize operation test logs or result directories without editing docs.")
     .argument("[logFile]", "PowerShell transcript, pasted text, summary.md, or summary.json.")
     .option("--result-root <dir>", "Directory containing operation-test-results output.")
-    .action(async (logFile: string | undefined, options: { resultRoot?: string }) => {
+    .option("--test-list <path>", "Operation test list Markdown to compare against.")
+    .option("--suggest", "Print non-destructive test list update candidates.")
+    .option("--json", "Print JSON output.")
+    .option("--patch-preview", "Print non-destructive Markdown row replacement previews.")
+    .action(async (logFile: string | undefined, options: {
+      resultRoot?: string;
+      testList?: string;
+      suggest?: boolean;
+      json?: boolean;
+      patchPreview?: boolean;
+    }) => {
       console.log(
         await summarizeOperationTestsCommand(process.cwd(), logFile, options)
       );
