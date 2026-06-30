@@ -28,6 +28,13 @@ export type RagCollection =
   | "daily_reports"
   | "documents";
 
+export type RagSourceCategory =
+  | "project_rule"
+  | "project_document"
+  | "code"
+  | "operational_state"
+  | "operational_artifact";
+
 export type RagChunkMetadata = {
   collection: RagCollection;
   source_type: RagSourceType;
@@ -51,6 +58,10 @@ export type RagIndexSource = {
   content_hash: string;
   bytes: number;
   updated_at: string;
+  first_indexed_at: string;
+  last_seen_at: string;
+  last_modified_at: string;
+  source_category: RagSourceCategory;
   metadata: RagChunkMetadata;
 };
 
@@ -71,6 +82,8 @@ export type RagIndex = {
   updated_at: string;
   source_count: number;
   chunk_count: number;
+  last_compacted_at?: string;
+  compaction?: RagCompactionSummary;
   sources: RagIndexSource[];
   chunks: RagIndexChunk[];
 };
@@ -95,6 +108,10 @@ export type BuildRagIndexResult = {
   skipped_source_count: number;
   skipped_protected_count: number;
   pruned_source_count: number;
+  pruned_missing_source_count: number;
+  pruned_excluded_source_count: number;
+  pruned_archived_source_count: number;
+  pruned_ephemeral_source_count: number;
   index: RagIndex;
 };
 
@@ -104,6 +121,35 @@ export type BuildRagIndexOptions = {
   sourceTypes?: RagSourceType[];
   limit?: number;
   prune?: boolean;
+  compact?: boolean;
+  maxArtifactAgeDays?: number;
+};
+
+export type CompactRagIndexOptions = {
+  now?: () => Date;
+  maxArtifactAgeDays?: number;
+  pruneMissing?: boolean;
+  pruneExcluded?: boolean;
+  pruneArchived?: boolean;
+  pruneEphemeral?: boolean;
+};
+
+export type RagCompactionSummary = {
+  compacted_at: string;
+  removed_source_count: number;
+  removed_missing_source_count: number;
+  removed_excluded_source_count: number;
+  removed_archived_source_count: number;
+  removed_ephemeral_source_count: number;
+};
+
+export type CompactRagIndexResult = RagCompactionSummary & {
+  schema_version: string;
+  index_path: string;
+  index_exists: boolean;
+  source_count: number;
+  chunk_count: number;
+  index?: RagIndex;
 };
 
 export type RagSearchRequest = {
@@ -131,6 +177,8 @@ export type RagIndexStatus = {
   chunk_count: number;
   index_size_bytes?: number;
   last_refresh_at?: string;
+  last_compacted_at?: string;
+  last_compaction_removed_sources?: number;
   skipped_source_count: number;
   skipped_protected_count: number;
   created_at?: string;
@@ -181,7 +229,24 @@ type BuiltSource = {
   chunks: RagIndexChunk[];
 };
 
+type PrunedSourceReason = "missing" | "excluded" | "archived" | "ephemeral";
+
+type PrunedSource = {
+  source_id: string;
+  reason: PrunedSourceReason;
+};
+
+type PruneOptions = {
+  now: Date;
+  maxArtifactAgeDays: number;
+  pruneMissing: boolean;
+  pruneExcluded: boolean;
+  pruneArchived: boolean;
+  pruneEphemeral: boolean;
+};
+
 const maxChunkChars = 1_200;
+const defaultEphemeralSourceMaxAgeDays = 30;
 const internalReviewScanReplacePattern = /\b(?:secret_scan_passed)\b/giu;
 const internalReviewScanTestPattern = /\b(?:secret_scan_passed)\b/iu;
 const explicitSecretReferenceReplacePattern =
@@ -193,17 +258,29 @@ export async function buildRagIndex(
   projectRoot: string,
   options: BuildRagIndexOptions = {}
 ): Promise<BuildRagIndexResult> {
-  const now = (options.now?.() ?? new Date()).toISOString();
+  const nowDate = options.now?.() ?? new Date();
+  const now = nowDate.toISOString();
   const config = await loadConfigFile<RagConfig>(projectRoot, "rag.json");
   const indexPath = ragIndexPath(projectRoot, config);
   const excludePatterns = await loadExcludePatterns(projectRoot, config);
   const prepared = await prepareCandidateSources(projectRoot, config);
-  const selectedCandidates = filterCandidateSources(prepared.indexable, options);
+  const selectedCandidates = filterCandidateSources(
+    prepared.indexable,
+    options,
+    nowDate
+  );
   const scoped = isScopedRefresh(options);
+  const existingIndex = await readExistingIndex(indexPath);
+  const existingSources = mapExistingSourcesByIdentity(existingIndex);
   const builtSources: BuiltSource[] = [];
 
   for (const candidate of selectedCandidates) {
-    const built = await buildIndexedSource(projectRoot, candidate);
+    const built = await buildIndexedSource(projectRoot, candidate, {
+      now,
+      existingSource: existingSources.get(
+        sourceIdentity(candidate.sourceType, candidate.relativePath)
+      )
+    });
     if (built !== undefined) {
       builtSources.push(built);
     }
@@ -214,11 +291,24 @@ export async function buildRagIndex(
       sourceIdentity(candidate.sourceType, candidate.relativePath)
     )
   );
-  const existingIndex = await readExistingIndex(indexPath);
-  const prunedSourceIds =
-    options.prune === true && existingIndex !== undefined
-      ? await findPrunedSourceIds(projectRoot, existingIndex, excludePatterns)
-      : new Set<string>();
+  const shouldCompact = options.prune === true || options.compact === true;
+  const prunedSources =
+    shouldCompact && existingIndex !== undefined
+      ? await findPrunedSources(projectRoot, existingIndex, excludePatterns, {
+          now: nowDate,
+          maxArtifactAgeDays:
+            options.maxArtifactAgeDays ?? defaultEphemeralSourceMaxAgeDays,
+          pruneMissing: true,
+          pruneExcluded: true,
+          pruneArchived: true,
+          pruneEphemeral: options.compact === true
+        })
+      : [];
+  const prunedSourceIds = new Set(
+    prunedSources.map((source) => source.source_id)
+  );
+  const compaction =
+    shouldCompact === true ? buildCompactionSummary(now, prunedSources) : undefined;
 
   const merged = mergeIndexSources({
     existingIndex,
@@ -235,6 +325,12 @@ export async function buildRagIndex(
     updated_at: now,
     source_count: merged.sources.length,
     chunk_count: merged.chunks.length,
+    ...(compaction === undefined
+      ? {}
+      : {
+          last_compacted_at: compaction.compacted_at,
+          compaction
+        }),
     sources: merged.sources,
     chunks: merged.chunks
   };
@@ -251,6 +347,78 @@ export async function buildRagIndex(
     skipped_source_count: prepared.skipped_source_count,
     skipped_protected_count: prepared.skipped_protected_count,
     pruned_source_count: prunedSourceIds.size,
+    ...countPrunedSources(prunedSources),
+    index
+  };
+}
+
+export async function compactRagIndex(
+  projectRoot: string,
+  options: CompactRagIndexOptions = {}
+): Promise<CompactRagIndexResult> {
+  const nowDate = options.now?.() ?? new Date();
+  const now = nowDate.toISOString();
+  const config = await loadConfigFile<RagConfig>(projectRoot, "rag.json");
+  const indexPath = ragIndexPath(projectRoot, config);
+  const existingIndex = await readExistingIndex(indexPath);
+
+  if (existingIndex === undefined) {
+    return {
+      schema_version: "0.1",
+      index_path: toProjectPath(projectRoot, indexPath),
+      index_exists: false,
+      source_count: 0,
+      chunk_count: 0,
+      ...buildCompactionSummary(now, [])
+    };
+  }
+
+  const excludePatterns = await loadExcludePatterns(projectRoot, config);
+  const prunedSources = await findPrunedSources(
+    projectRoot,
+    existingIndex,
+    excludePatterns,
+    {
+      now: nowDate,
+      maxArtifactAgeDays:
+        options.maxArtifactAgeDays ?? defaultEphemeralSourceMaxAgeDays,
+      pruneMissing: options.pruneMissing !== false,
+      pruneExcluded: options.pruneExcluded !== false,
+      pruneArchived: options.pruneArchived !== false,
+      pruneEphemeral: options.pruneEphemeral !== false
+    }
+  );
+  const prunedSourceIds = new Set(
+    prunedSources.map((source) => source.source_id)
+  );
+  const sources = existingIndex.sources.filter(
+    (source) => !prunedSourceIds.has(source.source_id)
+  );
+  const retainedSourceIds = new Set(sources.map((source) => source.source_id));
+  const chunks = existingIndex.chunks.filter((chunk) =>
+    retainedSourceIds.has(chunk.source_id)
+  );
+  const compaction = buildCompactionSummary(now, prunedSources);
+  const index: RagIndex = {
+    ...existingIndex,
+    updated_at: now,
+    source_count: sources.length,
+    chunk_count: chunks.length,
+    last_compacted_at: compaction.compacted_at,
+    compaction,
+    sources,
+    chunks
+  };
+
+  await writeJsonFileAtomic(indexPath, index);
+
+  return {
+    schema_version: "0.1",
+    index_path: toProjectPath(projectRoot, indexPath),
+    index_exists: true,
+    source_count: index.source_count,
+    chunk_count: index.chunk_count,
+    ...compaction,
     index
   };
 }
@@ -308,6 +476,8 @@ export async function getRagIndexStatus(projectRoot: string): Promise<RagIndexSt
       chunk_count: index.chunk_count,
       index_size_bytes: indexFileStat.size,
       last_refresh_at: index.updated_at,
+      last_compacted_at: index.last_compacted_at,
+      last_compaction_removed_sources: index.compaction?.removed_source_count,
       skipped_source_count: prepared.skipped_source_count,
       skipped_protected_count: prepared.skipped_protected_count,
       created_at: index.created_at,
@@ -449,17 +619,27 @@ async function prepareCandidateSources(
 
 function filterCandidateSources(
   candidates: PreparedCandidateSource[],
-  options: BuildRagIndexOptions
+  options: BuildRagIndexOptions,
+  now: Date
 ): PreparedCandidateSource[] {
   const since = normalizeSince(options.since);
   const sourceTypeSet =
     options.sourceTypes === undefined ? undefined : new Set(options.sourceTypes);
+  const maxArtifactAgeDays =
+    options.maxArtifactAgeDays ?? defaultEphemeralSourceMaxAgeDays;
   const filtered = candidates.filter((candidate) => {
     if (sourceTypeSet !== undefined && !sourceTypeSet.has(candidate.sourceType)) {
       return false;
     }
 
     if (since !== undefined && candidate.updatedAt < since) {
+      return false;
+    }
+
+    if (
+      options.compact === true &&
+      isStaleEphemeralSource(candidate.relativePath, candidate.updatedAt, now, maxArtifactAgeDays)
+    ) {
       return false;
     }
 
@@ -475,7 +655,11 @@ function filterCandidateSources(
 
 async function buildIndexedSource(
   projectRoot: string,
-  candidate: PreparedCandidateSource
+  candidate: PreparedCandidateSource,
+  context: {
+    now: string;
+    existingSource?: RagIndexSource;
+  }
 ): Promise<BuiltSource | undefined> {
   const rawContent = await readFile(candidate.absolutePath, "utf8");
   const content = sanitizeIndexContent(rawContent);
@@ -503,6 +687,10 @@ async function buildIndexedSource(
     content_hash: contentHash,
     bytes: Buffer.byteLength(content, "utf8"),
     updated_at: candidate.updatedAt.toISOString(),
+    first_indexed_at: context.existingSource?.first_indexed_at ?? context.now,
+    last_seen_at: context.now,
+    last_modified_at: candidate.updatedAt.toISOString(),
+    source_category: sourceCategoryForSourceType(candidate.sourceType),
     metadata
   };
 
@@ -566,6 +754,21 @@ function sortIndexParts(input: {
   };
 }
 
+function mapExistingSourcesByIdentity(
+  index: RagIndex | undefined
+): Map<string, RagIndexSource> {
+  const output = new Map<string, RagIndexSource>();
+  if (index === undefined) {
+    return output;
+  }
+
+  for (const source of index.sources) {
+    output.set(sourceIdentity(source.source_type, source.path), source);
+  }
+
+  return output;
+}
+
 async function readExistingIndex(indexPath: string): Promise<RagIndex | undefined> {
   try {
     await access(indexPath);
@@ -578,23 +781,114 @@ async function readExistingIndex(indexPath: string): Promise<RagIndex | undefine
   }
 }
 
-async function findPrunedSourceIds(
+function buildCompactionSummary(
+  compactedAt: string,
+  prunedSources: PrunedSource[]
+): RagCompactionSummary {
+  return {
+    compacted_at: compactedAt,
+    removed_source_count: prunedSources.length,
+    ...countRemovedSources(prunedSources)
+  };
+}
+
+function countPrunedSources(prunedSources: PrunedSource[]): Pick<
+  BuildRagIndexResult,
+  | "pruned_missing_source_count"
+  | "pruned_excluded_source_count"
+  | "pruned_archived_source_count"
+  | "pruned_ephemeral_source_count"
+> {
+  const counts = countRemovedSources(prunedSources);
+  return {
+    pruned_missing_source_count: counts.removed_missing_source_count,
+    pruned_excluded_source_count: counts.removed_excluded_source_count,
+    pruned_archived_source_count: counts.removed_archived_source_count,
+    pruned_ephemeral_source_count: counts.removed_ephemeral_source_count
+  };
+}
+
+function countRemovedSources(prunedSources: PrunedSource[]): Omit<
+  RagCompactionSummary,
+  "compacted_at" | "removed_source_count"
+> {
+  return {
+    removed_missing_source_count: prunedSources.filter(
+      (source) => source.reason === "missing"
+    ).length,
+    removed_excluded_source_count: prunedSources.filter(
+      (source) => source.reason === "excluded"
+    ).length,
+    removed_archived_source_count: prunedSources.filter(
+      (source) => source.reason === "archived"
+    ).length,
+    removed_ephemeral_source_count: prunedSources.filter(
+      (source) => source.reason === "ephemeral"
+    ).length
+  };
+}
+
+function sourceDate(source: RagIndexSource): Date {
+  const parsed = new Date(source.last_modified_at ?? source.updated_at);
+  return Number.isNaN(parsed.getTime()) ? new Date(source.updated_at) : parsed;
+}
+
+async function findPrunedSources(
   projectRoot: string,
   index: RagIndex,
-  excludePatterns: string[]
-): Promise<Set<string>> {
-  const pruned = new Set<string>();
+  excludePatterns: string[],
+  options: PruneOptions
+): Promise<PrunedSource[]> {
+  const pruned: PrunedSource[] = [];
   for (const source of index.sources) {
-    if (
-      isArchivedCleanupArtifact(source.path) ||
-      isExcludedPath(source.path, excludePatterns) ||
-      !(await exists(resolveInside(projectRoot, source.path)))
-    ) {
-      pruned.add(source.source_id);
+    const reason = await findPrunedSourceReason(
+      projectRoot,
+      source,
+      excludePatterns,
+      options
+    );
+    if (reason !== undefined) {
+      pruned.push({ source_id: source.source_id, reason });
     }
   }
 
   return pruned;
+}
+
+async function findPrunedSourceReason(
+  projectRoot: string,
+  source: RagIndexSource,
+  excludePatterns: string[],
+  options: PruneOptions
+): Promise<PrunedSourceReason | undefined> {
+  if (options.pruneArchived && isArchivedCleanupArtifact(source.path)) {
+    return "archived";
+  }
+
+  if (options.pruneExcluded && isExcludedPath(source.path, excludePatterns)) {
+    return "excluded";
+  }
+
+  if (
+    options.pruneMissing &&
+    !(await exists(resolveInside(projectRoot, source.path)))
+  ) {
+    return "missing";
+  }
+
+  if (
+    options.pruneEphemeral &&
+    isStaleEphemeralSource(
+      source.path,
+      sourceDate(source),
+      options.now,
+      options.maxArtifactAgeDays
+    )
+  ) {
+    return "ephemeral";
+  }
+
+  return undefined;
 }
 
 function isScopedRefresh(options: BuildRagIndexOptions): boolean {
@@ -647,6 +941,28 @@ function compareChunks(left: RagIndexChunk, right: RagIndexChunk): number {
 
 function isArchivedCleanupArtifact(relativePath: string): boolean {
   return toPosixPath(relativePath).startsWith(".kairon/cleanup/archived/");
+}
+
+function isStaleEphemeralSource(
+  relativePath: string,
+  sourceUpdatedAt: Date,
+  now: Date,
+  maxArtifactAgeDays: number
+): boolean {
+  if (!isEphemeralSourcePath(relativePath)) {
+    return false;
+  }
+
+  const maxAgeMs = maxArtifactAgeDays * 24 * 60 * 60 * 1000;
+  return now.getTime() - sourceUpdatedAt.getTime() > maxAgeMs;
+}
+
+function isEphemeralSourcePath(relativePath: string): boolean {
+  const normalized = toPosixPath(relativePath);
+  return (
+    normalized.startsWith(".kairon/runs/") ||
+    normalized.startsWith(".kairon/sessions/")
+  );
 }
 
 async function collectFiles(
@@ -920,6 +1236,26 @@ function collectionForSourceType(sourceType: RagSourceType): RagCollection {
       return "daily_reports";
     case "document":
       return "documents";
+  }
+}
+
+function sourceCategoryForSourceType(sourceType: RagSourceType): RagSourceCategory {
+  switch (sourceType) {
+    case "rule":
+      return "project_rule";
+    case "document":
+      return "project_document";
+    case "code_index":
+      return "code";
+    case "failure":
+      return "operational_artifact";
+    case "task_state":
+    case "handoff":
+    case "decision":
+    case "review":
+    case "approval":
+    case "daily_report":
+      return "operational_state";
   }
 }
 

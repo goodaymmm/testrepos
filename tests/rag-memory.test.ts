@@ -1,9 +1,14 @@
-import { mkdir, unlink, writeFile } from "node:fs/promises";
+import { mkdir, unlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeProject } from "../src/cli/commands/init.js";
-import { readJsonFile } from "../src/core/fs/json-file.js";
-import { buildRagIndex, searchRagIndex } from "../src/rag/lexical-index.js";
+import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
+import {
+  buildRagIndex,
+  compactRagIndex,
+  searchRagIndex,
+  type RagIndex
+} from "../src/rag/lexical-index.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("RAG lexical memory", () => {
@@ -45,7 +50,11 @@ describe("RAG lexical memory", () => {
         expect.objectContaining({
           source_type: "document",
           path: "docs/approval-board.md",
-          content_hash: expect.stringMatching(/^sha256:/)
+          content_hash: expect.stringMatching(/^sha256:/),
+          first_indexed_at: "2026-05-25T00:00:00.000Z",
+          last_seen_at: "2026-05-25T00:00:00.000Z",
+          last_modified_at: expect.any(String),
+          source_category: "project_document"
         }),
         expect.objectContaining({
           source_type: "task_state",
@@ -130,6 +139,90 @@ describe("RAG lexical memory", () => {
     );
     expect(result.index.sources.map((source) => source.path)).not.toContain(
       "docs/remove-rag.md"
+    );
+  });
+
+  it("compacts missing, archived, and stale ephemeral sources", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    await mkdir(path.join(root, ".kairon", "sessions", "2026-05-01", "codex"), {
+      recursive: true
+    });
+    await mkdir(path.join(root, ".kairon", "runs", "RUN-0009"), {
+      recursive: true
+    });
+    const keptDoc = path.join(root, "docs", "kept.md");
+    const removedDoc = path.join(root, "docs", "missing.md");
+    const oldHandoff = path.join(
+      root,
+      ".kairon",
+      "sessions",
+      "2026-05-01",
+      "codex",
+      "handoff.md"
+    );
+    const oldRunner = path.join(root, ".kairon", "runs", "RUN-0009", "runner.json");
+    await writeFile(keptDoc, "Keep this compacted RAG source.", "utf8");
+    await writeFile(removedDoc, "This missing RAG source should be compacted.", "utf8");
+    await writeFile(oldHandoff, "Old handoff should age out of RAG.", "utf8");
+    await writeFile(
+      oldRunner,
+      JSON.stringify({
+        run_id: "RUN-0009",
+        task_id: "TASK-0009",
+        status: "failed",
+        failure_reason: "old failure should age out"
+      }),
+      "utf8"
+    );
+    const oldDate = new Date("2026-05-01T00:00:00.000Z");
+    await utimes(oldHandoff, oldDate, oldDate);
+    await utimes(oldRunner, oldDate, oldDate);
+
+    const built = await buildRagIndex(root, {
+      now: () => new Date("2026-05-02T00:00:00.000Z")
+    });
+    const indexPath = path.join(root, ".kairon", "rag", "index.json");
+    const archivedSource = {
+      ...built.index.sources[0],
+      source_id: "document:.kairon/cleanup/archived/2026-05-01:archived",
+      path: ".kairon/cleanup/archived/2026-05-01.json"
+    };
+    const archivedChunk = {
+      ...built.index.chunks[0],
+      chunk_id: `${archivedSource.source_id}#1`,
+      source_id: archivedSource.source_id,
+      path: archivedSource.path
+    };
+    await writeJsonFileAtomic(indexPath, {
+      ...built.index,
+      source_count: built.index.sources.length + 1,
+      chunk_count: built.index.chunks.length + 1,
+      sources: [...built.index.sources, archivedSource],
+      chunks: [...built.index.chunks, archivedChunk]
+    } satisfies RagIndex);
+    await unlink(removedDoc);
+
+    const compacted = await compactRagIndex(root, {
+      now: () => new Date("2026-06-15T00:00:00.000Z"),
+      maxArtifactAgeDays: 30
+    });
+
+    expect(compacted.removed_missing_source_count).toBe(1);
+    expect(compacted.removed_archived_source_count).toBe(1);
+    expect(compacted.removed_ephemeral_source_count).toBeGreaterThanOrEqual(2);
+    expect(compacted.index?.last_compacted_at).toBe("2026-06-15T00:00:00.000Z");
+    expect(compacted.index?.sources.map((source) => source.path)).toContain(
+      "docs/kept.md"
+    );
+    expect(compacted.index?.sources.map((source) => source.path)).not.toEqual(
+      expect.arrayContaining([
+        "docs/missing.md",
+        ".kairon/cleanup/archived/2026-05-01.json",
+        ".kairon/sessions/2026-05-01/codex/handoff.md",
+        ".kairon/runs/RUN-0009/runner.json"
+      ])
     );
   });
 

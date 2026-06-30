@@ -163,7 +163,8 @@ describe("runDailyMaintenance", () => {
       index_path: ".kairon/rag/index.json",
       chunk_count: expect.any(Number),
       skipped_protected_count: expect.any(Number),
-      pruned_source_count: expect.any(Number)
+      pruned_source_count: expect.any(Number),
+      pruned_ephemeral_source_count: expect.any(Number)
     });
     expect(result.rag_index_skipped).toBeUndefined();
     await expect(
@@ -183,6 +184,7 @@ describe("runDailyMaintenance", () => {
     expect(output).toContain("rag_skipped_sources=");
     expect(output).toContain("rag_skipped_protected=");
     expect(output).toContain("rag_pruned_sources=");
+    expect(output).toContain("rag_pruned_ephemeral_sources=");
   });
 
   it("refreshes the RAG index during maintenance when enabled", async () => {
@@ -212,7 +214,8 @@ describe("runDailyMaintenance", () => {
       index_path: ".kairon/rag/index.json",
       chunk_count: expect.any(Number),
       skipped_protected_count: expect.any(Number),
-      pruned_source_count: expect.any(Number)
+      pruned_source_count: expect.any(Number),
+      pruned_ephemeral_source_count: expect.any(Number)
     });
     await expect(
       readJsonFile(path.join(root, ".kairon", "rag", "index.json"))

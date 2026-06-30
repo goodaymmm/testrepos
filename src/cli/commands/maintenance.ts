@@ -27,7 +27,11 @@ export async function runMaintenance(
           `rag_chunks=${result.rag_index.chunk_count}`,
           `rag_skipped_sources=${result.rag_index.skipped_source_count}`,
           `rag_skipped_protected=${result.rag_index.skipped_protected_count}`,
-          `rag_pruned_sources=${result.rag_index.pruned_source_count}`
+          `rag_pruned_sources=${result.rag_index.pruned_source_count}`,
+          `rag_pruned_missing_sources=${result.rag_index.pruned_missing_source_count}`,
+          `rag_pruned_excluded_sources=${result.rag_index.pruned_excluded_source_count}`,
+          `rag_pruned_archived_sources=${result.rag_index.pruned_archived_source_count}`,
+          `rag_pruned_ephemeral_sources=${result.rag_index.pruned_ephemeral_source_count}`
         ];
 
   return [

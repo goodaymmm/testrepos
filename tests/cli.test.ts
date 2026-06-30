@@ -176,10 +176,21 @@ describe("createProgram", () => {
     const rag = createProgram().commands.find((command) => command.name() === "rag");
 
     expect(rag?.commands.map((command) => command.name()).sort()).toEqual([
+      "compact",
       "query",
       "refresh",
       "status"
     ]);
+    expect(
+      rag?.commands
+        .find((command) => command.name() === "refresh")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--compact", "--max-artifact-age-days"]));
+    expect(
+      rag?.commands
+        .find((command) => command.name() === "compact")
+        ?.options.map((option) => option.long)
+    ).toContain("--max-artifact-age-days");
     expect(
       rag?.commands
         .find((command) => command.name() === "query")

@@ -1,5 +1,6 @@
 import {
   buildRagIndex,
+  compactRagIndex,
   getRagIndexStatus,
   type BuildRagIndexOptions,
   type RagCollection,
@@ -13,6 +14,12 @@ export type RagRefreshCommandOptions = {
   type?: string;
   limit?: string;
   prune?: boolean;
+  compact?: boolean;
+  maxArtifactAgeDays?: string;
+};
+
+export type RagCompactCommandOptions = {
+  maxArtifactAgeDays?: string;
 };
 
 export type RagQueryCommandOptions = {
@@ -61,7 +68,12 @@ export async function refreshRagIndexCommand(
     since: parseSince(options.since),
     sourceTypes: parseEnumList(options.type, sourceTypes, "source type"),
     limit: parseOptionalLimit(options.limit),
-    prune: options.prune === true
+    prune: options.prune === true || options.compact === true,
+    compact: options.compact === true,
+    maxArtifactAgeDays: parseOptionalPositiveInteger(
+      options.maxArtifactAgeDays,
+      "RAG max artifact age days"
+    )
   };
   const result = await buildRagIndex(projectRoot, buildOptions);
   return [
@@ -73,7 +85,36 @@ export async function refreshRagIndexCommand(
     `skipped_sources=${result.skipped_source_count}`,
     `skipped_protected=${result.skipped_protected_count}`,
     `pruned_sources=${result.pruned_source_count}`,
+    `pruned_missing_sources=${result.pruned_missing_source_count}`,
+    `pruned_excluded_sources=${result.pruned_excluded_source_count}`,
+    `pruned_archived_sources=${result.pruned_archived_source_count}`,
+    `pruned_ephemeral_sources=${result.pruned_ephemeral_source_count}`,
     `updated_at=${result.index.updated_at}`
+  ].join("\n");
+}
+
+export async function compactRagIndexCommand(
+  projectRoot: string,
+  options: RagCompactCommandOptions = {}
+): Promise<string> {
+  const result = await compactRagIndex(projectRoot, {
+    maxArtifactAgeDays: parseOptionalPositiveInteger(
+      options.maxArtifactAgeDays,
+      "RAG max artifact age days"
+    )
+  });
+  return [
+    "Kairon RAG index compacted.",
+    `index=${result.index_path}`,
+    `exists=${result.index_exists}`,
+    `sources=${result.source_count}`,
+    `chunks=${result.chunk_count}`,
+    `removed_sources=${result.removed_source_count}`,
+    `removed_missing_sources=${result.removed_missing_source_count}`,
+    `removed_excluded_sources=${result.removed_excluded_source_count}`,
+    `removed_archived_sources=${result.removed_archived_source_count}`,
+    `removed_ephemeral_sources=${result.removed_ephemeral_source_count}`,
+    `compacted_at=${result.compacted_at}`
   ].join("\n");
 }
 
@@ -94,6 +135,12 @@ export async function statusRagIndexCommand(projectRoot: string): Promise<string
     ...(status.last_refresh_at === undefined
       ? []
       : [`last_refresh_at=${status.last_refresh_at}`]),
+    ...(status.last_compacted_at === undefined
+      ? []
+      : [`last_compacted_at=${status.last_compacted_at}`]),
+    ...(status.last_compaction_removed_sources === undefined
+      ? []
+      : [`last_compaction_removed_sources=${status.last_compaction_removed_sources}`]),
     ...(status.created_at === undefined ? [] : [`created_at=${status.created_at}`]),
     ...(status.updated_at === undefined ? [] : [`updated_at=${status.updated_at}`])
   ].join("\n");
@@ -175,6 +222,22 @@ function parseOptionalLimit(value: string | undefined): number | undefined {
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed < 1) {
     throw new Error(`Invalid RAG limit: ${value}`);
+  }
+
+  return parsed;
+}
+
+function parseOptionalPositiveInteger(
+  value: string | undefined,
+  label: string
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`Invalid ${label}: ${value}`);
   }
 
   return parsed;
