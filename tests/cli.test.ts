@@ -167,6 +167,9 @@ describe("createProgram", () => {
     expect(test?.description()).toContain("operation test results");
     expect(summarize?.description()).toContain("without editing docs");
     expect(summarize?.options.map((option) => option.long)).toContain("--result-root");
+    expect(summarize?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining(["--test-list", "--suggest", "--json", "--patch-preview"])
+    );
   });
 
   it("registers RAG index commands and query filters", () => {

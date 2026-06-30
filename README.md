@@ -376,6 +376,20 @@ kairon test summarize .\operation-test-results\manual-log.txt
 kairon test summarize --result-root .\operation-test-results
 ```
 
+操作テストリストのMarkdownと照合し、PASS反映候補や未PASS候補だけをレビューしたい場合は `--test-list` と `--suggest` を使います。既存のMarkdownは自動更新されません。
+
+```powershell
+kairon test summarize .\operation-test-results\manual-log.txt `
+  --test-list .\docs\t79-t90-operation-test-list-v0.md `
+  --suggest `
+  --patch-preview
+
+kairon test summarize --result-root .\operation-test-results `
+  --test-list .\docs\t79-t90-operation-test-list-v0.md `
+  --suggest `
+  --json
+```
+
 ## PR / Release Checklist
 
 PRごとの基本検証は [.github/workflows/ci.yml](.github/workflows/ci.yml) で自動実行します。CIは `npm ci`、`npm run test:docs`、`npm run build`、`npm test` だけを対象にし、GitHub branch protection live確認、Discord live接続、Board目視確認などの外部環境に依存するoperation testは実行しません。
