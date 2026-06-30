@@ -41,6 +41,7 @@ export function renderBoardHtml(projection: BoardProjection): string {
     .severity-medium { color: #725200; font-weight: 700; }
     section { overflow: hidden; }
     section h2 { padding: 16px 18px; border-bottom: 1px solid #e6e9ef; }
+    .table-wrap { width: 100%; overflow-x: auto; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
     th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #edf0f5; vertical-align: top; }
     th { color: #5f6673; background: #fbfcfe; font-weight: 600; }
@@ -49,6 +50,34 @@ export function renderBoardHtml(projection: BoardProjection): string {
     code { font-family: Consolas, monospace; font-size: 12px; }
     .empty { padding: 14px 18px; color: #5f6673; }
     .section-group { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; }
+    .compact-overview { display: grid; gap: 14px; padding: 16px 18px 18px; }
+    .compact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+    .compact-card { border: 1px solid #d9dee7; border-radius: 8px; padding: 12px 14px; background: #fbfcfe; min-width: 0; }
+    .compact-card strong { display: block; margin-top: 6px; font-size: 20px; }
+    .compact-status-high { border-color: #dfb4b4; background: #fff7f7; }
+    .compact-status-medium { border-color: #dfd0a4; background: #fffaf0; }
+    .compact-status-ok { border-color: #bad6c2; background: #f5fbf7; }
+    .compact-priority-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+    .compact-priority-list li { display: grid; grid-template-columns: minmax(72px, auto) 1fr auto; gap: 10px; align-items: center; padding: 9px 10px; border: 1px solid #e6e9ef; border-radius: 8px; background: #ffffff; }
+    .compact-pill { display: inline-block; border-radius: 999px; padding: 3px 8px; font-size: 12px; font-weight: 700; background: #edf0f5; color: #3d4653; }
+    .compact-target { min-width: 0; overflow-wrap: anywhere; }
+    .compact-action { white-space: nowrap; font-size: 12px; }
+    @media (max-width: 720px) {
+      header { padding: 16px; }
+      main { padding: 16px; gap: 16px; }
+      h1 { font-size: 23px; }
+      nav { gap: 8px; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; }
+      nav a { white-space: nowrap; }
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .value { font-size: 20px; }
+      .section-group { grid-template-columns: 1fr; gap: 16px; }
+      section h2 { padding: 14px 14px; }
+      th, td { padding: 9px 10px; }
+      .compact-overview { padding: 14px; }
+      .compact-grid { grid-template-columns: 1fr; }
+      .compact-priority-list li { grid-template-columns: 1fr; align-items: start; }
+      .compact-action { white-space: normal; }
+    }
   </style>
 </head>
 <body>
@@ -56,6 +85,7 @@ export function renderBoardHtml(projection: BoardProjection): string {
     <h1>Kairon Board</h1>
     <div class="meta">generated_at=${escapeHtml(projection.generated_at)} | projection=<a href="/projection.json">projection.json</a> | <a href="/">refresh</a></div>
     <nav>
+      <a href="#compact">Compact</a>
       <a href="#operations">Operations</a>
       <a href="#runtime">Runtime</a>
       <a href="#recovery">Recovery</a>
@@ -70,6 +100,7 @@ export function renderBoardHtml(projection: BoardProjection): string {
     </nav>
   </header>
   <main>
+    ${renderCompactOverview(projection)}
     <div class="stats">
       ${stat("Attention", String(projection.operations.attention_total), `runs=${projection.operations.failed_runs + projection.operations.setup_required_runs}`)}
       ${stat("Schedule", projection.runtime.schedule.mode, `base=${projection.runtime.schedule.baseMode}`)}
@@ -101,6 +132,111 @@ export function renderBoardHtml(projection: BoardProjection): string {
 
 function stat(label: string, value: string, subvalue?: string): string {
   return `<div class="stat"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(value)}</div>${subvalue === undefined ? "" : `<div class="subvalue">${escapeHtml(subvalue)}</div>`}</div>`;
+}
+
+function renderCompactOverview(projection: BoardProjection): string {
+  const daemonStatus = projection.runtime.daemonHealth?.status ?? "unknown";
+  const daemonSeverity = daemonCompactSeverity(projection);
+  const runAttention =
+    projection.operations.failed_runs + projection.operations.setup_required_runs;
+  const cards = [
+    compactCard(
+      "Attention",
+      String(projection.operations.attention_total),
+      "operations needing review",
+      projection.operations.attention_total > 0 ? "high" : "ok",
+      "#operations"
+    ),
+    compactCard(
+      "Approvals",
+      String(projection.operations.pending_approvals),
+      "pending",
+      projection.operations.pending_approvals > 0 ? "high" : "ok",
+      "#approvals"
+    ),
+    compactCard(
+      "Runs",
+      String(runAttention),
+      `failed=${projection.operations.failed_runs} setup=${projection.operations.setup_required_runs}`,
+      runAttention > 0 ? "high" : "ok",
+      "#runs"
+    ),
+    compactCard(
+      "Recovery",
+      String(projection.operations.recovery_targets),
+      "targets",
+      projection.operations.recovery_targets > 0 ? "high" : "ok",
+      "#recovery"
+    ),
+    compactCard(
+      "Daemon",
+      daemonStatus,
+      daemonCompactDetail(projection),
+      daemonSeverity,
+      "#runtime"
+    ),
+    compactCard(
+      "Git Push",
+      String(projection.operations.git_transactions_requiring_approval),
+      `approval required | pr=${projection.git.transactions_ready_for_pr}`,
+      projection.operations.git_transactions_requiring_approval > 0 ? "high" : "ok",
+      "#git"
+    )
+  ];
+  const priorityItems = projection.operations.priority.slice(0, 5);
+  const priorityList =
+    priorityItems.length === 0
+      ? `<div class="empty">No compact priority items</div>`
+      : `<ul class="compact-priority-list">${priorityItems
+          .map(
+            (item) =>
+              `<li><span class="compact-pill">${escapeHtml(item.kind)}</span><span class="compact-target"><a href="${escapeHtml(item.anchor)}">${escapeHtml(item.id)}</a><span class="subvalue">${escapeHtml(item.label)} | ${escapeHtml(item.status)}</span></span><a class="compact-action" href="${escapeHtml(item.anchor)}">Open</a></li>`
+          )
+          .join("")}</ul>`;
+
+  return `<section id="compact" data-kairon-section="compact-overview" data-kairon-mobile="true" data-kairon-daemon-status="${escapeAttribute(daemonStatus)}" data-kairon-compact-priority-count="${escapeAttribute(String(priorityItems.length))}"><h2>Compact Overview</h2><div class="compact-overview"><div class="compact-grid">${cards.join("")}</div>${priorityList}</div></section>`;
+}
+
+function compactCard(
+  label: string,
+  value: string,
+  detail: string,
+  severity: "high" | "medium" | "ok",
+  anchor: string
+): string {
+  return `<a class="compact-card compact-status-${severity}" href="${escapeHtml(anchor)}"><span class="label">${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong><span class="subvalue">${escapeHtml(detail)}</span></a>`;
+}
+
+function daemonCompactSeverity(projection: BoardProjection): "high" | "medium" | "ok" {
+  const health = projection.runtime.daemonHealth;
+  if (
+    projection.runtime.runtimeLock.stale === true ||
+    health?.status === "fatal_error" ||
+    health?.status === "stale_lock" ||
+    health?.stale_lock_suspected === true ||
+    (health?.fatal_errors ?? 0) > 0
+  ) {
+    return "high";
+  }
+
+  return health?.status === "unknown" ? "medium" : "ok";
+}
+
+function daemonCompactDetail(projection: BoardProjection): string {
+  const health = projection.runtime.daemonHealth;
+  if (health?.last_error?.message !== undefined) {
+    return health.last_error.message;
+  }
+
+  if (health?.stop_reason !== undefined) {
+    return `stop=${health.stop_reason}`;
+  }
+
+  if (health?.last_action !== undefined) {
+    return `last=${health.last_action}`;
+  }
+
+  return projection.runtime.runtimeLock.locked ? "lock active" : "no daemon log";
 }
 
 function renderOperations(items: BoardOperationPriorityItem[]): string {
@@ -385,11 +521,11 @@ function section(
     return `<section${attributeText}><h2>${escapeHtml(title)}</h2><div class="empty">${escapeHtml(options.emptyText ?? "No items")}</div></section>`;
   }
 
-  return `<section${attributeText}><h2>${escapeHtml(title)}</h2><table><thead><tr>${headers
+  return `<section${attributeText}><h2>${escapeHtml(title)}</h2><div class="table-wrap"><table><thead><tr>${headers
     .map((header) => `<th>${escapeHtml(header)}</th>`)
     .join("")}</tr></thead><tbody>${rows
     .map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`)
-    .join("")}</tbody></table></section>`;
+    .join("")}</tbody></table></div></section>`;
 }
 
 function text(value: string | undefined): string {
