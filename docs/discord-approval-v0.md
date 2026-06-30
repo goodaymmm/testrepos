@@ -50,6 +50,21 @@ MVP は Discord Gateway を優先する。
 Gateway で interaction を受けた場合も、Discord への interaction response は HTTP で返す。
 処理は短時間で ack し、実際の state update は内部 queue に渡す。
 
+### HTTP Interactions Endpoint
+
+HTTP Interactions は Gateway を使わず、Discord Developer Portal の Interactions Endpoint URL から POST を受ける構成で使う。
+Kairon の初期実装では、公開 HTTP server や cloud deploy は含めず、以下を満たす handler 境界を提供する。
+
+- `X-Signature-Ed25519` と `X-Signature-Timestamp` を Discord public key で検証する。
+- raw body を署名検証に使い、JSON parse 後の再シリアライズ結果では検証しない。
+- `type=1` の PING には PONG を返す。
+- approval button / modal / `/kairon status` / `/kairon leave` は Gateway と同じ正規化関数へ渡す。
+- actor allowlist、guild、channel、nonce、idempotency、high-risk policy は Gateway と同じ判定を使う。
+- public endpoint 公開、TLS、reverse proxy、serverless adapter、secret manager 連携は後続 phase とする。
+
+HTTP Interactions を本番運用する場合は `KAIRON_DISCORD_PUBLIC_KEY` 相当の値を secret として渡し、request body を middleware で加工しないこと。
+Express などを使う場合も、署名検証前に JSON body parser で raw body を失わないようにする。
+
 ## Discord Message Design
 
 Discord 上の approval message は、外出時に判断できる情報だけに絞る。
