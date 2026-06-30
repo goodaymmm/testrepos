@@ -102,6 +102,11 @@ describe("board projection", () => {
         }
       }
     });
+    expect(projection.runtime.daemonHealth).toMatchObject({
+      status: "fatal_error",
+      fatal_errors: 1,
+      stop_reason: "fatal_error"
+    });
     expect(projection.queue.recent[0]).toMatchObject({
       id: "JOB-0001",
       type: "agent.run",
@@ -230,6 +235,16 @@ describe("board projection", () => {
     const html = renderBoardHtml(projection);
 
     expect(html).toContain("<title>Kairon Board</title>");
+    expect(html).toContain('href="#compact"');
+    expect(html).toContain('id="compact"');
+    expect(html).toContain('data-kairon-section="compact-overview"');
+    expect(html).toContain('data-kairon-mobile="true"');
+    expect(html).toContain('data-kairon-daemon-status="fatal_error"');
+    expect(html).toContain('data-kairon-compact-priority-count="5"');
+    expect(html).toContain("Compact Overview");
+    expect(html).toContain("compact-status-high");
+    expect(html).toContain("Daemon");
+    expect(html).toContain("token=[redacted] crashed");
     expect(html).toContain('href="#operations"');
     expect(html).toContain('id="operations"');
     expect(html).toContain('data-kairon-section="operations-priority"');
@@ -260,6 +275,7 @@ describe("board projection", () => {
     expect(html).toContain("#approval-APR-0001");
     expect(html).toContain("status message updated");
     expect(html).toContain("failedRuns");
+    expect(html).toContain('class="table-wrap"');
     expect(html).toContain("/projection.json");
     expect(html).not.toContain("FULL_DIFF_SHOULD_NOT_APPEAR");
     expect(html).not.toContain("FULL_STDOUT_SHOULD_NOT_APPEAR");
@@ -318,6 +334,10 @@ describe("board projection", () => {
     const html = renderBoardHtml(projection);
 
     expect(projection.operations.priority).toHaveLength(0);
+    expect(html).toContain('id="compact"');
+    expect(html).toContain('data-kairon-section="compact-overview"');
+    expect(html).toContain('data-kairon-compact-priority-count="0"');
+    expect(html).toContain("No compact priority items");
     expect(html).toContain('id="operations"');
     expect(html).toContain('data-kairon-section="operations-priority"');
     expect(html).toContain('data-kairon-priority-count="0"');
@@ -348,6 +368,8 @@ describe("board projection", () => {
       expect(htmlResponse.status).toBe(200);
       const html = await htmlResponse.text();
       expect(html).toContain("Kairon Board");
+      expect(html).toContain('data-kairon-section="compact-overview"');
+      expect(html).toContain('data-kairon-daemon-status="fatal_error"');
       expect(html).toContain('data-kairon-section="operations-priority"');
       expect(html).toContain('data-kairon-priority-count="5"');
       expect(html).toContain("Operations Priority");
@@ -641,6 +663,43 @@ async function seedBoardArtifacts(root: string): Promise<void> {
       commands_registered: true,
       updated_at: "2026-06-01T00:08:00.000Z"
     }
+  );
+  await mkdir(path.join(root, ".kairon", "runtime", "daemon"), {
+    recursive: true
+  });
+  await writeFile(
+    path.join(root, ".kairon", "runtime", "daemon", "2026-06-01.jsonl"),
+    [
+      JSON.stringify({
+        event: "started",
+        started_at: "2026-06-01T00:07:00.000Z",
+        created_at: "2026-06-01T00:07:00.000Z"
+      }),
+      JSON.stringify({
+        event: "tick",
+        action: "idle",
+        tick_count: 1,
+        idle_count: 1,
+        created_at: "2026-06-01T00:07:10.000Z"
+      }),
+      JSON.stringify({
+        event: "fatal_error",
+        error: {
+          code: "daemon_crash",
+          message: "token=SHOULD_NOT_LEAK crashed",
+          at: "2026-06-01T00:07:20.000Z"
+        },
+        created_at: "2026-06-01T00:07:20.000Z"
+      }),
+      JSON.stringify({
+        event: "stopped",
+        stop_reason: "fatal_error",
+        ticks: 1,
+        idle_ticks: 1,
+        created_at: "2026-06-01T00:07:30.000Z"
+      })
+    ].join("\n") + "\n",
+    "utf8"
   );
   await writeFile(
     path.join(root, ".kairon", "runtime", "discord", "approval-notifications.jsonl"),

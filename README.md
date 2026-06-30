@@ -234,7 +234,7 @@ kairon board export
 kairon board serve --host 127.0.0.1 --port 8787
 ```
 
-approval、queue、run、review、recovery、cleanup、Discord decision auditをredaction済みのread-only projectionとして出力します。`serve` はloopback hostだけを許可し、既定では `http://127.0.0.1:8787/` でHTML dashboardと `projection.json` を提供します。
+approval、queue、run、review、recovery、cleanup、Discord decision auditをredaction済みのread-only projectionとして出力します。HTML dashboardにはcompact viewがあり、狭い画面でもapproval、failed/setup_required run、recovery、daemon healthを先に確認できます。`serve` はloopback hostだけを許可し、既定では `http://127.0.0.1:8787/` でHTML dashboardと `projection.json` を提供します。
 
 ### Cleanup proposal
 
