@@ -36,6 +36,7 @@ import { closeActiveWork } from "./commands/leave.js";
 import { runMaintenance } from "./commands/maintenance.js";
 import { runMigrations } from "./commands/migrate.js";
 import {
+  compactRagIndexCommand,
   queryRagIndexCommand,
   refreshRagIndexCommand,
   statusRagIndexCommand
@@ -487,13 +488,25 @@ export function createProgram(): Command {
     .option("--type <type>", "Source type filter, comma- or whitespace-separated.")
     .option("--limit <count>", "Maximum candidate sources to refresh.")
     .option("--prune", "Remove missing, protected, or archived sources from the existing index.")
+    .option("--compact", "Also remove stale run/session artifacts while refreshing.")
+    .option("--max-artifact-age-days <days>", "Maximum age for run/session artifacts during compact.")
     .action(async (options: {
       since?: string;
       type?: string;
       limit?: string;
       prune?: boolean;
+      compact?: boolean;
+      maxArtifactAgeDays?: string;
     }) => {
       console.log(await refreshRagIndexCommand(process.cwd(), options));
+    });
+
+  rag
+    .command("compact")
+    .description("Compact the local RAG index without refreshing source content.")
+    .option("--max-artifact-age-days <days>", "Maximum age for run/session artifacts during compact.")
+    .action(async (options: { maxArtifactAgeDays?: string }) => {
+      console.log(await compactRagIndexCommand(process.cwd(), options));
     });
 
   rag

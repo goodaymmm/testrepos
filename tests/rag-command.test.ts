@@ -1,8 +1,9 @@
-import { mkdir, utimes, writeFile } from "node:fs/promises";
+import { mkdir, unlink, utimes, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeProject } from "../src/cli/commands/init.js";
 import {
+  compactRagIndexCommand,
   queryRagIndexCommand,
   refreshRagIndexCommand,
   statusRagIndexCommand
@@ -32,6 +33,7 @@ describe("RAG CLI commands", () => {
     expect(refreshOutput).toMatch(/chunks=\d+/);
     expect(refreshOutput).toMatch(/skipped_protected=\d+/);
     expect(refreshOutput).toMatch(/pruned_sources=\d+/);
+    expect(refreshOutput).toMatch(/pruned_ephemeral_sources=\d+/);
 
     const statusOutput = await statusRagIndexCommand(root);
     expect(statusOutput).toContain("exists=true");
@@ -39,6 +41,26 @@ describe("RAG CLI commands", () => {
     expect(statusOutput).toMatch(/index_size_bytes=\d+/);
     expect(statusOutput).toContain("last_refresh_at=");
     expect(statusOutput).toContain("updated_at=");
+  });
+
+  it("compacts the index and reports the last compaction in status", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    const staleDoc = path.join(root, "docs", "stale-rag.md");
+    await writeFile(staleDoc, "Stale RAG source should be compacted.", "utf8");
+    await refreshRagIndexCommand(root);
+    await unlink(staleDoc);
+
+    const compactOutput = await compactRagIndexCommand(root);
+    expect(compactOutput).toContain("Kairon RAG index compacted.");
+    expect(compactOutput).toContain("exists=true");
+    expect(compactOutput).toContain("removed_missing_sources=1");
+    expect(compactOutput).toContain("compacted_at=");
+
+    const statusOutput = await statusRagIndexCommand(root);
+    expect(statusOutput).toContain("last_compacted_at=");
+    expect(statusOutput).toContain("last_compaction_removed_sources=1");
   });
 
   it("refreshes a scoped subset while retaining the previous index", async () => {

@@ -55,6 +55,10 @@ export type DailyMaintenanceResult = {
     | "skipped_source_count"
     | "skipped_protected_count"
     | "pruned_source_count"
+    | "pruned_missing_source_count"
+    | "pruned_excluded_source_count"
+    | "pruned_archived_source_count"
+    | "pruned_ephemeral_source_count"
   >;
   rag_index_skipped?: RagIndexSkipped;
 };
@@ -85,7 +89,11 @@ export async function runDailyMaintenance(
   const ragEnabled = await isRagEnabled(projectRoot);
   const shouldBuildRag = request.forceRagIndex === true || ragEnabled;
   const ragIndex = shouldBuildRag
-    ? await buildRagIndex(projectRoot, { now: () => now })
+    ? await buildRagIndex(projectRoot, {
+        now: () => now,
+        prune: true,
+        compact: true
+      })
     : undefined;
 
   return {
@@ -114,7 +122,11 @@ export async function runDailyMaintenance(
             chunk_count: ragIndex.chunk_count,
             skipped_source_count: ragIndex.skipped_source_count,
             skipped_protected_count: ragIndex.skipped_protected_count,
-            pruned_source_count: ragIndex.pruned_source_count
+            pruned_source_count: ragIndex.pruned_source_count,
+            pruned_missing_source_count: ragIndex.pruned_missing_source_count,
+            pruned_excluded_source_count: ragIndex.pruned_excluded_source_count,
+            pruned_archived_source_count: ragIndex.pruned_archived_source_count,
+            pruned_ephemeral_source_count: ragIndex.pruned_ephemeral_source_count
           },
     rag_index_skipped:
       ragIndex === undefined
