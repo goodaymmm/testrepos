@@ -27,6 +27,14 @@ export type ApprovalDecisionCommand = CommandOrigin & {
   reason?: string;
 };
 
+export type ApprovalConfirmationCommand = CommandOrigin & {
+  type: "approval.confirmation.request";
+  approval_id: string;
+  action: "approve";
+  confirmation: "board" | "local";
+  reason: string;
+};
+
 export type ApprovalSnoozeCommand = CommandOrigin & {
   type: "approval.snooze";
   approval_id: string;
@@ -45,6 +53,7 @@ export type RuntimeStatusCommand = CommandOrigin & {
 };
 
 export type KaironCommand =
+  | ApprovalConfirmationCommand
   | ApprovalDecisionCommand
   | ApprovalSnoozeCommand
   | CloseActiveWorkCommand

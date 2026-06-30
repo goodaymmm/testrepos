@@ -119,6 +119,50 @@ describe("StateApplier", () => {
     });
   });
 
+  it("materializes approval confirmation requests", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const applier = new StateApplier(root);
+
+    await applier.appendEvent({
+      type: "approval.requested",
+      task_id: "TASK-0001",
+      payload: {
+        approval: {
+          id: "APR-HIGH",
+          type: "deploy",
+          title: "Deploy approval"
+        }
+      }
+    });
+    await applier.applyCommand({
+      type: "approval.confirmation.request",
+      approval_id: "APR-HIGH",
+      action: "approve",
+      confirmation: "board",
+      reason: "board_confirmation_required",
+      actor: { mapped_user_id: "user:owner" },
+      discord: { interaction_id: "i1" },
+      received_at: "2026-05-26T09:00:00.000Z"
+    });
+
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "approvals", "APR-HIGH.json"))
+    ).resolves.toMatchObject({
+      status: "confirmation_required",
+      confirmation: {
+        status: "required",
+        action: "approve",
+        required_by: "board",
+        reason: "board_confirmation_required",
+        source: "discord",
+        discord: {
+          interaction_id: "i1"
+        }
+      }
+    });
+  });
+
   it("preserves high-risk approval metadata when materializing requests", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

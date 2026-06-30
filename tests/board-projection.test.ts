@@ -213,6 +213,50 @@ describe("board projection", () => {
     });
   });
 
+  it("treats confirmation-required approvals as board attention items", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeJsonFileAtomic(path.join(root, ".kairon", "approvals", "APR-CONFIRM.json"), {
+      schema_version: "0.1",
+      id: "APR-CONFIRM",
+      status: "confirmation_required",
+      type: "deploy",
+      title: "Confirm deploy",
+      confirmation: {
+        status: "required",
+        action: "approve",
+        required_by: "board",
+        reason: "board_confirmation_required"
+      },
+      created_at: "2026-06-01T00:00:00.000Z",
+      updated_at: "2026-06-01T00:01:00.000Z"
+    });
+
+    const projection = await createBoardProjection(root, {
+      now: () => new Date("2026-06-01T00:02:00.000Z")
+    });
+
+    expect(projection.approvals.pending).toBe(1);
+    expect(projection.approvals.recent[0]).toMatchObject({
+      id: "APR-CONFIRM",
+      status: "confirmation_required",
+      confirmation_required_by: "board",
+      confirmation_action: "approve",
+      confirmation_reason: "board_confirmation_required"
+    });
+    expect(projection.operations).toMatchObject({
+      pending_approvals: 1,
+      attention_total: 1
+    });
+    expect(projection.operations.priority).toEqual([
+      expect.objectContaining({
+        kind: "approval",
+        id: "APR-CONFIRM",
+        status: "confirmation_required"
+      })
+    ]);
+  });
+
   it("formats the CLI export result", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

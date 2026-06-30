@@ -31,6 +31,16 @@ export type Outbox = {
 
 export type InternalCommand =
   | {
+      type: "approval.confirmation.request";
+      approval_id: string;
+      action: "approve";
+      confirmation: "board" | "local";
+      reason: string;
+      actor?: unknown;
+      discord?: Record<string, unknown>;
+      received_at?: string;
+    }
+  | {
       type: "approval.decide";
       approval_id: string;
       decision: "approve" | "reject" | "request_changes";
@@ -112,6 +122,23 @@ export class StateApplier {
   }
 
   async applyCommand(command: InternalCommand): Promise<ApplyResult> {
+    if (command.type === "approval.confirmation.request") {
+      return this.applyEvents([
+        {
+          type: "approval.confirmation_requested",
+          payload: {
+            approval_id: command.approval_id,
+            action: command.action,
+            confirmation: command.confirmation,
+            reason: command.reason,
+            actor: command.actor,
+            discord: command.discord
+          },
+          created_at: command.received_at
+        }
+      ]);
+    }
+
     if (command.type === "approval.decide") {
       return this.applyEvents([
         {

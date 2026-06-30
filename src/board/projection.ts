@@ -163,6 +163,9 @@ export type BoardApprovalSummary = {
   actions?: ApprovalAction[];
   decision?: string;
   reason?: string;
+  confirmation_required_by?: string;
+  confirmation_action?: string;
+  confirmation_reason?: string;
   snooze_until?: string;
   created_at?: string;
   updated_at?: string;
@@ -469,7 +472,7 @@ export async function createBoardProjection(
       recent: runSummaries.slice(0, recentLimit)
     },
     approvals: {
-      pending: approvals.filter((approval) => approval.status === "pending").length,
+      pending: approvalSummaries.filter(isOpenApprovalSummary).length,
       recent: approvalSummaries.slice(0, recentLimit)
     },
     reviews: {
@@ -728,6 +731,7 @@ function summarizeTask(task: TaskRecord): BoardTaskSummary {
 function summarizeApproval(approval: ApprovalRecord): BoardApprovalSummary {
   const title = readString(approval.title);
   const reason = readString(approval.reason);
+  const confirmation = readRecord(approval.confirmation);
 
   return compact({
     id: approval.id,
@@ -739,6 +743,9 @@ function summarizeApproval(approval: ApprovalRecord): BoardApprovalSummary {
     actions: approval.actions ?? approval.allowed_actions,
     decision: readString(approval.decision),
     reason: reason === undefined ? undefined : sanitizeInline(reason),
+    confirmation_required_by: readString(confirmation?.required_by),
+    confirmation_action: readString(confirmation?.action),
+    confirmation_reason: readString(confirmation?.reason),
     snooze_until: readString(approval.snooze_until),
     created_at: readString(approval.created_at),
     updated_at: readString(approval.updated_at)
@@ -823,7 +830,7 @@ function summarizeOperations(input: {
   gitTransactions: BoardGitTransactionSummary[];
   recentLimit: number;
 }): BoardOperationsSummary {
-  const pendingApprovals = input.approvals.filter((approval) => approval.status === "pending");
+  const pendingApprovals = input.approvals.filter(isOpenApprovalSummary);
   const failedRuns = input.runs.filter((run) => run.status === "failed" || run.outbox_status === "failed");
   const setupRequiredRuns = input.runs.filter((run) =>
     ["setup_required", "permission_required", "rate_limited", "usage_limited", "timeout", "no_output"].includes(
@@ -907,6 +914,10 @@ function summarizeOperations(input: {
       approvalRequiredTransactions.length,
     priority: priority.slice(0, input.recentLimit)
   };
+}
+
+function isOpenApprovalSummary(approval: BoardApprovalSummary): boolean {
+  return ["pending", "snoozed", "confirmation_required"].includes(approval.status);
 }
 
 function summarizeCleanupProposal(
@@ -1188,6 +1199,12 @@ function compact<T extends Record<string, unknown>>(value: T): T {
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 function readBoolean(value: unknown): boolean | undefined {

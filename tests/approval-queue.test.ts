@@ -14,7 +14,7 @@ import { WorkQueue } from "../src/queue/work-queue.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("ApprovalQueue", () => {
-  it("lists pending approvals by default", async () => {
+  it("lists open approvals by default", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
     await writeApproval(root, {
@@ -31,12 +31,25 @@ describe("ApprovalQueue", () => {
       title: "Deploy app",
       created_at: "2026-05-26T00:00:00.000Z"
     });
+    await writeApproval(root, {
+      id: "APR-0003",
+      status: "confirmation_required",
+      type: "deploy",
+      title: "Confirm deploy",
+      created_at: "2026-05-26T02:00:00.000Z",
+      confirmation: {
+        required_by: "board"
+      }
+    });
 
     const approvals = await new ApprovalQueue(root).list();
 
-    expect(approvals).toHaveLength(1);
+    expect(approvals).toHaveLength(2);
     expect(approvals[0]).toMatchObject({ id: "APR-0001" });
     await expect(listApprovalsCommand(root)).resolves.toContain("id=APR-0001");
+    await expect(listApprovalsCommand(root)).resolves.toContain(
+      "id=APR-0003 status=confirmation_required type=deploy confirmation=board"
+    );
   });
 
   it("shows sanitized details without raw diff, logs, or secrets", async () => {
@@ -136,15 +149,21 @@ describe("ApprovalQueue", () => {
     ]);
   });
 
-  it("allows local CLI approval for high-risk approvals", async () => {
+  it("allows local CLI approval for confirmation-required high-risk approvals", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
     await writeApproval(root, {
       id: "APR-HIGH-LOCAL",
-      status: "pending",
+      status: "confirmation_required",
       type: "deploy",
       risk_level: "high",
-      actions: ["approve", "reject", "request_changes"]
+      actions: ["approve", "reject", "request_changes"],
+      confirmation: {
+        status: "required",
+        action: "approve",
+        required_by: "board",
+        reason: "board_confirmation_required"
+      }
     });
 
     await expect(
@@ -158,7 +177,10 @@ describe("ApprovalQueue", () => {
     ).resolves.toMatchObject({
       status: "decided",
       decision: "approve",
-      reason: "local re-auth completed"
+      reason: "local re-auth completed",
+      confirmation: {
+        status: "confirmed"
+      }
     });
   });
 
@@ -228,7 +250,7 @@ describe("ApprovalQueue", () => {
           "approval_id=APR-0001",
           "reason=not_pending",
           "status=decided",
-          "message=Approval APR-0001 is not pending or snoozed. Current status: decided"
+          "message=Approval APR-0001 is not pending, snoozed, or confirmation_required. Current status: decided"
         ].join("\n")
       );
       expect(process.exitCode).toBe(APPROVAL_COMMAND_ERROR_EXIT_CODE);

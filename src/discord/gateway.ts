@@ -821,6 +821,7 @@ async function applyGatewayInteractionSideEffects(
   }
 
   if (
+    result.command.type !== "approval.confirmation.request" &&
     result.command.type !== "approval.decide" &&
     result.command.type !== "approval.snooze" &&
     result.command.type !== "runtime.status" &&
@@ -888,10 +889,7 @@ async function applyGatewayInteractionSideEffects(
     }
 
     const sideEffect: GatewayInteractionSideEffect = {
-      content:
-        result.command.type === "approval.snooze"
-          ? `Kairon approval snoozed: ${result.command.approval_id}`
-          : `Kairon approval decided: ${result.command.approval_id}`,
+      content: formatApprovalCommandSideEffectContent(result.command),
       command_status: "completed",
       applied_event_ids: applied.appliedEventIds,
       message_update_status: messageUpdateStatus,
@@ -913,6 +911,24 @@ async function applyGatewayInteractionSideEffects(
       error: sanitizedError
     };
   }
+}
+
+function formatApprovalCommandSideEffectContent(
+  command: Extract<NormalizedDiscordCommand, { accepted: true }>["command"]
+): string {
+  if (command.type === "approval.confirmation.request") {
+    return `Kairon approval confirmation required: ${command.approval_id}`;
+  }
+
+  if (command.type === "approval.snooze") {
+    return `Kairon approval snoozed: ${command.approval_id}`;
+  }
+
+  if (command.type === "approval.decide") {
+    return `Kairon approval decided: ${command.approval_id}`;
+  }
+
+  return `Kairon command completed: ${command.type}`;
 }
 
 async function acknowledgeInteraction(

@@ -71,7 +71,8 @@ export async function auditDiscordDecisionInteraction(
   const command =
     input.result.accepted &&
     (input.result.command.type === "approval.decide" ||
-      input.result.command.type === "approval.snooze")
+      input.result.command.type === "approval.snooze" ||
+      input.result.command.type === "approval.confirmation.request")
       ? input.result.command
       : undefined;
   const reason =

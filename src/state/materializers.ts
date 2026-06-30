@@ -20,6 +20,9 @@ export async function materializeEvent(
     case "approval.requested":
       await materializeApprovalRequested(projectRoot, event);
       return;
+    case "approval.confirmation_requested":
+      await materializeApprovalConfirmationRequested(projectRoot, event);
+      return;
     case "approval.decided":
       await materializeApprovalDecided(projectRoot, event);
       return;
@@ -142,6 +145,13 @@ async function materializeApprovalDecided(
     reason: event.payload?.reason,
     decided_by: event.payload?.actor,
     decided_at: event.created_at,
+    confirmation: isRecord(current.confirmation)
+      ? {
+          ...current.confirmation,
+          status: "confirmed",
+          confirmed_at: event.created_at
+        }
+      : current.confirmation,
     updated_at: event.created_at
   };
   await writeJsonFileAtomic(approvalPath, updated);
@@ -156,6 +166,50 @@ async function materializeApprovalDecided(
       decidedAt: event.created_at
     });
   }
+}
+
+async function materializeApprovalConfirmationRequested(
+  projectRoot: string,
+  event: KaironEvent
+): Promise<void> {
+  const approvalId = String(event.payload?.approval_id);
+
+  if (!approvalId || approvalId === "undefined") {
+    throw new Error("approval.confirmation_requested requires approval id");
+  }
+
+  const approvalPath = path.join(
+    getKaironPaths(projectRoot).approvalsDir,
+    `${approvalId}.json`
+  );
+
+  let current: Record<string, unknown> = {
+    schema_version: "0.1",
+    id: approvalId,
+    created_at: event.created_at
+  };
+
+  try {
+    current = await readJsonFile<Record<string, unknown>>(approvalPath);
+  } catch {
+    // A missing file is materialized as a minimal confirmation-required approval.
+  }
+
+  await writeJsonFileAtomic(approvalPath, {
+    ...current,
+    status: "confirmation_required",
+    confirmation: {
+      status: "required",
+      action: event.payload?.action,
+      required_by: event.payload?.confirmation,
+      reason: event.payload?.reason,
+      source: "discord",
+      requested_by: event.payload?.actor,
+      requested_at: event.created_at,
+      discord: event.payload?.discord
+    },
+    updated_at: event.created_at
+  });
 }
 
 async function materializeApprovalSnoozed(
@@ -236,4 +290,8 @@ async function materializeScheduleOverride(
     created_at: event.created_at,
     ...(event.payload ?? {})
   });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

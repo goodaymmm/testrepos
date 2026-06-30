@@ -228,6 +228,12 @@ function defaultQueueHandlers(
 
   return {
     commands: {
+      "approval.confirmation.request": async (envelope) => {
+        const result = await new StateApplier(projectRoot).applyCommand(
+          envelope.command as InternalCommand
+        );
+        return { applied_event_ids: result.appliedEventIds };
+      },
       "approval.decide": async (envelope) => {
         const result = await new StateApplier(projectRoot).applyCommand(
           envelope.command as InternalCommand

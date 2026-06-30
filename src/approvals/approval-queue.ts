@@ -58,10 +58,16 @@ export class ApprovalQueue {
   ) {}
 
   async list(options: ApprovalListOptions = {}): Promise<ApprovalRecord[]> {
-    const status = options.status ?? "pending";
+    const status = options.status ?? "open";
     const approvals = await this.readApprovals();
     return approvals
-      .filter((approval) => status === "all" || approval.status === status)
+      .filter((approval) =>
+        status === "all"
+          ? true
+          : status === "open"
+            ? isOpenApprovalStatus(approval.status)
+            : approval.status === status
+      )
       .sort(compareApprovalRecords);
   }
 
@@ -159,7 +165,9 @@ export class ApprovalNotPendingError extends Error {
     readonly approvalId: string,
     readonly status: string
   ) {
-    super(`Approval ${approvalId} is not pending or snoozed. Current status: ${status}`);
+    super(
+      `Approval ${approvalId} is not pending, snoozed, or confirmation_required. Current status: ${status}`
+    );
     this.name = "ApprovalNotPendingError";
   }
 }
@@ -187,6 +195,7 @@ export function formatApprovalList(approvals: ApprovalRecord[]): string {
         `status=${approval.status}`,
         approval.type === undefined ? null : `type=${approval.type}`,
         approval.task_id === undefined ? null : `task=${approval.task_id}`,
+        formatApprovalConfirmationSummary(approval),
         approval.title === undefined ? null : `title=${sanitizeInline(approval.title)}`
       ]
         .filter((part): part is string => part !== null)
@@ -250,9 +259,13 @@ export function sanitizeApprovalForDisplay(value: unknown): unknown {
 }
 
 function assertApprovalPending(approval: ApprovalRecord): void {
-  if (!["pending", "snoozed"].includes(approval.status)) {
+  if (!isOpenApprovalStatus(approval.status)) {
     throw new ApprovalNotPendingError(approval.id, approval.status);
   }
+}
+
+function isOpenApprovalStatus(status: string): boolean {
+  return ["pending", "snoozed", "confirmation_required"].includes(status);
 }
 
 function assertActionAllowed(approval: ApprovalRecord, action: ApprovalAction): void {
@@ -268,6 +281,22 @@ function compareApprovalRecords(left: ApprovalRecord, right: ApprovalRecord): nu
 
 function defaultSnoozeUntil(now: Date): string {
   return new Date(now.getTime() + 60 * 60 * 1000).toISOString();
+}
+
+function formatApprovalConfirmationSummary(approval: ApprovalRecord): string | null {
+  if (approval.status !== "confirmation_required") {
+    return null;
+  }
+
+  const confirmation = approval.confirmation;
+  if (confirmation === null || typeof confirmation !== "object") {
+    return "confirmation=required";
+  }
+
+  const requiredBy = (confirmation as Record<string, unknown>).required_by;
+  return typeof requiredBy === "string"
+    ? `confirmation=${requiredBy}`
+    : "confirmation=required";
 }
 
 function sanitizeInline(value: string): string {
