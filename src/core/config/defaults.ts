@@ -180,6 +180,22 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           "force_push",
           "branch_delete"
         ],
+        require_board_confirmation_for: [
+          "deploy",
+          "secret_change",
+          "billing_change",
+          "protected_branch_push",
+          "git_protected_branch_push",
+          "force_push",
+          "branch_delete"
+        ],
+        require_local_confirmation_for: [
+          "merge",
+          "protected_branch_push",
+          "git_protected_branch_push",
+          "force_push",
+          "branch_delete"
+        ],
         notify_on: ["approval.requested", "approval.decided", "run.failed"],
         display_mode: "schedule_or_manual"
       },

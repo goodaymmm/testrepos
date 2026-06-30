@@ -211,11 +211,17 @@ Board linkはloopback URLを前提にし、スマートフォン用Boardやpubli
   "approval_policy": {
     "default_actions": ["approve", "reject", "request_changes", "snooze"],
     "require_board_reauth_for": ["deploy", "secret_change", "billing_change"],
+    "require_board_confirmation_for": ["deploy", "secret_change", "billing_change", "protected_branch_push", "force_push", "branch_delete"],
+    "require_local_confirmation_for": ["merge", "protected_branch_push", "force_push", "branch_delete"],
     "notify_on": ["approval.requested", "approval.decided", "run.failed"],
     "display_mode": "schedule_or_manual"
   }
 }
 ```
+
+`require_board_confirmation_for` または `require_local_confirmation_for` に該当する approval で Discord の approve が押された場合、Kairon は即時 `approval.decided` にしない。
+代わりに `approval.confirmation_requested` event を保存し、approval status を `confirmation_required` にする。
+最終承認は Board で内容を再確認した後、または local CLI の `kairon approval decide <approval-id> --action approve` で行う。
 
 ## Board UI との分担
 

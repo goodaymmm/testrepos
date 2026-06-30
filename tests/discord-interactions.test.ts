@@ -196,8 +196,11 @@ describe("Discord interactions", () => {
         custom_id: "kr:v1:apr:APR-HIGH:approve:n42"
       })
     ).resolves.toMatchObject({
-      ok: false,
-      reason: "board_reauth_required"
+      ok: true,
+      confirmation: {
+        required_by: "board",
+        reason: "board_confirmation_required"
+      }
     });
     await expect(
       normalizeDiscordApprovalInteraction(root, gateway, {
@@ -209,11 +212,17 @@ describe("Discord interactions", () => {
         custom_id: "kr:v1:apr:APR-HIGH:approve:n42"
       })
     ).resolves.toMatchObject({
-      accepted: false,
+      accepted: true,
       duplicate: false,
-      reason: "board_reauth_required"
+      command: {
+        type: "approval.confirmation.request",
+        approval_id: "APR-HIGH",
+        action: "approve",
+        confirmation: "board",
+        reason: "board_confirmation_required"
+      }
     });
-    await expect(new CommandInbox(root).list()).resolves.toHaveLength(0);
+    await expect(new CommandInbox(root).list()).resolves.toHaveLength(1);
 
     await expect(
       normalizeDiscordApprovalInteraction(root, gateway, {
@@ -251,7 +260,7 @@ describe("Discord interactions", () => {
         reason: "Attach rollout evidence."
       }
     });
-    await expect(new CommandInbox(root).list()).resolves.toHaveLength(2);
+    await expect(new CommandInbox(root).list()).resolves.toHaveLength(3);
   });
 
   it("allows low-risk Discord approve interactions", async () => {

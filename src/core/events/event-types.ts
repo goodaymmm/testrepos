@@ -2,6 +2,7 @@ export type KaironEventType =
   | "task.created"
   | "message.created"
   | "approval.requested"
+  | "approval.confirmation_requested"
   | "approval.decided"
   | "approval.snoozed"
   | "run.completed"
@@ -12,6 +13,7 @@ export const kaironEventTypes = [
   "task.created",
   "message.created",
   "approval.requested",
+  "approval.confirmation_requested",
   "approval.decided",
   "approval.snoozed",
   "run.completed",

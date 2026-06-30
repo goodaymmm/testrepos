@@ -48,11 +48,17 @@ export type DiscordValidationResult =
   | {
       ok: true;
       parsed?: ParsedCustomId & { kind: "approval" };
+      confirmation?: DiscordApprovalConfirmationRequirement;
     }
   | {
       ok: false;
       reason: string;
     };
+
+export type DiscordApprovalConfirmationRequirement = {
+  required_by: "board" | "local";
+  reason: "board_confirmation_required" | "local_confirmation_required";
+};
 
 export type NormalizedDiscordCommand =
   | {
@@ -85,6 +91,8 @@ type ApprovalRecord = {
 type NotificationsPolicyConfig = {
   approval_policy?: {
     require_board_reauth_for?: string[];
+    require_board_confirmation_for?: string[];
+    require_local_confirmation_for?: string[];
   };
 };
 
@@ -98,6 +106,25 @@ const defaultHighRiskApprovalTypes = [
   "deploy",
   "secret_change",
   "billing_change",
+  "merge",
+  "protected_branch_push",
+  "git_protected_branch_push",
+  "force_push",
+  "branch_delete"
+];
+
+const defaultBoardConfirmationApprovalTypes = [
+  "deploy",
+  "secret_change",
+  "billing_change",
+  "protected_branch_push",
+  "git_protected_branch_push",
+  "force_push",
+  "branch_delete"
+];
+
+const defaultLocalConfirmationApprovalTypes = [
+  "merge",
   "protected_branch_push",
   "git_protected_branch_push",
   "force_push",
@@ -182,12 +209,13 @@ export async function validateDiscordApprovalInteraction(
     return { ok: false, reason: "approval action is not allowed" };
   }
 
-  const policy = await validateDiscordApprovalPolicy(projectRoot, approval, parsed.action);
-  if (!policy.ok) {
-    return policy;
-  }
+  const confirmation = await resolveDiscordApprovalConfirmationRequirement(
+    projectRoot,
+    approval,
+    parsed.action
+  );
 
-  return { ok: true, parsed };
+  return confirmation === null ? { ok: true, parsed } : { ok: true, parsed, confirmation };
 }
 
 export async function normalizeDiscordApprovalInteraction(
@@ -230,6 +258,7 @@ export async function normalizeDiscordApprovalInteraction(
       reason: "approval custom_id parse failed"
     };
   }
+
   const actionKey = discordApprovalActionKey({
     approvalId: parsed.approval_id,
     action: parsed.action,
@@ -247,7 +276,10 @@ export async function normalizeDiscordApprovalInteraction(
     };
   }
 
-  const command = buildApprovalCommand(parsed, interaction);
+  const command =
+    validation.confirmation === undefined
+      ? buildApprovalCommand(parsed, interaction)
+      : buildApprovalConfirmationCommand(parsed, validation.confirmation, interaction);
   const inboxResult = await new CommandInbox(projectRoot).enqueue(command, {
     idempotencyKey: interactionKey
   });
@@ -358,6 +390,25 @@ export async function normalizeDiscordStatusCommand(
     command,
     command_id: inboxResult.envelope.command_id,
     idempotency_key: key
+  };
+}
+
+function buildApprovalConfirmationCommand(
+  parsed: ParsedCustomId & { kind: "approval" },
+  confirmation: DiscordApprovalConfirmationRequirement,
+  interaction: DiscordInteractionInput
+): KaironCommand {
+  return {
+    type: "approval.confirmation.request",
+    source: "discord",
+    approval_id: parsed.approval_id,
+    action: "approve",
+    confirmation: confirmation.required_by,
+    reason: confirmation.reason,
+    actor: buildActor(interaction),
+    discord: buildDiscordMetadata(interaction),
+    nonce: parsed.nonce,
+    received_at: interaction.received_at ?? new Date().toISOString()
   };
 }
 
@@ -488,53 +539,82 @@ function resolveApprovalActions(approval: ApprovalRecord): ApprovalAction[] {
   });
 }
 
-async function validateDiscordApprovalPolicy(
+async function resolveDiscordApprovalConfirmationRequirement(
   projectRoot: string,
   approval: ApprovalRecord,
   action: ApprovalAction
-): Promise<{ ok: true } | { ok: false; reason: string }> {
+): Promise<DiscordApprovalConfirmationRequirement | null> {
   if (action !== "approve") {
-    return { ok: true };
-  }
-
-  if (!(await requiresBoardReauth(projectRoot, approval))) {
-    return { ok: true };
-  }
-
-  return { ok: false, reason: "board_reauth_required" };
-}
-
-async function requiresBoardReauth(
-  projectRoot: string,
-  approval: ApprovalRecord
-): Promise<boolean> {
-  if (approval.risk_level === "high" || approval.risk_level === "critical") {
-    return true;
+    return null;
   }
 
   const approvalType = approval.type;
-  if (approvalType === undefined) {
-    return false;
+  const policies = await readApprovalConfirmationPolicies(projectRoot);
+
+  if (approvalType !== undefined) {
+    if (policies.board.has(approvalType)) {
+      return {
+        required_by: "board",
+        reason: "board_confirmation_required"
+      };
+    }
+
+    if (policies.local.has(approvalType)) {
+      return {
+        required_by: "local",
+        reason: "local_confirmation_required"
+      };
+    }
   }
 
-  const highRiskTypes = await readHighRiskApprovalTypes(projectRoot);
-  return highRiskTypes.has(approvalType);
+  if (approval.risk_level === "high" || approval.risk_level === "critical") {
+    return {
+      required_by: "board",
+      reason: "board_confirmation_required"
+    };
+  }
+
+  return null;
 }
 
-async function readHighRiskApprovalTypes(projectRoot: string): Promise<Set<string>> {
+async function readApprovalConfirmationPolicies(projectRoot: string): Promise<{
+  board: Set<string>;
+  local: Set<string>;
+}> {
   const [notifications, policies] = await Promise.all([
     readOptionalConfig<NotificationsPolicyConfig>(projectRoot, "notifications.json"),
     readOptionalConfig<PoliciesConfig>(projectRoot, "policies.json")
   ]);
-  const configuredBoardReauth = notifications?.approval_policy?.require_board_reauth_for ?? [];
-  const configuredApprovalRequired = (policies?.git?.require_approval_for ?? []).filter(
-    (type) => type !== "merge"
-  );
+  const configuredBoardConfirmation =
+    notifications?.approval_policy?.require_board_confirmation_for ?? [];
+  const configuredBoardReauth =
+    notifications?.approval_policy?.require_board_reauth_for ?? [];
+  const configuredLocalConfirmation =
+    notifications?.approval_policy?.require_local_confirmation_for ?? [];
+  const configuredApprovalRequired = policies?.git?.require_approval_for ?? [];
 
+  return {
+    board: new Set([
+      ...defaultBoardConfirmationApprovalTypes,
+      ...configuredBoardReauth,
+      ...configuredBoardConfirmation
+    ]),
+    local: new Set([
+      ...defaultLocalConfirmationApprovalTypes,
+      ...configuredApprovalRequired,
+      ...configuredLocalConfirmation
+    ])
+  };
+}
+
+export async function readHighRiskApprovalTypes(
+  projectRoot: string
+): Promise<Set<string>> {
+  const policies = await readApprovalConfirmationPolicies(projectRoot);
   return new Set([
     ...defaultHighRiskApprovalTypes,
-    ...configuredBoardReauth,
-    ...configuredApprovalRequired
+    ...policies.board,
+    ...policies.local
   ]);
 }
 

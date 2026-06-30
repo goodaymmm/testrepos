@@ -1091,14 +1091,20 @@ describe("prepareDiscordGateway", () => {
     await client.emitInteraction(interaction);
 
     expect(interaction.editedReply).toBe(
-      "Kairon command was rejected: board_reauth_required"
+      "Kairon approval confirmation required: APR-HIGH"
     );
     await expect(
       readJsonFile(path.join(root, ".kairon", "approvals", "APR-HIGH.json"))
     ).resolves.toMatchObject({
-      status: "pending"
+      status: "confirmation_required",
+      confirmation: {
+        status: "required",
+        action: "approve",
+        required_by: "board",
+        reason: "board_confirmation_required"
+      }
     });
-    await expect(new CommandInbox(root).list("completed")).resolves.toHaveLength(0);
+    await expect(new CommandInbox(root).list("completed")).resolves.toHaveLength(1);
     const audit = await readJsonLines<Record<string, unknown>>(
       path.join(root, ".kairon", "runtime", "discord", "decision-interactions.jsonl")
     );
@@ -1107,8 +1113,8 @@ describe("prepareDiscordGateway", () => {
         interaction_id: "approve-high-risk-1",
         approval_id: "APR-HIGH",
         decision: "approve",
-        status: "rejected",
-        reason: "board_reauth_required"
+        status: "applied",
+        decision_reason: "board_confirmation_required"
       })
     ]);
 
