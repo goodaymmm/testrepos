@@ -5,7 +5,12 @@ import { describe, expect, it } from "vitest";
 import { createTempProject } from "./test-utils.js";
 
 const powershell = findPowerShell();
-const runIfPowerShell = powershell ? it : it.skip;
+const powershellTestTimeoutMs = 20_000;
+const runIfPowerShell = (
+  name: string,
+  testFn: () => void | Promise<void>,
+  timeoutMs = powershellTestTimeoutMs
+) => (powershell ? it : it.skip)(name, testFn, timeoutMs);
 
 describe("kairon-operation-test.ps1", () => {
   it("runs TaskRun with interactive-only agents disabled", async () => {
