@@ -26,6 +26,7 @@ import {
   ReviewLoopManager,
   type ReviewLoopState
 } from "../review/review-loop-manager.js";
+import { writePrCandidateArtifact } from "./pr-artifact.js";
 
 export type GitTransactionStatus =
   | "planned"
@@ -309,6 +310,9 @@ export class GitTransactionExecutor {
         this.now().toISOString()
       );
       await writeTransactionRecord(this.projectRoot, record);
+      await writePrCandidateArtifact(this.projectRoot, record, {
+        now: this.now()
+      });
       return record;
     } catch (error) {
       const failed = updateRecord(record, "failed", this.now().toISOString(), {
@@ -335,6 +339,9 @@ export class GitTransactionExecutor {
     let record = await readTransactionRecord(this.projectRoot, request.transactionId);
 
     if (record.status === "pushed") {
+      await writePrCandidateArtifact(this.projectRoot, record, {
+        now: this.now()
+      });
       return record;
     }
 
@@ -437,6 +444,9 @@ export class GitTransactionExecutor {
         )
       });
       await writeTransactionRecord(this.projectRoot, record);
+      await writePrCandidateArtifact(this.projectRoot, record, {
+        now: this.now()
+      });
       return record;
     } catch (error) {
       const failed = updateRecord(record, "failed", this.now().toISOString(), {
