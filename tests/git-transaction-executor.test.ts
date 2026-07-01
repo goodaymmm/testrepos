@@ -7,6 +7,7 @@ import type {
 import { initializeProject } from "../src/cli/commands/init.js";
 import { readJsonFile } from "../src/core/fs/json-file.js";
 import { createDiffSnapshot } from "../src/git/diff-snapshot.js";
+import type { GitPrCandidateArtifact } from "../src/git/pr-artifact.js";
 import {
   GitTransactionExecutor,
   ReviewRequiredError
@@ -99,6 +100,42 @@ describe("GitTransactionExecutor", () => {
       commit_sha: "commit-sha",
       rollback: { strategy: "reset_branch_to_parent" }
     });
+    const artifact = await readPrCandidate(root, "GTX-0001");
+    expect(artifact).toMatchObject({
+      artifact_kind: "git_pr_candidate",
+      transaction_id: "GTX-0001",
+      status: "local_commit_ready",
+      task_id: "TASK-0001",
+      run_id: "RUN-0001",
+      review_loop_id: "REV-0001",
+      base_branch: "main",
+      head_branch: "auto/TASK-0001/codex",
+      remote: "origin",
+      remote_ref: "auto/TASK-0001/codex",
+      commit_sha: "commit-sha",
+      diff_summary: {
+        files: 1,
+        additions: 1,
+        deletions: 0,
+        paths: ["src/example.ts"]
+      },
+      approvals: [],
+      suggested_pr: {
+        title: "TASK-0001 automated change",
+        create_hint: expect.stringContaining("open a PR against main")
+      },
+      rollback: {
+        strategy: "reset_branch_to_parent",
+        command_hint: "git reset --hard parent-sha"
+      },
+      source_transaction_path: ".kairon/git/transactions/GTX-0001.json",
+      artifact_path: ".kairon/git/pr-candidates/GTX-0001.json"
+    });
+    expect(artifact.suggested_pr.body).toContain("## Purpose");
+    expect(artifact.suggested_pr.body).toContain("## Changes");
+    expect(artifact.suggested_pr.body).toContain("## Validation");
+    expect(artifact.suggested_pr.body).toContain("## Residuals");
+    expect(artifact.suggested_pr.body).not.toContain("diff --git");
   });
 
   it("creates a push approval when auto push is disabled", async () => {
@@ -156,6 +193,20 @@ describe("GitTransactionExecutor", () => {
       pr: {
         status: "push_approval_required",
         approval_id: "APR-0001"
+      }
+    });
+    await expect(readPrCandidate(root, "GTX-0001")).resolves.toMatchObject({
+      status: "push_approval_required",
+      approvals: [
+        {
+          approval_id: "APR-0001",
+          type: "git_push",
+          status: "required",
+          reason: "auto push is disabled by policy"
+        }
+      ],
+      suggested_pr: {
+        create_hint: expect.stringContaining("Approve APR-0001")
       }
     });
   });
@@ -218,6 +269,24 @@ describe("GitTransactionExecutor", () => {
       push: { pushed: true },
       pr: { status: "ready_for_pr" }
     });
+    await expect(readPrCandidate(root, "GTX-0001")).resolves.toMatchObject({
+      status: "ready_for_pr",
+      remote_ref: "auto/TASK-0001/codex",
+      approvals: [
+        {
+          approval_id: "APR-0001",
+          type: "git_push",
+          status: "approved"
+        }
+      ],
+      suggested_pr: {
+        create_hint: expect.stringContaining("Create a PR")
+      },
+      rollback: {
+        strategy: "revert_commit",
+        command_hint: "git revert parent-sha..HEAD"
+      }
+    });
   });
 
   it("creates a protected branch push approval instead of pushing", async () => {
@@ -262,6 +331,18 @@ describe("GitTransactionExecutor", () => {
         status: "protected_push_approval_required",
         remote_ref: "main"
       }
+    });
+    await expect(readPrCandidate(root, "GTX-0001")).resolves.toMatchObject({
+      status: "protected_push_approval_required",
+      remote_ref: "main",
+      approvals: [
+        {
+          approval_id: "APR-0001",
+          type: "git_protected_branch_push",
+          status: "required",
+          reason: "protected_branch_push requires approval"
+        }
+      ]
     });
   });
 
@@ -358,4 +439,13 @@ function commandResult(
     timedOut: false,
     ...options
   };
+}
+
+function readPrCandidate(
+  root: string,
+  transactionId: string
+): Promise<GitPrCandidateArtifact> {
+  return readJsonFile<GitPrCandidateArtifact>(
+    path.join(root, ".kairon", "git", "pr-candidates", `${transactionId}.json`)
+  );
 }
