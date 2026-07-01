@@ -3,6 +3,7 @@ import path from "node:path";
 import { ApprovalQueue } from "../approvals/approval-queue.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
+import { recoverExpiredResourceLocks } from "../core/fs/resource-lock.js";
 import { nextId } from "../core/ids/counter.js";
 import { WorkQueue, type QueueItem } from "../queue/work-queue.js";
 import {
@@ -53,6 +54,7 @@ export type RuntimeRecoveryResult = {
     scanned_runs: number;
     scanned_git_transactions: number;
     stale_locks_cleared: number;
+    resource_locks_cleared: number;
     gateway_artifacts_recovered: number;
     requeued_items: number;
     approvals_requested: number;
@@ -81,6 +83,12 @@ export type RuntimeRecoveryAction =
   | {
       type: "stale_lock_cleared";
       lock_path: string;
+      reason: string;
+    }
+  | {
+      type: "stale_resource_lock_cleared";
+      lock_path: string;
+      resource: string;
       reason: string;
     }
   | {
@@ -191,6 +199,15 @@ export async function runRuntimeRecovery(
     actions.push(staleLockAction);
   }
 
+  for (const recoveredLock of await recoverExpiredResourceLocks(projectRoot, { now })) {
+    actions.push({
+      type: "stale_resource_lock_cleared",
+      lock_path: recoveredLock.lock_path,
+      resource: recoveredLock.resource,
+      reason: "Expired resource-level state lock was cleared."
+    });
+  }
+
   for (const item of queueItems.filter((candidate) => candidate.status === "claimed")) {
     if (!isClaimExpired(item, now, options.claimTimeoutMs ?? defaultClaimTimeoutMs)) {
       continue;
@@ -265,6 +282,9 @@ export async function runRuntimeRecovery(
       scanned_git_transactions: gitTransactions.length,
       stale_locks_cleared: actions.filter((action) => action.type === "stale_lock_cleared")
         .length,
+      resource_locks_cleared: actions.filter(
+        (action) => action.type === "stale_resource_lock_cleared"
+      ).length,
       gateway_artifacts_recovered: actions.filter(
         (action) => action.type === "gateway_starting_recovered"
       ).length,
@@ -292,6 +312,7 @@ export function formatRuntimeRecoveryResult(result: RuntimeRecoveryResult): stri
     `recovery_id=${result.recovery_id}`,
     `artifact=${result.artifact_path}`,
     `stale_locks_cleared=${result.summary.stale_locks_cleared}`,
+    `resource_locks_cleared=${result.summary.resource_locks_cleared}`,
     `gateway_artifacts_recovered=${result.summary.gateway_artifacts_recovered}`,
     `requeued_items=${result.summary.requeued_items}`,
     `approvals_requested=${result.summary.approvals_requested}`,

@@ -1,8 +1,12 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
-import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
+import { readJsonFile } from "../core/fs/json-file.js";
 import { acquireLockFile, type LockFileData } from "../core/fs/lock-file.js";
 import { getKaironPaths } from "../core/fs/paths.js";
+import {
+  withResourceLock,
+  writeJsonFileFenced
+} from "../core/fs/resource-lock.js";
 
 export type RuntimeLockMode = "single_tick" | "daemon";
 
@@ -186,7 +190,15 @@ async function writeRuntimeLockData(
   projectRoot: string,
   data: RuntimeLockData
 ): Promise<void> {
-  await writeJsonFileAtomic(runtimeLockPath(projectRoot), data);
+  const lockPath = runtimeLockPath(projectRoot);
+  await withResourceLock(
+    projectRoot,
+    lockPath,
+    { owner: "runtime-lock" },
+    async (lock) => {
+      await writeJsonFileFenced(lock, lockPath, data);
+    }
+  );
 }
 
 async function isRuntimeLockStale(

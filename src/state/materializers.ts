@@ -1,8 +1,13 @@
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
 import { appendJsonLine } from "../core/fs/jsonl-file.js";
-import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
+import { readJsonFile } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside } from "../core/fs/paths.js";
+import {
+  type ResourceLockHandle,
+  withResourceLock,
+  writeJsonFileFenced
+} from "../core/fs/resource-lock.js";
 import type { KaironEvent } from "../core/events/event-types.js";
 import { handleGitPushApprovalDecision } from "../git/transaction-approval.js";
 
@@ -54,15 +59,18 @@ async function materializeTaskCreated(
   const paths = getKaironPaths(projectRoot);
   const taskDir = resolveInside(paths.tasksDir, id);
   await mkdir(taskDir, { recursive: true });
+  const taskPath = resolveInside(taskDir, "task.json");
 
-  await writeJsonFileAtomic(resolveInside(taskDir, "task.json"), {
-    schema_version: "0.1",
-    id,
-    status: "ready",
-    version: 1,
-    created_at: event.created_at,
-    updated_at: event.created_at,
-    ...task
+  await withStateResourceLock(projectRoot, taskPath, async (lock) => {
+    await writeJsonFileFenced(lock, taskPath, {
+      schema_version: "0.1",
+      id,
+      status: "ready",
+      version: 1,
+      created_at: event.created_at,
+      updated_at: event.created_at,
+      ...task
+    });
   });
 }
 
@@ -101,13 +109,15 @@ async function materializeApprovalRequested(
   }
 
   const approvalPath = path.join(getKaironPaths(projectRoot).approvalsDir, `${id}.json`);
-  await writeJsonFileAtomic(approvalPath, {
-    schema_version: "0.1",
-    id,
-    status: "pending",
-    created_at: event.created_at,
-    updated_at: event.created_at,
-    ...approval
+  await withStateResourceLock(projectRoot, approvalPath, async (lock) => {
+    await writeJsonFileFenced(lock, approvalPath, {
+      schema_version: "0.1",
+      id,
+      status: "pending",
+      created_at: event.created_at,
+      updated_at: event.created_at,
+      ...approval
+    });
   });
 }
 
@@ -126,42 +136,46 @@ async function materializeApprovalDecided(
     `${approvalId}.json`
   );
 
-  let current: Record<string, unknown> = {
-    schema_version: "0.1",
-    id: approvalId,
-    created_at: event.created_at
-  };
+  let updated: Record<string, unknown>;
 
-  try {
-    current = await readJsonFile<Record<string, unknown>>(approvalPath);
-  } catch {
-    // A missing file is materialized as a minimal decided approval for recovery.
-  }
+  await withStateResourceLock(projectRoot, approvalPath, async (lock) => {
+    let current: Record<string, unknown> = {
+      schema_version: "0.1",
+      id: approvalId,
+      created_at: event.created_at
+    };
 
-  const updated = {
-    ...current,
-    status: "decided",
-    decision: event.payload?.decision,
-    reason: event.payload?.reason,
-    decided_by: event.payload?.actor,
-    decided_at: event.created_at,
-    confirmation: isRecord(current.confirmation)
-      ? {
-          ...current.confirmation,
-          status: "confirmed",
-          confirmed_at: event.created_at
-        }
-      : current.confirmation,
-    updated_at: event.created_at
-  };
-  await writeJsonFileAtomic(approvalPath, updated);
+    try {
+      current = await readJsonFile<Record<string, unknown>>(approvalPath);
+    } catch {
+      // A missing file is materialized as a minimal decided approval for recovery.
+    }
+
+    updated = {
+      ...current,
+      status: "decided",
+      decision: event.payload?.decision,
+      reason: event.payload?.reason,
+      decided_by: event.payload?.actor,
+      decided_at: event.created_at,
+      confirmation: isRecord(current.confirmation)
+        ? {
+            ...current.confirmation,
+            status: "confirmed",
+            confirmed_at: event.created_at
+          }
+        : current.confirmation,
+      updated_at: event.created_at
+    };
+    await writeJsonFileFenced(lock, approvalPath, updated);
+  });
 
   if (
     event.payload?.decision === "approve" ||
     event.payload?.decision === "reject" ||
     event.payload?.decision === "request_changes"
   ) {
-    await handleGitPushApprovalDecision(projectRoot, updated, {
+    await handleGitPushApprovalDecision(projectRoot, updated!, {
       decision: event.payload.decision,
       decidedAt: event.created_at
     });
@@ -183,32 +197,34 @@ async function materializeApprovalConfirmationRequested(
     `${approvalId}.json`
   );
 
-  let current: Record<string, unknown> = {
-    schema_version: "0.1",
-    id: approvalId,
-    created_at: event.created_at
-  };
+  await withStateResourceLock(projectRoot, approvalPath, async (lock) => {
+    let current: Record<string, unknown> = {
+      schema_version: "0.1",
+      id: approvalId,
+      created_at: event.created_at
+    };
 
-  try {
-    current = await readJsonFile<Record<string, unknown>>(approvalPath);
-  } catch {
-    // A missing file is materialized as a minimal confirmation-required approval.
-  }
+    try {
+      current = await readJsonFile<Record<string, unknown>>(approvalPath);
+    } catch {
+      // A missing file is materialized as a minimal confirmation-required approval.
+    }
 
-  await writeJsonFileAtomic(approvalPath, {
-    ...current,
-    status: "confirmation_required",
-    confirmation: {
-      status: "required",
-      action: event.payload?.action,
-      required_by: event.payload?.confirmation,
-      reason: event.payload?.reason,
-      source: "discord",
-      requested_by: event.payload?.actor,
-      requested_at: event.created_at,
-      discord: event.payload?.discord
-    },
-    updated_at: event.created_at
+    await writeJsonFileFenced(lock, approvalPath, {
+      ...current,
+      status: "confirmation_required",
+      confirmation: {
+        status: "required",
+        action: event.payload?.action,
+        required_by: event.payload?.confirmation,
+        reason: event.payload?.reason,
+        source: "discord",
+        requested_by: event.payload?.actor,
+        requested_at: event.created_at,
+        discord: event.payload?.discord
+      },
+      updated_at: event.created_at
+    });
   });
 }
 
@@ -227,26 +243,28 @@ async function materializeApprovalSnoozed(
     `${approvalId}.json`
   );
 
-  let current: Record<string, unknown> = {
-    schema_version: "0.1",
-    id: approvalId,
-    created_at: event.created_at
-  };
+  await withStateResourceLock(projectRoot, approvalPath, async (lock) => {
+    let current: Record<string, unknown> = {
+      schema_version: "0.1",
+      id: approvalId,
+      created_at: event.created_at
+    };
 
-  try {
-    current = await readJsonFile<Record<string, unknown>>(approvalPath);
-  } catch {
-    // A missing file is materialized as a minimal snoozed approval for recovery.
-  }
+    try {
+      current = await readJsonFile<Record<string, unknown>>(approvalPath);
+    } catch {
+      // A missing file is materialized as a minimal snoozed approval for recovery.
+    }
 
-  await writeJsonFileAtomic(approvalPath, {
-    ...current,
-    status: "snoozed",
-    snooze_until: event.payload?.until,
-    reason: event.payload?.reason,
-    snoozed_by: event.payload?.actor,
-    snoozed_at: event.created_at,
-    updated_at: event.created_at
+    await writeJsonFileFenced(lock, approvalPath, {
+      ...current,
+      status: "snoozed",
+      snooze_until: event.payload?.until,
+      reason: event.payload?.reason,
+      snoozed_by: event.payload?.actor,
+      snoozed_at: event.created_at,
+      updated_at: event.created_at
+    });
   });
 }
 
@@ -263,14 +281,16 @@ async function materializeRunCompleted(
   const taskPath = resolveInside(getKaironPaths(projectRoot).tasksDir, taskId, "task.json");
 
   try {
-    const current = await readJsonFile<Record<string, unknown>>(taskPath);
-    const status = event.payload?.status === "completed" ? "completed" : "failed";
-    await writeJsonFileAtomic(taskPath, {
-      ...current,
-      status,
-      last_run_id: event.run_id,
-      last_run_status: event.payload?.status,
-      updated_at: event.created_at
+    await withStateResourceLock(projectRoot, taskPath, async (lock) => {
+      const current = await readJsonFile<Record<string, unknown>>(taskPath);
+      const status = event.payload?.status === "completed" ? "completed" : "failed";
+      await writeJsonFileFenced(lock, taskPath, {
+        ...current,
+        status,
+        last_run_id: event.run_id,
+        last_run_status: event.payload?.status,
+        updated_at: event.created_at
+      });
     });
   } catch (error) {
     if (!String(error).includes("ENOENT")) {
@@ -284,12 +304,23 @@ async function materializeScheduleOverride(
   event: KaironEvent
 ): Promise<void> {
   const paths = getKaironPaths(projectRoot);
-  await writeJsonFileAtomic(resolveInside(paths.stateDir, "schedule_override.json"), {
-    schema_version: "0.1",
-    active_work_closed: true,
-    created_at: event.created_at,
-    ...(event.payload ?? {})
+  const overridePath = resolveInside(paths.stateDir, "schedule_override.json");
+  await withStateResourceLock(projectRoot, overridePath, async (lock) => {
+    await writeJsonFileFenced(lock, overridePath, {
+      schema_version: "0.1",
+      active_work_closed: true,
+      created_at: event.created_at,
+      ...(event.payload ?? {})
+    });
   });
+}
+
+async function withStateResourceLock<T>(
+  projectRoot: string,
+  resourcePath: string,
+  run: (handle: ResourceLockHandle) => Promise<T>
+): Promise<T> {
+  return withResourceLock(projectRoot, resourcePath, { owner: "state-applier" }, run);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
