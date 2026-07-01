@@ -52,6 +52,7 @@ export async function runMaintenance(
     `recovery_scanned_runs=${result.recovery.summary.scanned_runs}`,
     `recovery_scanned_git_transactions=${result.recovery.summary.scanned_git_transactions}`,
     `recovery_stale_locks_cleared=${result.recovery.summary.stale_locks_cleared}`,
+    `recovery_resource_locks_cleared=${result.recovery.summary.resource_locks_cleared}`,
     `recovery_gateway_artifacts_recovered=${result.recovery.summary.gateway_artifacts_recovered}`,
     `recovery_requeued=${result.recovery.summary.requeued_items}`,
     `recovery_approvals=${result.recovery.summary.approvals_requested}`,

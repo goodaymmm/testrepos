@@ -10,6 +10,7 @@ import {
   showRecoveryTarget
 } from "../src/cli/commands/recovery.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
+import { acquireResourceLock } from "../src/core/fs/resource-lock.js";
 import {
   inspectRuntimeRecoveryTargets,
   runRuntimeRecovery,
@@ -172,6 +173,32 @@ describe("runtime recovery", () => {
     expect(result.summary.stale_locks_cleared).toBe(1);
     await expect(readRuntimeLockStatus(root)).resolves.toMatchObject({
       locked: false
+    });
+  });
+
+  it("clears expired resource-level locks during recovery", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await acquireResourceLock(
+      root,
+      path.join(root, ".kairon", "approvals", "APR-LOCKED.json"),
+      {
+        owner: "stale-state-writer",
+        now: new Date("2026-06-01T00:00:00.000Z"),
+        ttlMs: 1_000
+      }
+    );
+
+    const result = await runRuntimeRecovery(root, {
+      now: new Date("2026-06-01T00:00:02.000Z")
+    });
+
+    expect(result.summary.resource_locks_cleared).toBe(1);
+    expect(result.actions).toContainEqual({
+      type: "stale_resource_lock_cleared",
+      lock_path: expect.stringContaining(".kairon/runtime/resource-locks/"),
+      resource: ".kairon/approvals/APR-LOCKED.json",
+      reason: "Expired resource-level state lock was cleared."
     });
   });
 

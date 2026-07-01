@@ -3,6 +3,10 @@ import path from "node:path";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import {
+  acquireResourceLock,
+  releaseResourceLock
+} from "../src/core/fs/resource-lock.js";
+import {
   acquireRuntimeLock,
   readRuntimeLockStatus,
   refreshRuntimeHeartbeat,
@@ -119,6 +123,23 @@ describe("runtime lock", () => {
       }
     });
 
+    await releaseRuntimeLock(root);
+  });
+
+  it("guards runtime lock updates with a resource-level lock", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await acquireRuntimeLock(root);
+    const runtimeLockPath = path.join(root, ".kairon", "runtime", "lock.json");
+    const blocker = await acquireResourceLock(root, runtimeLockPath, {
+      owner: "manual-runtime-lock-test"
+    });
+
+    await expect(refreshRuntimeHeartbeat(root)).rejects.toThrow(
+      /Resource lock already exists/
+    );
+
+    await releaseResourceLock(blocker);
     await releaseRuntimeLock(root);
   });
 });
