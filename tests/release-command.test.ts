@@ -1,0 +1,189 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import type {
+  CliInvocation,
+  CommandRunResult
+} from "../src/agents/command-runner.js";
+import { writeJsonFileAtomic } from "../src/core/fs/json-file.js";
+import {
+  collectReleaseCheck,
+  createReleaseNotesDraft,
+  formatReleaseBump,
+  formatReleaseCheck,
+  formatReleaseNotes,
+  planReleaseBump
+} from "../src/cli/commands/release.js";
+import { createTempProject } from "./test-utils.js";
+
+describe("release commands", () => {
+  it("reports release readiness inputs without mutating files", async () => {
+    const root = await createReleaseProject("0.1.0");
+
+    const result = await collectReleaseCheck(root);
+
+    expect(result).toMatchObject({
+      package_version: "0.1.0",
+      cli_version: "0.1.0",
+      version_sync: true,
+      docs: {
+        release_checklist: true,
+        release_notes: true
+      }
+    });
+    expect(result.recommended_commands).toContain("npm run build");
+    expect(formatReleaseCheck(result)).toContain("version.sync=true");
+  });
+
+  it("plans a dry-run patch version bump by default", async () => {
+    const root = await createReleaseProject("0.1.0");
+
+    const result = await planReleaseBump(root, { type: "patch" });
+
+    expect(result).toMatchObject({
+      type: "patch",
+      current_version: "0.1.0",
+      next_version: "0.1.1",
+      dry_run: true,
+      write: false,
+      files: [
+        {
+          path: "package.json",
+          current: "0.1.0",
+          next: "0.1.1",
+          action: "would_update"
+        },
+        {
+          path: "src/index.ts",
+          current: "0.1.0",
+          next: "0.1.1",
+          action: "would_update"
+        }
+      ]
+    });
+    expect(formatReleaseBump(result)).toContain("Kairon release bump dry run.");
+    await expect(readPackageVersion(root)).resolves.toBe("0.1.0");
+    await expect(readFile(path.join(root, "src", "index.ts"), "utf8")).resolves.toContain(
+      'KAIRON_VERSION = "0.1.0"'
+    );
+  });
+
+  it("applies a version bump only when write is explicit", async () => {
+    const root = await createReleaseProject("0.1.0");
+
+    const result = await planReleaseBump(root, { type: "minor", write: true });
+
+    expect(result).toMatchObject({
+      type: "minor",
+      current_version: "0.1.0",
+      next_version: "0.2.0",
+      dry_run: false,
+      write: true,
+      files: [
+        {
+          path: "package.json",
+          action: "updated"
+        },
+        {
+          path: "src/index.ts",
+          action: "updated"
+        }
+      ]
+    });
+    await expect(readPackageVersion(root)).resolves.toBe("0.2.0");
+    await expect(readFile(path.join(root, "src", "index.ts"), "utf8")).resolves.toContain(
+      'KAIRON_VERSION = "0.2.0"'
+    );
+  });
+
+  it("drafts release notes from git commit summaries", async () => {
+    const root = await createReleaseProject("0.1.0");
+    const invocations: CliInvocation[] = [];
+
+    const result = await createReleaseNotesDraft(root, {
+      since: "v0.1.0",
+      commandRunner: async (invocation) => {
+        invocations.push(invocation);
+        return commandResult(invocation, {
+          stdout: "feat: add release helper\nfix: stabilize release docs\n"
+        });
+      }
+    });
+
+    expect(result).toMatchObject({
+      since: "v0.1.0",
+      commit_count: 2,
+      commits: [
+        "feat: add release helper",
+        "fix: stabilize release docs"
+      ]
+    });
+    expect(invocations[0]?.args).toEqual([
+      "log",
+      "--no-merges",
+      "--pretty=format:%s",
+      "v0.1.0..HEAD"
+    ]);
+    const formatted = formatReleaseNotes(result);
+    expect(formatted).toContain("## Release Notes Draft");
+    expect(formatted).toContain("- feat: add release helper");
+    expect(formatted).toContain("- `npm test`");
+  });
+
+  it("rejects inconsistent package and CLI versions before bumping", async () => {
+    const root = await createReleaseProject("0.1.0", "0.2.0");
+
+    await expect(planReleaseBump(root, { type: "patch" })).rejects.toThrow(
+      "Version mismatch"
+    );
+  });
+});
+
+async function createReleaseProject(
+  packageVersion: string,
+  cliVersion = packageVersion
+): Promise<string> {
+  const root = await createTempProject();
+  await mkdir(path.join(root, "src"), { recursive: true });
+  await mkdir(path.join(root, "docs"), { recursive: true });
+  await writeJsonFileAtomic(path.join(root, "package.json"), {
+    name: "kairon-test",
+    version: packageVersion,
+    private: true
+  });
+  await writeFile(
+    path.join(root, "src", "index.ts"),
+    `export const KAIRON_VERSION = "${cliVersion}";\n`,
+    "utf8"
+  );
+  await writeFile(path.join(root, "docs", "release-checklist-v0.md"), "# Checklist\n", "utf8");
+  await writeFile(path.join(root, "docs", "release-notes-v0.md"), "# Notes\n", "utf8");
+  return root;
+}
+
+async function readPackageVersion(root: string): Promise<string> {
+  const packageJson = JSON.parse(
+    await readFile(path.join(root, "package.json"), "utf8")
+  ) as { version: string };
+  return packageJson.version;
+}
+
+function commandResult(
+  invocation: CliInvocation,
+  options: Partial<CommandRunResult> = {}
+): CommandRunResult {
+  return {
+    command: invocation.command,
+    args: invocation.args,
+    cwd: invocation.cwd,
+    pid: 1234,
+    exitCode: 0,
+    signal: null,
+    stdout: "",
+    stderr: "",
+    startedAt: "2026-07-01T00:00:00.000Z",
+    finishedAt: "2026-07-01T00:00:01.000Z",
+    timedOut: false,
+    ...options
+  };
+}

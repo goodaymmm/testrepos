@@ -24,6 +24,7 @@ describe("createProgram", () => {
       "migrate",
       "rag",
       "recovery",
+      "release",
       "review",
       "start",
       "status",
@@ -209,5 +210,27 @@ describe("createProgram", () => {
         "--severity"
       ])
     );
+  });
+
+  it("registers release helper commands", () => {
+    const release = createProgram().commands.find(
+      (command) => command.name() === "release"
+    );
+
+    expect(release?.commands.map((command) => command.name()).sort()).toEqual([
+      "bump",
+      "check",
+      "notes"
+    ]);
+    expect(
+      release?.commands
+        .find((command) => command.name() === "notes")
+        ?.options.map((option) => option.long)
+    ).toContain("--since");
+    expect(
+      release?.commands
+        .find((command) => command.name() === "bump")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--type", "--dry-run", "--write"]));
   });
 });
