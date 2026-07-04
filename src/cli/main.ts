@@ -48,6 +48,11 @@ import {
   runRecovery,
   showRecoveryTarget
 } from "./commands/recovery.js";
+import {
+  releaseBumpCommand,
+  releaseCheckCommand,
+  releaseNotesCommand
+} from "./commands/release.js";
 import { runReviewLoopCommand } from "./commands/review.js";
 import { startRuntime } from "./commands/start.js";
 import { getStatusText } from "./commands/status.js";
@@ -431,6 +436,35 @@ export function createProgram(): Command {
       heartbeatStaleMs?: string;
     }) => {
       console.log(await runRecovery(process.cwd(), options));
+    });
+
+  const release = program
+    .command("release")
+    .description("Prepare release checks, notes, and version bump plans.");
+
+  release
+    .command("check")
+    .description("Show release readiness checks and recommended commands.")
+    .action(async () => {
+      console.log(await releaseCheckCommand(process.cwd()));
+    });
+
+  release
+    .command("notes")
+    .description("Draft release notes from commit summaries.")
+    .requiredOption("--since <ref>", "Git ref used as the lower bound, for example v0.1.0.")
+    .action(async (options: { since?: string }) => {
+      console.log(await releaseNotesCommand(process.cwd(), options));
+    });
+
+  release
+    .command("bump")
+    .description("Plan or apply a synchronized package and CLI version bump.")
+    .requiredOption("--type <type>", "major, minor, or patch.")
+    .option("--dry-run", "Show planned changes without writing files. This is the default.")
+    .option("--write", "Apply the version bump to package.json and src/index.ts.")
+    .action(async (options: { type?: string; dryRun?: boolean; write?: boolean }) => {
+      console.log(await releaseBumpCommand(process.cwd(), options));
     });
 
   review
