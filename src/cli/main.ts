@@ -30,6 +30,10 @@ import {
 } from "./commands/cleanup.js";
 import { applyConfig, proposeConfig } from "./commands/config.js";
 import { analyzeDocking } from "./commands/docking.js";
+import {
+  deployDryRunCommand,
+  mergeDryRunCommand
+} from "./commands/deploy.js";
 import { runDoctorCommand } from "./commands/doctor.js";
 import { initializeProject } from "./commands/init.js";
 import { closeActiveWork } from "./commands/leave.js";
@@ -326,6 +330,54 @@ export function createProgram(): Command {
     .description("Show runtime, queue, session, approval, and artifact status.")
     .action(async () => {
       console.log(await getStatusText(process.cwd()));
+    });
+
+  const merge = program
+    .command("merge")
+    .description("Prepare merge approvals without executing a merge.");
+
+  merge
+    .command("dry-run")
+    .description("Create a high-risk approval artifact for a planned merge.")
+    .requiredOption("--source <branch>", "Source branch to merge later.")
+    .requiredOption("--target <branch>", "Target branch for the planned merge.")
+    .option("--commit-range <range>", "Commit range reviewed for this dry-run.")
+    .option("--check <check>", "Check summary as name:status[:detail]. Repeatable.", collectOption, [])
+    .option("--rollback-hint <hint>", "Operator rollback hint recorded in the artifact.")
+    .option("--reason <reason>", "Reason shown on the approval.")
+    .action(async (options: {
+      source?: string;
+      target?: string;
+      commitRange?: string;
+      check?: string[];
+      rollbackHint?: string;
+      reason?: string;
+    }) => {
+      console.log(await mergeDryRunCommand(process.cwd(), options));
+    });
+
+  const deploy = program
+    .command("deploy")
+    .description("Prepare deploy approvals without executing a deploy.");
+
+  deploy
+    .command("dry-run")
+    .description("Create a high-risk approval artifact for a planned deploy.")
+    .requiredOption("--target <branch>", "Branch or release ref planned for deployment.")
+    .option("--environment <name>", "Deployment environment.")
+    .option("--commit-range <range>", "Commit range reviewed for this dry-run.")
+    .option("--check <check>", "Check summary as name:status[:detail]. Repeatable.", collectOption, [])
+    .option("--rollback-hint <hint>", "Operator rollback hint recorded in the artifact.")
+    .option("--reason <reason>", "Reason shown on the approval.")
+    .action(async (options: {
+      target?: string;
+      environment?: string;
+      commitRange?: string;
+      check?: string[];
+      rollbackHint?: string;
+      reason?: string;
+    }) => {
+      console.log(await deployDryRunCommand(process.cwd(), options));
     });
 
   const task = program.command("task").description("Manage Kairon tasks.");

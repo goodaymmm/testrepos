@@ -16,11 +16,13 @@ describe("createProgram", () => {
       "board",
       "cleanup",
       "config",
+      "deploy",
       "docking",
       "doctor",
       "init",
       "leave",
       "maintenance",
+      "merge",
       "migrate",
       "rag",
       "recovery",
@@ -232,5 +234,42 @@ describe("createProgram", () => {
         .find((command) => command.name() === "bump")
         ?.options.map((option) => option.long)
     ).toEqual(expect.arrayContaining(["--type", "--dry-run", "--write"]));
+  });
+
+  it("registers merge and deploy dry-run approval commands", () => {
+    const program = createProgram();
+    const merge = program.commands.find((command) => command.name() === "merge");
+    const deploy = program.commands.find((command) => command.name() === "deploy");
+
+    expect(merge?.commands.map((command) => command.name())).toEqual(["dry-run"]);
+    expect(deploy?.commands.map((command) => command.name())).toEqual(["dry-run"]);
+    expect(
+      merge?.commands
+        .find((command) => command.name() === "dry-run")
+        ?.options.map((option) => option.long)
+    ).toEqual(
+      expect.arrayContaining([
+        "--source",
+        "--target",
+        "--commit-range",
+        "--check",
+        "--rollback-hint",
+        "--reason"
+      ])
+    );
+    expect(
+      deploy?.commands
+        .find((command) => command.name() === "dry-run")
+        ?.options.map((option) => option.long)
+    ).toEqual(
+      expect.arrayContaining([
+        "--target",
+        "--environment",
+        "--commit-range",
+        "--check",
+        "--rollback-hint",
+        "--reason"
+      ])
+    );
   });
 });
