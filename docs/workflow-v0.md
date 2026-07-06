@@ -448,3 +448,14 @@ ambiguous job は自動再実行しない。
 - 翌日は Kairon artifact から context を再構築する。
 - Policy gate は起動前、実行中、outbox apply 前の 3 箇所に置く。
 - Terminal window の可視性ではなく、公式 CLI と追跡可能な process 実行を境界にする。
+
+## 21. Experimental Workflow Runtime Boundary
+
+T110 の LangGraph-style runtime spike は production runtime path ではない。
+
+- `RuntimeLoop` から自動起動しない。
+- `WorkQueue` を claim / complete / fail しない。
+- `TaskRunner`、`ReviewLoopExecutor`、`StateApplier` を呼ばない。
+- artifact は `.kairon/experimental/workflows/` にのみ出力する。
+
+判断材料は `docs/langgraph-runtime-spike-v0.md` に分離する。
