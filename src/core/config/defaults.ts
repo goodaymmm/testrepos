@@ -163,6 +163,7 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           enabled: false,
           mode: "gateway",
           bot_token_env: "KAIRON_DISCORD_BOT_TOKEN",
+          public_key_env: "KAIRON_DISCORD_PUBLIC_KEY",
           application_id_env: "KAIRON_DISCORD_APPLICATION_ID",
           guild_id_env: "KAIRON_DISCORD_GUILD_ID",
           approval_channel_id_env: "KAIRON_DISCORD_APPROVAL_CHANNEL_ID",

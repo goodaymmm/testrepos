@@ -17,6 +17,7 @@ describe("createProgram", () => {
       "cleanup",
       "config",
       "deploy",
+      "discord",
       "docking",
       "doctor",
       "git",
@@ -306,6 +307,21 @@ describe("createProgram", () => {
         "--draft",
         "--token-env"
       ])
+    );
+  });
+
+  it("registers Discord HTTP interactions server command", () => {
+    const discord = createProgram().commands.find(
+      (command) => command.name() === "discord"
+    );
+    const http = discord?.commands.find((command) => command.name() === "http");
+    const start = http?.commands.find((command) => command.name() === "start");
+
+    expect(discord?.description()).toContain("Discord integration");
+    expect(http?.description()).toContain("HTTP Interactions");
+    expect(start?.description()).toContain("loopback-only");
+    expect(start?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining(["--host", "--port", "--max-seconds"])
     );
   });
 });

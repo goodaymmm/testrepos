@@ -41,6 +41,7 @@ export type DiscordProviderConfig = {
   enabled: boolean;
   mode: "gateway";
   bot_token_env: string;
+  public_key_env?: string;
   application_id_env: string;
   guild_id_env: string;
   approval_channel_id_env: string;
@@ -51,8 +52,9 @@ export type DiscordProviderConfig = {
   register_commands_on_start: boolean;
 };
 
-type DiscordSecretKey =
+export type DiscordSecretKey =
   | "bot_token"
+  | "public_key"
   | "application_id"
   | "guild_id"
   | "approval_channel_id"
@@ -1270,7 +1272,7 @@ function hasEnvValue(env: NodeJS.ProcessEnv, name: string): boolean {
   return (env[name] ?? "").trim().length > 0;
 }
 
-function discordSecretReferences(
+export function discordSecretReferences(
   provider: DiscordProviderConfig,
   key: DiscordSecretKey
 ): SecretReference[] {
