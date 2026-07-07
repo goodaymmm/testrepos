@@ -222,6 +222,36 @@ describe("board projection", () => {
       status: "confirmation_required",
       type: "deploy",
       title: "Confirm deploy",
+      task_id: "TASK-CONFIRM",
+      run_id: "RUN-CONFIRM",
+      risk_level: "high",
+      dry_run: true,
+      execution_allowed: false,
+      approval_required_for: "protected_branch_push",
+      operation: "deploy",
+      source_branch: "auto/TASK-CONFIRM/codex",
+      target_branch: "main",
+      environment: "production",
+      commit_range: "parent-sha..commit-sha",
+      rollback_hint: "git revert parent-sha..commit-sha",
+      artifact_path: ".kairon/deploy/dry-runs/APR-CONFIRM.json",
+      checks_summary: [
+        {
+          name: "branch_protection",
+          status: "passed",
+          detail: "api_token=T122_SHOULD_NOT_LEAK"
+        }
+      ],
+      required_approvals: [
+        {
+          type: "board_confirmation",
+          required_by: "high_risk_policy",
+          present: false
+        }
+      ],
+      api_token: "T122_SHOULD_NOT_LEAK",
+      diff: "T122_RAW_DIFF_SHOULD_NOT_APPEAR",
+      stdout: "T122_RAW_STDOUT_SHOULD_NOT_APPEAR",
       confirmation: {
         status: "required",
         action: "approve",
@@ -231,19 +261,122 @@ describe("board projection", () => {
       created_at: "2026-06-01T00:00:00.000Z",
       updated_at: "2026-06-01T00:01:00.000Z"
     });
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "follow-ups", "FUP-APR-CONFIRM-confirm.json"),
+      {
+        schema_version: "0.1",
+        artifact_kind: "approval_follow_up",
+        id: "FUP-APR-CONFIRM-confirm",
+        idempotency_key: "APR-CONFIRM:approve:confirm",
+        approval_id: "APR-CONFIRM",
+        approval_type: "deploy",
+        decision: "approve",
+        action_type: "deploy.confirm",
+        status: "completed",
+        risk_level: "high",
+        task_id: "TASK-CONFIRM",
+        run_id: "RUN-CONFIRM",
+        command_hint: "Review Board approval detail before final approve.",
+        source_approval_path: ".kairon/approvals/APR-CONFIRM.json",
+        created_at: "2026-06-01T00:00:30.000Z",
+        updated_at: "2026-06-01T00:00:40.000Z"
+      }
+    );
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "git", "transactions", "GTX-CONFIRM.json"),
+      {
+        schema_version: "0.1",
+        transaction_id: "GTX-CONFIRM",
+        task_id: "TASK-CONFIRM",
+        run_id: "RUN-CONFIRM",
+        branch: "auto/TASK-CONFIRM/codex",
+        status: "pushed",
+        push: {
+          requested: true,
+          allowed: true,
+          remote: "origin",
+          remote_ref: "auto/TASK-CONFIRM/codex",
+          pushed: true,
+          approval_id: "APR-CONFIRM"
+        },
+        transaction_path: ".kairon/git/transactions/GTX-CONFIRM.json",
+        created_at: "2026-06-01T00:00:20.000Z",
+        updated_at: "2026-06-01T00:00:20.000Z"
+      }
+    );
 
     const projection = await createBoardProjection(root, {
       now: () => new Date("2026-06-01T00:02:00.000Z")
     });
+    const html = renderBoardHtml(projection);
 
     expect(projection.approvals.pending).toBe(1);
     expect(projection.approvals.recent[0]).toMatchObject({
       id: "APR-CONFIRM",
       status: "confirmation_required",
+      risk_level: "high",
+      dry_run: true,
+      execution_allowed: false,
+      approval_required_for: "protected_branch_push",
+      operation: "deploy",
+      source_branch: "auto/TASK-CONFIRM/codex",
+      target_branch: "main",
+      environment: "production",
+      commit_range: "parent-sha..commit-sha",
+      rollback_hint: "git revert parent-sha..commit-sha",
+      artifact_path: ".kairon/deploy/dry-runs/APR-CONFIRM.json",
       confirmation_required_by: "board",
       confirmation_action: "approve",
-      confirmation_reason: "board_confirmation_required"
+      confirmation_reason: "board_confirmation_required",
+      checks_summary: [
+        {
+          name: "branch_protection",
+          status: "passed",
+          detail: "api_token=[redacted]"
+        }
+      ],
+      required_approvals: [
+        {
+          type: "board_confirmation",
+          required_by: "high_risk_policy",
+          present: false
+        }
+      ],
+      local_command_hint:
+        'Review this Board detail, then run: kairon approval decide APR-CONFIRM --action approve --reason "<reason>"'
     });
+    expect(projection.approvals.recent[0].related_artifacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "approval",
+          id: "APR-CONFIRM",
+          anchor: "#approval-APR-CONFIRM"
+        }),
+        expect.objectContaining({
+          kind: "approval_artifact",
+          path: ".kairon/deploy/dry-runs/APR-CONFIRM.json"
+        }),
+        expect.objectContaining({
+          kind: "task",
+          id: "TASK-CONFIRM"
+        }),
+        expect.objectContaining({
+          kind: "run",
+          id: "RUN-CONFIRM",
+          anchor: "#run-RUN-CONFIRM"
+        }),
+        expect.objectContaining({
+          kind: "git_transaction",
+          id: "GTX-CONFIRM",
+          anchor: "#git-transaction-GTX-CONFIRM"
+        }),
+        expect.objectContaining({
+          kind: "follow_up",
+          id: "FUP-APR-CONFIRM-confirm",
+          anchor: "#follow-up-FUP-APR-CONFIRM-confirm"
+        })
+      ])
+    );
     expect(projection.operations).toMatchObject({
       pending_approvals: 1,
       attention_total: 1
@@ -252,9 +385,24 @@ describe("board projection", () => {
       expect.objectContaining({
         kind: "approval",
         id: "APR-CONFIRM",
-        status: "confirmation_required"
+        status: "confirmation_required",
+        detail:
+          'Review this Board detail, then run: kairon approval decide APR-CONFIRM --action approve --reason "<reason>"'
       })
     ]);
+    expect(html).toContain('id="approval-APR-CONFIRM"');
+    expect(html).toContain('href="#approval-detail-APR-CONFIRM"');
+    expect(html).toContain('id="approval-detail-APR-CONFIRM"');
+    expect(html).toContain("Approval Details");
+    expect(html).toContain(".kairon/deploy/dry-runs/APR-CONFIRM.json");
+    expect(html).toContain("#git-transaction-GTX-CONFIRM");
+    expect(html).toContain("#follow-up-FUP-APR-CONFIRM-confirm");
+    expect(html).toContain("kairon approval decide APR-CONFIRM --action approve");
+    expect(html).toContain("api_token=[redacted]");
+    expect(JSON.stringify(projection)).not.toContain("T122_SHOULD_NOT_LEAK");
+    expect(html).not.toContain("T122_SHOULD_NOT_LEAK");
+    expect(html).not.toContain("T122_RAW_DIFF_SHOULD_NOT_APPEAR");
+    expect(html).not.toContain("T122_RAW_STDOUT_SHOULD_NOT_APPEAR");
   });
 
   it("surfaces pending approval follow-ups on the board", async () => {
