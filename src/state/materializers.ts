@@ -9,6 +9,7 @@ import {
   writeJsonFileFenced
 } from "../core/fs/resource-lock.js";
 import type { KaironEvent } from "../core/events/event-types.js";
+import { recordApprovalFollowUp } from "../approvals/follow-up-runner.js";
 import { handleGitPushApprovalDecision } from "../git/transaction-approval.js";
 
 export async function materializeEvent(
@@ -175,6 +176,12 @@ async function materializeApprovalDecided(
     event.payload?.decision === "reject" ||
     event.payload?.decision === "request_changes"
   ) {
+    await recordApprovalFollowUp(projectRoot, {
+      approval: updated!,
+      decision: event.payload.decision,
+      decidedAt: event.created_at,
+      reason: readString(event.payload.reason)
+    });
     await handleGitPushApprovalDecision(projectRoot, updated!, {
       decision: event.payload.decision,
       decidedAt: event.created_at
@@ -243,6 +250,8 @@ async function materializeApprovalSnoozed(
     `${approvalId}.json`
   );
 
+  let updated: Record<string, unknown>;
+
   await withStateResourceLock(projectRoot, approvalPath, async (lock) => {
     let current: Record<string, unknown> = {
       schema_version: "0.1",
@@ -256,7 +265,7 @@ async function materializeApprovalSnoozed(
       // A missing file is materialized as a minimal snoozed approval for recovery.
     }
 
-    await writeJsonFileFenced(lock, approvalPath, {
+    updated = {
       ...current,
       status: "snoozed",
       snooze_until: event.payload?.until,
@@ -264,7 +273,16 @@ async function materializeApprovalSnoozed(
       snoozed_by: event.payload?.actor,
       snoozed_at: event.created_at,
       updated_at: event.created_at
-    });
+    };
+    await writeJsonFileFenced(lock, approvalPath, updated);
+  });
+
+  await recordApprovalFollowUp(projectRoot, {
+    approval: updated!,
+    decision: "snooze",
+    decidedAt: event.created_at,
+    reason: readString(event.payload?.reason),
+    dueAt: readString(event.payload?.until)
   });
 }
 
@@ -325,4 +343,8 @@ async function withStateResourceLock<T>(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }

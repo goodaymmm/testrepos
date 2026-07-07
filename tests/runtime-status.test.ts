@@ -38,6 +38,24 @@ describe("runtime status", () => {
       status: "pending"
     });
     await writeJsonFileAtomic(
+      path.join(root, ".kairon", "follow-ups", "FUP-APR-0001-approve-deploy-execute_preflight.json"),
+      {
+        schema_version: "0.1",
+        artifact_kind: "approval_follow_up",
+        id: "FUP-APR-0001-approve-deploy-execute_preflight",
+        idempotency_key: "APR-0001:approve:deploy.execute_preflight",
+        approval_id: "APR-0001",
+        decision: "approve",
+        action_type: "deploy.execute_preflight",
+        status: "pending",
+        risk_level: "high",
+        command_hint: "Run deploy execution preflight before any deployment operation.",
+        source_approval_path: ".kairon/approvals/APR-0001.json",
+        created_at: "2026-05-26T00:00:00.000Z",
+        updated_at: "2026-05-26T00:00:00.000Z"
+      }
+    );
+    await writeJsonFileAtomic(
       path.join(root, ".kairon", "runtime", "discord", "gateway.json"),
       {
         schema_version: "0.1",
@@ -132,7 +150,10 @@ describe("runtime status", () => {
     expect(status.runtimeLock.heartbeat_at).toBe("2026-05-26T00:00:10.000Z");
     expect(status.queue.ready).toBe(1);
     expect(status.approvals.pending).toBe(1);
+    expect(status.followUps.pending).toBe(1);
     expect(formatRuntimeStatus(status)).toContain("queue.ready=1");
+    expect(formatRuntimeStatus(status)).toContain("followups.pending=1");
+    expect(formatRuntimeStatus(status)).toContain("followups.snoozed=0");
     expect(formatRuntimeStatus(status)).toContain("runtime.mode=daemon");
     expect(formatRuntimeStatus(status)).toContain("runtime.tickCount=7");
     expect(formatRuntimeStatus(status)).toContain("runtime.idleCount=2");

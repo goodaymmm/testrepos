@@ -3,6 +3,7 @@ import path from "node:path";
 import { readJsonFile } from "../core/fs/json-file.js";
 import { readJsonLines } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
+import { listApprovalFollowUps } from "../approvals/follow-up-runner.js";
 import { WorkQueue } from "../queue/work-queue.js";
 import { inspectRuntimeRecoveryTargets } from "../recovery/runtime-recovery.js";
 import { readRuntimeLockStatus, type RuntimeLockStatus } from "./runtime-lock.js";
@@ -36,6 +37,10 @@ export type RuntimeStatus = {
   };
   approvals: {
     pending: number;
+  };
+  followUps: {
+    pending: number;
+    snoozed: number;
   };
   recovery: {
     targets: number;
@@ -90,6 +95,7 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     lock,
     queueItems,
     pendingApprovals,
+    followUps,
     recovery,
     sessions,
     discordGateway,
@@ -99,6 +105,7 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     readRuntimeLockStatus(projectRoot),
     new WorkQueue(projectRoot).list(),
     countPendingApprovals(projectRoot),
+    listApprovalFollowUps(projectRoot),
     inspectRuntimeRecoveryTargets(projectRoot),
     readLatestSessionSummary(projectRoot),
     readDiscordGatewaySummary(projectRoot),
@@ -132,6 +139,10 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     },
     approvals: {
       pending: pendingApprovals
+    },
+    followUps: {
+      pending: followUps.filter((followUp) => followUp.status === "pending").length,
+      snoozed: followUps.filter((followUp) => followUp.status === "snoozed").length
     },
     recovery: recovery.summary,
     sessions,
@@ -181,6 +192,8 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
     `queue.claimed=${status.queue.claimed}`,
     `queue.failed=${status.queue.failed}`,
     `approvals.pending=${status.approvals.pending}`,
+    `followups.pending=${status.followUps.pending}`,
+    `followups.snoozed=${status.followUps.snoozed}`,
     `recovery.targets=${status.recovery.targets}`,
     `recovery.staleLocks=${status.recovery.stale_locks}`,
     `recovery.expiredClaims=${status.recovery.expired_claims}`,

@@ -257,6 +257,64 @@ describe("board projection", () => {
     ]);
   });
 
+  it("surfaces pending approval follow-ups on the board", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "follow-ups", "FUP-APR-0001-approve-merge-execute_preflight.json"),
+      {
+        schema_version: "0.1",
+        artifact_kind: "approval_follow_up",
+        id: "FUP-APR-0001-approve-merge-execute_preflight",
+        idempotency_key: "APR-0001:approve:merge.execute_preflight",
+        approval_id: "APR-0001",
+        approval_type: "merge",
+        decision: "approve",
+        action_type: "merge.execute_preflight",
+        status: "pending",
+        risk_level: "high",
+        task_id: "TASK-0001",
+        command_hint: "Run merge execution preflight before any merge operation.",
+        source_approval_path: ".kairon/approvals/APR-0001.json",
+        created_at: "2026-06-01T00:00:00.000Z",
+        updated_at: "2026-06-01T00:01:00.000Z"
+      }
+    );
+
+    const projection = await createBoardProjection(root, {
+      now: () => new Date("2026-06-01T00:02:00.000Z")
+    });
+    const html = renderBoardHtml(projection);
+
+    expect(projection.follow_ups).toMatchObject({
+      pending: 1,
+      snoozed: 0,
+      recent: [
+        {
+          id: "FUP-APR-0001-approve-merge-execute_preflight",
+          approval_id: "APR-0001",
+          action_type: "merge.execute_preflight",
+          status: "pending",
+          risk_level: "high"
+        }
+      ]
+    });
+    expect(projection.operations).toMatchObject({
+      pending_follow_ups: 1,
+      attention_total: 1
+    });
+    expect(projection.operations.priority).toEqual([
+      expect.objectContaining({
+        kind: "follow_up",
+        id: "FUP-APR-0001-approve-merge-execute_preflight",
+        anchor: "#follow-up-FUP-APR-0001-approve-merge-execute_preflight"
+      })
+    ]);
+    expect(html).toContain("Follow-ups");
+    expect(html).toContain('id="follow-up-FUP-APR-0001-approve-merge-execute_preflight"');
+    expect(html).toContain("merge.execute_preflight");
+  });
+
   it("formats the CLI export result", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

@@ -78,6 +78,23 @@ describe("StateApplier", () => {
       status: "decided",
       decision: "approve"
     });
+    await expect(
+      readJsonFile(
+        path.join(
+          root,
+          ".kairon",
+          "follow-ups",
+          "FUP-APR-0001-approve-merge-execute_preflight.json"
+        )
+      )
+    ).resolves.toMatchObject({
+      artifact_kind: "approval_follow_up",
+      approval_id: "APR-0001",
+      decision: "approve",
+      action_type: "merge.execute_preflight",
+      status: "pending",
+      risk_level: "high"
+    });
 
     await expect(
       readJsonFile(path.join(root, ".kairon", "state", "schedule_override.json"))
@@ -116,6 +133,22 @@ describe("StateApplier", () => {
       status: "snoozed",
       snooze_until: "2026-05-26T09:00:00.000Z",
       reason: "review later"
+    });
+    await expect(
+      readJsonFile(
+        path.join(
+          root,
+          ".kairon",
+          "follow-ups",
+          "FUP-APR-0001-snooze-approval-revisit.json"
+        )
+      )
+    ).resolves.toMatchObject({
+      approval_id: "APR-0001",
+      decision: "snooze",
+      action_type: "approval.revisit",
+      status: "snoozed",
+      due_at: "2026-05-26T09:00:00.000Z"
     });
   });
 
@@ -248,5 +281,59 @@ describe("StateApplier", () => {
     });
 
     await expect(new StateApplier(root).applyOutbox(outboxPath)).rejects.toThrow();
+  });
+
+  it("keeps approval follow-up artifacts idempotent on repeated decisions", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const applier = new StateApplier(root);
+
+    await applier.appendEvent({
+      type: "approval.requested",
+      task_id: "TASK-0001",
+      payload: {
+        approval: {
+          id: "APR-REWORK",
+          type: "manual_test",
+          title: "Needs rework"
+        }
+      }
+    });
+    await applier.appendEvent({
+      type: "approval.decided",
+      payload: {
+        approval_id: "APR-REWORK",
+        decision: "request_changes",
+        reason: "token=SHOULD_NOT_LEAK fix required"
+      },
+      created_at: "2026-05-26T00:00:00.000Z"
+    });
+    await applier.appendEvent({
+      type: "approval.decided",
+      payload: {
+        approval_id: "APR-REWORK",
+        decision: "request_changes",
+        reason: "token=SHOULD_NOT_LEAK duplicate"
+      },
+      created_at: "2026-05-26T00:01:00.000Z"
+    });
+
+    const followUp = await readJsonFile<Record<string, unknown>>(
+      path.join(
+        root,
+        ".kairon",
+        "follow-ups",
+        "FUP-APR-REWORK-request_changes-approval-rework.json"
+      )
+    );
+    expect(followUp).toMatchObject({
+      approval_id: "APR-REWORK",
+      decision: "request_changes",
+      action_type: "approval.rework",
+      status: "pending",
+      created_at: "2026-05-26T00:00:00.000Z",
+      updated_at: "2026-05-26T00:01:00.000Z"
+    });
+    expect(JSON.stringify(followUp)).not.toContain("SHOULD_NOT_LEAK");
   });
 });

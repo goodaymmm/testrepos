@@ -6,6 +6,10 @@ import {
   type ApprovalRecord,
   ApprovalQueue
 } from "../approvals/approval-queue.js";
+import {
+  listApprovalFollowUps,
+  type ApprovalFollowUpArtifact
+} from "../approvals/follow-up-runner.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { readJsonLines } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
@@ -37,6 +41,11 @@ export type BoardProjection = {
   approvals: {
     pending: number;
     recent: BoardApprovalSummary[];
+  };
+  follow_ups: {
+    pending: number;
+    snoozed: number;
+    recent: BoardApprovalFollowUpSummary[];
   };
   reviews: {
     loops_total: number;
@@ -86,6 +95,7 @@ export type BoardExportResult = {
 
 export type BoardOperationsSummary = {
   pending_approvals: number;
+  pending_follow_ups: number;
   failed_runs: number;
   setup_required_runs: number;
   recovery_targets: number;
@@ -95,7 +105,7 @@ export type BoardOperationsSummary = {
 };
 
 export type BoardOperationPriorityItem = {
-  kind: "approval" | "run" | "recovery" | "git_transaction";
+  kind: "approval" | "follow_up" | "run" | "recovery" | "git_transaction";
   id: string;
   label: string;
   status: string;
@@ -167,6 +177,24 @@ export type BoardApprovalSummary = {
   confirmation_action?: string;
   confirmation_reason?: string;
   snooze_until?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type BoardApprovalFollowUpSummary = {
+  id: string;
+  approval_id: string;
+  approval_type?: string;
+  decision: string;
+  action_type: string;
+  status: string;
+  risk_level: string;
+  task_id?: string;
+  run_id?: string;
+  transaction_id?: string;
+  queue_item_type?: string;
+  command_hint?: string;
+  due_at?: string;
   created_at?: string;
   updated_at?: string;
 };
@@ -411,6 +439,7 @@ export async function createBoardProjection(
     tasks,
     runs,
     approvals,
+    followUps,
     reviewLoops,
     reviewResults,
     gitTransactions,
@@ -423,6 +452,7 @@ export async function createBoardProjection(
       readTasks(projectRoot),
       readRuns(projectRoot),
       new ApprovalQueue(projectRoot).list({ status: "all" }),
+      listApprovalFollowUps(projectRoot),
       readReviewLoops(projectRoot),
       readReviewResults(projectRoot),
       readGitTransactions(projectRoot),
@@ -434,6 +464,9 @@ export async function createBoardProjection(
   const approvalSummaries = approvals
     .sort(compareByUpdatedDesc)
     .map(summarizeApproval);
+  const followUpSummaries = followUps
+    .sort(compareByUpdatedDesc)
+    .map(summarizeApprovalFollowUp);
   const gitTransactionSummaries = gitTransactions
     .sort(compareByUpdatedDesc)
     .map(summarizeGitTransaction);
@@ -454,6 +487,7 @@ export async function createBoardProjection(
     },
     operations: summarizeOperations({
       approvals: approvalSummaries,
+      followUps: followUpSummaries,
       runs: runSummaries,
       recoveryTargets: runtime.recovery.targets,
       gitTransactions: gitTransactionSummaries,
@@ -474,6 +508,11 @@ export async function createBoardProjection(
     approvals: {
       pending: approvalSummaries.filter(isOpenApprovalSummary).length,
       recent: approvalSummaries.slice(0, recentLimit)
+    },
+    follow_ups: {
+      pending: followUpSummaries.filter((followUp) => followUp.status === "pending").length,
+      snoozed: followUpSummaries.filter((followUp) => followUp.status === "snoozed").length,
+      recent: followUpSummaries.slice(0, recentLimit)
     },
     reviews: {
       loops_total: reviewLoops.length,
@@ -752,6 +791,28 @@ function summarizeApproval(approval: ApprovalRecord): BoardApprovalSummary {
   });
 }
 
+function summarizeApprovalFollowUp(
+  followUp: ApprovalFollowUpArtifact
+): BoardApprovalFollowUpSummary {
+  return compact({
+    id: followUp.id,
+    approval_id: followUp.approval_id,
+    approval_type: followUp.approval_type,
+    decision: followUp.decision,
+    action_type: followUp.action_type,
+    status: followUp.status,
+    risk_level: followUp.risk_level,
+    task_id: followUp.task_id,
+    run_id: followUp.run_id,
+    transaction_id: followUp.transaction_id,
+    queue_item_type: followUp.queue_item_type,
+    command_hint: sanitizeInline(followUp.command_hint),
+    due_at: followUp.due_at,
+    created_at: followUp.created_at,
+    updated_at: followUp.updated_at
+  });
+}
+
 function summarizeReviewLoop(loop: ReviewLoopArtifact): BoardReviewLoopSummary {
   return compact({
     loop_id: loop.loop_id ?? "unknown",
@@ -825,12 +886,16 @@ function summarizeGitTransaction(
 
 function summarizeOperations(input: {
   approvals: BoardApprovalSummary[];
+  followUps: BoardApprovalFollowUpSummary[];
   runs: BoardRunSummary[];
   recoveryTargets: number;
   gitTransactions: BoardGitTransactionSummary[];
   recentLimit: number;
 }): BoardOperationsSummary {
   const pendingApprovals = input.approvals.filter(isOpenApprovalSummary);
+  const pendingFollowUps = input.followUps.filter(
+    (followUp) => followUp.status === "pending"
+  );
   const failedRuns = input.runs.filter((run) => run.status === "failed" || run.outbox_status === "failed");
   const setupRequiredRuns = input.runs.filter((run) =>
     ["setup_required", "permission_required", "rate_limited", "usage_limited", "timeout", "no_output"].includes(
@@ -850,6 +915,17 @@ function summarizeOperations(input: {
         severity: "high" as const,
         anchor: `#approval-${approval.id}`,
         detail: approval.reason
+      })
+    ),
+    ...pendingFollowUps.map((followUp) =>
+      compact({
+        kind: "follow_up" as const,
+        id: followUp.id,
+        label: followUp.action_type,
+        status: followUp.status,
+        severity: followUp.risk_level === "high" ? ("high" as const) : ("medium" as const),
+        anchor: `#follow-up-${followUp.id}`,
+        detail: followUp.command_hint
       })
     ),
     ...failedRuns.map((run) =>
@@ -902,12 +978,14 @@ function summarizeOperations(input: {
 
   return {
     pending_approvals: pendingApprovals.length,
+    pending_follow_ups: pendingFollowUps.length,
     failed_runs: failedRuns.length,
     setup_required_runs: setupRequiredRuns.length,
     recovery_targets: input.recoveryTargets,
     git_transactions_requiring_approval: approvalRequiredTransactions.length,
     attention_total:
       pendingApprovals.length +
+      pendingFollowUps.length +
       failedRuns.length +
       setupRequiredRuns.length +
       input.recoveryTargets +
