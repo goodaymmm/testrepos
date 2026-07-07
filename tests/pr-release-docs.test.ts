@@ -13,6 +13,7 @@ describe("PR and release documentation", () => {
     expect(template).toContain("<!-- kairon:readme-update -->");
     expect(template).toContain("<!-- kairon:evidence -->");
     expect(template).toContain("<!-- kairon:follow-up -->");
+    expect(template).toContain("検証");
   });
 
   it("exposes stable anchors for manual result and generated artifact policy checks", async () => {
@@ -72,6 +73,15 @@ describe("PR and release documentation", () => {
     expect(notes).toContain("<!-- kairon:versioning-policy -->");
     expect(prChecklist).toContain("docs/release-checklist-v0.md");
     expect(prChecklist).toContain("docs/release-notes-v0.md");
+  });
+
+  it("documents Discord HTTP Interactions signature verification", async () => {
+    const approval = await readUtf8("docs/discord-approval-v0.md");
+
+    expect(approval).toContain("HTTP Interactions");
+    expect(approval).toContain("signature");
+    expect(approval).toContain("Gateway");
+    expect(approval).toContain("TLS");
   });
 
   it("keeps package and CLI versions synchronized", async () => {

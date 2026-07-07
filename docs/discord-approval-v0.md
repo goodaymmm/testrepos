@@ -55,6 +55,7 @@ Gateway で interaction を受けた場合も、Discord への interaction respo
 HTTP Interactions は Gateway を使わず、Discord Developer Portal の Interactions Endpoint URL から POST を受ける構成で使う。
 Kairon の初期実装では、公開 HTTP server や cloud deploy は含めず、以下を満たす handler 境界を提供する。
 
+- signature verification は `X-Signature-Ed25519`、`X-Signature-Timestamp`、Discord public key を使って実施する。
 - `X-Signature-Ed25519` と `X-Signature-Timestamp` を Discord public key で検証する。
 - raw body を署名検証に使い、JSON parse 後の再シリアライズ結果では検証しない。
 - `type=1` の PING には PONG を返す。

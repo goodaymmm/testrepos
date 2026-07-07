@@ -9,7 +9,7 @@
 -
 
 <!-- kairon:tests -->
-## テスト
+## テスト / 検証
 
 - [ ] `npm run build`
 - [ ] `npm test`
