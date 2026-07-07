@@ -254,6 +254,7 @@ Discord で完結させるもの。
 
 Board UI に寄せるもの。
 
+- approval detail: risk level、confirmation 状態、関連 artifact、local CLI の次 action を確認する
 - diff viewer
 - run log
 - test / lint 詳細
@@ -261,6 +262,10 @@ Board UI に寄せるもの。
 - cleanup proposal の一括確認
 - schedule / policy / agent 設定
 - RAG retrieval source の確認
+
+Board は read-only の確認面として扱う。
+high risk または `confirmation_required` の approval は、Board detail 上で `kairon approval decide <approval-id> --action <action> --reason "<reason>"` の local CLI 導線を表示する。
+raw diff / stdout / token 類は Board に直接表示せず、redaction 済みの summary と artifact path のみを表示する。
 
 ## MVP Scope
 

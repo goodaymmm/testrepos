@@ -168,17 +168,53 @@ export type BoardApprovalSummary = {
   status: string;
   type?: string;
   title?: string;
+  risk_level?: string;
   task_id?: string;
   run_id?: string;
   actions?: ApprovalAction[];
   decision?: string;
   reason?: string;
+  dry_run?: boolean;
+  execution_allowed?: boolean;
+  approval_required_for?: string;
+  operation?: string;
+  source_branch?: string;
+  target_branch?: string;
+  environment?: string;
+  commit_range?: string;
+  rollback_hint?: string;
+  artifact_path?: string;
+  checks_summary?: BoardApprovalCheckSummary[];
+  required_approvals?: BoardApprovalRequiredApprovalSummary[];
+  related_artifacts?: BoardApprovalRelatedArtifact[];
+  local_command_hint?: string;
+  confirmation_status?: string;
   confirmation_required_by?: string;
   confirmation_action?: string;
   confirmation_reason?: string;
   snooze_until?: string;
   created_at?: string;
   updated_at?: string;
+};
+
+export type BoardApprovalCheckSummary = {
+  name: string;
+  status: string;
+  detail?: string;
+};
+
+export type BoardApprovalRequiredApprovalSummary = {
+  type?: string;
+  required_by?: string;
+  present?: boolean;
+};
+
+export type BoardApprovalRelatedArtifact = {
+  kind: string;
+  id?: string;
+  path?: string;
+  anchor?: string;
+  status?: string;
 };
 
 export type BoardApprovalFollowUpSummary = {
@@ -461,15 +497,20 @@ export async function createBoardProjection(
       readDiscordAudits(projectRoot)
     ]);
   const runSummaries = runs.sort(compareRunSummariesDesc);
-  const approvalSummaries = approvals
-    .sort(compareByUpdatedDesc)
-    .map(summarizeApproval);
   const followUpSummaries = followUps
     .sort(compareByUpdatedDesc)
     .map(summarizeApprovalFollowUp);
   const gitTransactionSummaries = gitTransactions
     .sort(compareByUpdatedDesc)
     .map(summarizeGitTransaction);
+  const approvalSummaries = approvals
+    .sort(compareByUpdatedDesc)
+    .map((approval) =>
+      summarizeApproval(approval, {
+        followUps: followUpSummaries,
+        gitTransactions: gitTransactionSummaries
+      })
+    );
 
   return {
     schema_version: "0.1",
@@ -767,21 +808,47 @@ function summarizeTask(task: TaskRecord): BoardTaskSummary {
   });
 }
 
-function summarizeApproval(approval: ApprovalRecord): BoardApprovalSummary {
+function summarizeApproval(
+  approval: ApprovalRecord,
+  context: {
+    followUps: BoardApprovalFollowUpSummary[];
+    gitTransactions: BoardGitTransactionSummary[];
+  }
+): BoardApprovalSummary {
   const title = readString(approval.title);
   const reason = readString(approval.reason);
   const confirmation = readRecord(approval.confirmation);
+  const riskLevel = approvalRiskLevel(approval);
+  const rollbackHint = readString(approval.rollback_hint);
+  const artifactPath = readString(approval.artifact_path);
 
   return compact({
     id: approval.id,
     status: approval.status,
     type: readString(approval.type),
     title: title === undefined ? undefined : sanitizeInline(title),
+    risk_level: riskLevel,
     task_id: readString(approval.task_id),
     run_id: readString(approval.run_id),
     actions: approval.actions ?? approval.allowed_actions,
     decision: readString(approval.decision),
     reason: reason === undefined ? undefined : sanitizeInline(reason),
+    dry_run: readBoolean(approval.dry_run),
+    execution_allowed: readBoolean(approval.execution_allowed),
+    approval_required_for: readString(approval.approval_required_for),
+    operation: readString(approval.operation),
+    source_branch: readString(approval.source_branch),
+    target_branch: readString(approval.target_branch),
+    environment: readString(approval.environment),
+    commit_range: readString(approval.commit_range),
+    rollback_hint:
+      rollbackHint === undefined ? undefined : sanitizeInline(rollbackHint),
+    artifact_path: artifactPath === undefined ? undefined : sanitizeInline(artifactPath),
+    checks_summary: summarizeApprovalChecks(approval.checks_summary),
+    required_approvals: summarizeRequiredApprovals(approval.required_approvals),
+    related_artifacts: approvalRelatedArtifacts(approval, context),
+    local_command_hint: approvalLocalCommandHint(approval, confirmation, riskLevel),
+    confirmation_status: readString(confirmation?.status),
     confirmation_required_by: readString(confirmation?.required_by),
     confirmation_action: readString(confirmation?.action),
     confirmation_reason: readString(confirmation?.reason),
@@ -789,6 +856,193 @@ function summarizeApproval(approval: ApprovalRecord): BoardApprovalSummary {
     created_at: readString(approval.created_at),
     updated_at: readString(approval.updated_at)
   });
+}
+
+function approvalRiskLevel(approval: ApprovalRecord): string | undefined {
+  const explicit = readString(approval.risk_level);
+  if (explicit !== undefined) {
+    return explicit;
+  }
+
+  const type = readString(approval.type) ?? readString(approval.approval_required_for);
+  if (
+    type !== undefined &&
+    /(deploy|merge|protected_branch_push|git_protected_branch_push|force_push|branch_delete)/.test(type)
+  ) {
+    return "high";
+  }
+
+  return undefined;
+}
+
+function summarizeApprovalChecks(value: unknown): BoardApprovalCheckSummary[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const checks = value
+    .slice(0, 8)
+    .map((item) => {
+      const record = readRecord(item);
+      const name = readString(record?.name);
+      const status = readString(record?.status);
+      if (name === undefined || status === undefined) {
+        return undefined;
+      }
+
+      const detail = readString(record?.detail);
+      const summary: BoardApprovalCheckSummary = {
+        name: sanitizeInline(name),
+        status: sanitizeInline(status)
+      };
+      if (detail !== undefined) {
+        summary.detail = sanitizeInline(detail);
+      }
+      return summary;
+    })
+    .filter((item): item is BoardApprovalCheckSummary => item !== undefined);
+
+  return checks.length === 0 ? undefined : checks;
+}
+
+function summarizeRequiredApprovals(
+  value: unknown
+): BoardApprovalRequiredApprovalSummary[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const required = value
+    .slice(0, 8)
+    .map((item) => {
+      const record = readRecord(item);
+      if (record === undefined) {
+        return undefined;
+      }
+
+      const summary: BoardApprovalRequiredApprovalSummary = {};
+      const type = sanitizeOptionalInline(readString(record.type));
+      const requiredBy = sanitizeOptionalInline(readString(record.required_by));
+      const present = readBoolean(record.present);
+      if (type !== undefined) {
+        summary.type = type;
+      }
+      if (requiredBy !== undefined) {
+        summary.required_by = requiredBy;
+      }
+      if (present !== undefined) {
+        summary.present = present;
+      }
+      return Object.keys(summary).length === 0 ? undefined : summary;
+    })
+    .filter((item): item is BoardApprovalRequiredApprovalSummary => item !== undefined);
+
+  return required.length === 0 ? undefined : required;
+}
+
+function approvalRelatedArtifacts(
+  approval: ApprovalRecord,
+  context: {
+    followUps: BoardApprovalFollowUpSummary[];
+    gitTransactions: BoardGitTransactionSummary[];
+  }
+): BoardApprovalRelatedArtifact[] | undefined {
+  const artifacts: BoardApprovalRelatedArtifact[] = [
+    {
+      kind: "approval",
+      id: approval.id,
+      path: `.kairon/approvals/${approval.id}.json`,
+      anchor: `#approval-${approval.id}`,
+      status: approval.status
+    }
+  ];
+  const artifactPath = readString(approval.artifact_path);
+  if (artifactPath !== undefined) {
+    artifacts.push({
+      kind: "approval_artifact",
+      path: sanitizeInline(artifactPath),
+      status: approval.status
+    });
+  }
+
+  const taskId = readString(approval.task_id);
+  if (taskId !== undefined) {
+    artifacts.push({
+      kind: "task",
+      id: taskId,
+      path: `.kairon/tasks/${taskId}/task.json`
+    });
+  }
+
+  const runId = readString(approval.run_id);
+  if (runId !== undefined) {
+    artifacts.push({
+      kind: "run",
+      id: runId,
+      path: `.kairon/runs/${runId}/runner.json`,
+      anchor: `#run-${runId}`
+    });
+  }
+
+  for (const transaction of context.gitTransactions.filter(
+    (transaction) => transaction.approval_id === approval.id
+  )) {
+    artifacts.push({
+      kind: "git_transaction",
+      id: transaction.transaction_id,
+      path: `.kairon/git/transactions/${transaction.transaction_id}.json`,
+      anchor: `#git-transaction-${transaction.transaction_id}`,
+      status: transaction.status
+    });
+  }
+
+  for (const followUp of context.followUps.filter(
+    (followUp) => followUp.approval_id === approval.id
+  )) {
+    artifacts.push({
+      kind: "follow_up",
+      id: followUp.id,
+      path: `.kairon/follow-ups/${followUp.id}.json`,
+      anchor: `#follow-up-${followUp.id}`,
+      status: followUp.status
+    });
+  }
+
+  return artifacts.length === 0 ? undefined : artifacts;
+}
+
+function approvalLocalCommandHint(
+  approval: ApprovalRecord,
+  confirmation: Record<string, unknown> | undefined,
+  riskLevel: string | undefined
+): string | undefined {
+  if (!isOpenApprovalSummary({ id: approval.id, status: approval.status })) {
+    return undefined;
+  }
+
+  const actions = approval.actions ?? approval.allowed_actions ?? [];
+  const confirmationAction = readString(confirmation?.action);
+  const action =
+    confirmationAction ??
+    (actions.includes("approve")
+      ? "approve"
+      : actions.find((candidate) => candidate !== "snooze"));
+
+  if (approval.status === "confirmation_required" && action !== undefined) {
+    return sanitizeInline(
+      `Review this Board detail, then run: kairon approval decide ${approval.id} --action ${action} --reason "<reason>"`
+    );
+  }
+
+  if (riskLevel === "high" || riskLevel === "critical") {
+    return sanitizeInline(
+      action === undefined
+        ? `Inspect locally before deciding: kairon approval show ${approval.id}`
+        : `Inspect locally first: kairon approval show ${approval.id}; then decide with kairon approval decide ${approval.id} --action ${action} --reason "<reason>"`
+    );
+  }
+
+  return sanitizeInline(`Inspect approval detail: kairon approval show ${approval.id}`);
 }
 
 function summarizeApprovalFollowUp(
@@ -914,7 +1168,7 @@ function summarizeOperations(input: {
         status: approval.status,
         severity: "high" as const,
         anchor: `#approval-${approval.id}`,
-        detail: approval.reason
+        detail: approval.local_command_hint ?? approval.reason
       })
     ),
     ...pendingFollowUps.map((followUp) =>
@@ -1277,6 +1531,10 @@ function compact<T extends Record<string, unknown>>(value: T): T {
 
 function readString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function sanitizeOptionalInline(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : sanitizeInline(value);
 }
 
 function readRecord(value: unknown): Record<string, unknown> | undefined {

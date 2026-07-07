@@ -1,5 +1,8 @@
 import type {
   BoardApprovalFollowUpSummary,
+  BoardApprovalCheckSummary,
+  BoardApprovalRelatedArtifact,
+  BoardApprovalRequiredApprovalSummary,
   BoardApprovalSummary,
   BoardCleanupProposalSummary,
   BoardDailyReportSummary,
@@ -407,19 +410,120 @@ function renderQueue(items: BoardQueueItemSummary[]): string {
 }
 
 function renderApprovals(approvals: BoardApprovalSummary[]): string {
-  return section(
+  const summary = section(
     "Approvals",
-    ["ID", "Status", "Type", "Title", "Task", "Updated"],
+    ["ID", "Status", "Risk", "Type", "Title", "Confirmation", "Next Action", "Updated"],
     approvals.map((approval) => [
       `<a id="${approvalAnchor(approval.id)}" href="#${approvalAnchor(approval.id)}">${escapeHtml(approval.id)}</a>`,
       text(approval.status),
+      text(approval.risk_level),
       text(approval.type),
       text(approval.title),
-      text(approval.task_id),
+      text(approvalConfirmationSummary(approval)),
+      approval.local_command_hint === undefined
+        ? text(undefined)
+        : `<a href="#${approvalDetailAnchor(approval.id)}">${escapeHtml(approval.local_command_hint)}</a>`,
       text(approval.updated_at ?? approval.created_at)
     ]),
     "approvals"
   );
+
+  const details = section(
+    "Approval Details",
+    ["Approval", "Scope", "Related Artifacts", "Checks", "Rollback", "Local CLI"],
+    approvals.map((approval) => [
+      `<a id="${approvalDetailAnchor(approval.id)}" href="#${approvalDetailAnchor(approval.id)}"><code>${escapeHtml(approval.id)}</code></a><div class="subvalue">${escapeHtml(approval.status)}</div>`,
+      formatApprovalScope(approval),
+      formatApprovalRelatedArtifacts(approval.related_artifacts),
+      formatApprovalChecks(approval.checks_summary, approval.required_approvals),
+      text(approval.rollback_hint),
+      text(approval.local_command_hint)
+    ]),
+    "approval-details"
+  );
+
+  return `${summary}\n${details}`;
+}
+
+function approvalConfirmationSummary(approval: BoardApprovalSummary): string | undefined {
+  const parts = [
+    approval.confirmation_status,
+    approval.confirmation_action,
+    approval.confirmation_required_by
+  ].filter((part): part is string => part !== undefined && part.length > 0);
+  return parts.length === 0 ? undefined : parts.join(" / ");
+}
+
+function formatApprovalScope(approval: BoardApprovalSummary): string {
+  return detailLines([
+    ["task", approval.task_id],
+    ["run", approval.run_id],
+    ["operation", approval.operation],
+    ["required_for", approval.approval_required_for],
+    ["source", approval.source_branch],
+    ["target", approval.target_branch],
+    ["environment", approval.environment],
+    ["commit_range", approval.commit_range],
+    ["dry_run", optionalBoolean(approval.dry_run)],
+    ["execution_allowed", optionalBoolean(approval.execution_allowed)],
+    ["confirmation", approvalConfirmationSummary(approval)],
+    ["confirmation_reason", approval.confirmation_reason],
+    ["artifact", approval.artifact_path]
+  ]);
+}
+
+function formatApprovalRelatedArtifacts(
+  artifacts: BoardApprovalRelatedArtifact[] | undefined
+): string {
+  if (artifacts === undefined || artifacts.length === 0) {
+    return text(undefined);
+  }
+
+  return artifacts
+    .map((artifact) => {
+      const label = [artifact.kind, artifact.id].filter(Boolean).join(":");
+      const linked =
+        artifact.anchor === undefined
+          ? escapeHtml(label)
+          : `<a href="${escapeHtml(artifact.anchor)}">${escapeHtml(label)}</a>`;
+      const status =
+        artifact.status === undefined
+          ? ""
+          : `<span class="subvalue"> ${escapeHtml(artifact.status)}</span>`;
+      const artifactPath =
+        artifact.path === undefined
+          ? ""
+          : `<div class="subvalue"><code>${escapeHtml(artifact.path)}</code></div>`;
+      return `<div>${linked}${status}${artifactPath}</div>`;
+    })
+    .join("");
+}
+
+function formatApprovalChecks(
+  checks: BoardApprovalCheckSummary[] | undefined,
+  requiredApprovals: BoardApprovalRequiredApprovalSummary[] | undefined
+): string {
+  const checkHtml =
+    checks
+      ?.map(
+        (check) =>
+          `<div><code>${escapeHtml(check.name)}</code>: ${escapeHtml(check.status)}${check.detail === undefined ? "" : ` <span class="subvalue">${escapeHtml(check.detail)}</span>`}</div>`
+      )
+      .join("") ?? "";
+  const requiredHtml =
+    requiredApprovals
+      ?.map((approval) => {
+        const parts = [
+          approval.type,
+          approval.required_by,
+          approval.present === undefined ? undefined : approval.present ? "present" : "missing"
+        ].filter((part): part is string => part !== undefined && part.length > 0);
+        return `<div><code>required</code>: ${escapeHtml(parts.join(" / "))}</div>`;
+      })
+      .join("") ?? "";
+  return checkHtml.length === 0 && requiredHtml.length === 0
+    ? text(undefined)
+    : `${checkHtml}${requiredHtml}`;
 }
 
 function renderFollowUps(followUps: BoardApprovalFollowUpSummary[]): string {
@@ -561,8 +665,27 @@ function optionalNumber(value: number | undefined): string | undefined {
   return value === undefined ? undefined : String(value);
 }
 
+function optionalBoolean(value: boolean | undefined): string | undefined {
+  return value === undefined ? undefined : String(value);
+}
+
+function detailLines(lines: Array<[string, string | undefined]>): string {
+  const rows = lines.filter(([, value]) => value !== undefined && value.length > 0);
+  if (rows.length === 0) {
+    return text(undefined);
+  }
+
+  return rows
+    .map(([key, value]) => `<div><code>${escapeHtml(key)}</code>: ${escapeHtml(value ?? "")}</div>`)
+    .join("");
+}
+
 function approvalAnchor(approvalId: string): string {
   return `approval-${escapeAttribute(approvalId)}`;
+}
+
+function approvalDetailAnchor(approvalId: string): string {
+  return `approval-detail-${escapeAttribute(approvalId)}`;
 }
 
 function runAnchor(runId: string): string {
