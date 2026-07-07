@@ -64,6 +64,11 @@ const textStatusLinePattern =
   /^\s*\[([A-Z0-9][A-Z0-9_-]*)\]\s+(PASS|FAIL|SETUP_REQUIRED|OPTIONAL)\b([^\r\n]*)/gm;
 const markdownTablePattern =
   /^\|\s*([A-Z0-9][A-Z0-9_-]*)\s*\|[^|\r\n]*\|\s*(PASS|FAIL|SETUP_REQUIRED|OPTIONAL)\s*\|([^|\r\n]*)/gm;
+const looseStatusFirstLinePattern =
+  /^\s*(PASS|FAIL|SETUP_REQUIRED|OPTIONAL)\s+([A-Za-z0-9][A-Za-z0-9_.:-]*)(?:\s+([^\r\n]*))?$/gim;
+const kaironCliResultLinePattern =
+  /^\s*Kairon\s+(.+?)\s+(completed|failed|setup required)\.?\s*$/i;
+const statusAssignmentLinePattern = /^\s*status\s*=\s*([A-Za-z_ -]+)\s*$/i;
 
 export async function summarizeOperationTestResults(
   request: OperationTestSummaryRequest
@@ -222,7 +227,79 @@ function parseTextSummary(
     });
   }
 
+  results.push(...parseLooseCliSummary(source, text));
+
   return results;
+}
+
+function parseLooseCliSummary(
+  source: CandidateFile,
+  text: string
+): OperationTestSummaryItem[] {
+  const results: OperationTestSummaryItem[] = [];
+
+  for (const match of text.matchAll(looseStatusFirstLinePattern)) {
+    const status = asStatus(match[1]);
+    const id = asLooseId(match[2]);
+    if (id === undefined || status === undefined) {
+      continue;
+    }
+
+    results.push({
+      id,
+      status,
+      source: source.projectPath,
+      name: summarizeInlineDetails(match[3]),
+      details: summarizeInlineDetails(match[3])
+    });
+  }
+
+  const lines = text.split(/\r?\n/);
+  for (const [index, line] of lines.entries()) {
+    const match = line.match(kaironCliResultLinePattern);
+    if (match === null) {
+      continue;
+    }
+
+    const phraseStatus = statusFromCliValue(match[2]);
+    const assignmentStatus = findNearbyStatusAssignment(lines, index);
+    const status = assignmentStatus ?? phraseStatus;
+    const id = asLooseId(`Kairon ${match[1]}`);
+    if (id === undefined || status === undefined) {
+      continue;
+    }
+
+    results.push({
+      id,
+      status,
+      source: source.projectPath,
+      name: summarizeInlineDetails(`Kairon ${match[1]}`),
+      details: summarizeInlineDetails(line)
+    });
+  }
+
+  return results;
+}
+
+function findNearbyStatusAssignment(
+  lines: string[],
+  lineIndex: number
+): OperationTestStatus | undefined {
+  for (let offset = 1; offset <= 3; offset += 1) {
+    const candidate = lines[lineIndex + offset];
+    if (candidate === undefined) {
+      return undefined;
+    }
+
+    const match = candidate.match(statusAssignmentLinePattern);
+    if (match === null) {
+      continue;
+    }
+
+    return statusFromCliValue(match[1]);
+  }
+
+  return undefined;
 }
 
 async function resolveSources(
@@ -403,6 +480,19 @@ function asId(value: unknown): string | undefined {
   return /^[A-Z0-9][A-Z0-9_-]*$/.test(id) ? id : undefined;
 }
 
+function asLooseId(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const id = value
+    .trim()
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+  return /^[A-Z0-9][A-Z0-9_]*$/.test(id) ? id : undefined;
+}
+
 function asStatus(value: unknown): OperationTestStatus | undefined {
   if (typeof value !== "string") {
     return undefined;
@@ -410,4 +500,21 @@ function asStatus(value: unknown): OperationTestStatus | undefined {
 
   const status = value.trim().toUpperCase();
   return statusSet.has(status) ? (status as OperationTestStatus) : undefined;
+}
+
+function statusFromCliValue(value: string | undefined): OperationTestStatus | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const normalized = value.trim().replace(/[\s-]+/g, "_").toUpperCase();
+  if (normalized === "COMPLETED" || normalized === "PASSED") {
+    return "PASS";
+  }
+
+  if (normalized === "FAILED") {
+    return "FAIL";
+  }
+
+  return statusSet.has(normalized) ? (normalized as OperationTestStatus) : undefined;
 }

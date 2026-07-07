@@ -185,4 +185,43 @@ describe("operation test list matcher", () => {
     const parsed = JSON.parse(jsonOutput) as { counts: { pass_update: number } };
     expect(parsed.counts.pass_update).toBe(1);
   });
+
+  it("prints suggestions for loose CLI summary results", async () => {
+    const root = await createTempProject();
+    const logPath = path.join(root, "manual-cli-log.txt");
+    const testListPath = path.join(root, "operation-test-list.md");
+    const originalList = [
+      "| ID | Task | 観点 | 結果 | 備考 |",
+      "|---|---|---|---|---|",
+      "| GIT_BRANCH_PROTECTION | T99 | Branch protection | NOT_RUN | pending |",
+      "| KAIRON_TASK_RUN | T102 | Task run | NOT_RUN | pending |"
+    ].join("\n");
+
+    await writeFile(
+      logPath,
+      [
+        "PASS git.branch_protection GitHub branch protection",
+        "Kairon task run failed.",
+        "status=failed",
+        "api_token=SHOULD_NOT_LEAK"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(testListPath, originalList, "utf8");
+
+    const output = await summarizeOperationTestsCommand(root, "manual-cli-log.txt", {
+      testList: "operation-test-list.md",
+      suggest: true,
+      patchPreview: true
+    });
+
+    expect(output).toContain("candidates.total=2");
+    expect(output).toContain("candidates.missing_from_list=2");
+    expect(output).toContain("candidate.id=GIT_BRANCH_PROTECTION");
+    expect(output).toContain("candidate.id=KAIRON_TASK_RUN");
+    expect(output).toContain("kind=missing_from_list");
+    expect(output).toContain("patch_preview=(none)");
+    expect(output).not.toContain("SHOULD_NOT_LEAK");
+    expect(await readFile(testListPath, "utf8")).toBe(originalList);
+  });
 });

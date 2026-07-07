@@ -46,6 +46,39 @@ describe("operation test result summary", () => {
     expect(output).toContain("secret=[redacted]");
   });
 
+  it("extracts loose CLI status lines from manual operation logs", async () => {
+    const root = await createTempProject();
+    const logPath = path.join(root, "manual-cli-log.txt");
+    await writeFile(
+      logPath,
+      [
+        "PASS git.branch_protection GitHub branch protection",
+        "  - api_status=ok",
+        "Kairon agent smoke setup required.",
+        "status=setup_required",
+        "Kairon task run failed.",
+        "status=failed",
+        "api_token=SHOULD_NOT_LEAK"
+      ].join("\n"),
+      "utf8"
+    );
+
+    const summary = await summarizeOperationTestResults({
+      projectRoot: root,
+      logFile: logPath
+    });
+    const output = formatOperationTestSummary(summary);
+
+    expect(summary.pass_ids).toEqual(["GIT_BRANCH_PROTECTION"]);
+    expect(summary.fail_ids).toEqual(["KAIRON_TASK_RUN"]);
+    expect(summary.setup_required_ids).toEqual(["KAIRON_AGENT_SMOKE"]);
+    expect(output).toContain("pass_ids=GIT_BRANCH_PROTECTION");
+    expect(output).toContain("fail_ids=KAIRON_TASK_RUN");
+    expect(output).toContain("setup_required_ids=KAIRON_AGENT_SMOKE");
+    expect(output).not.toContain("SHOULD_NOT_LEAK");
+    expect(output).not.toContain("api_token=SHOULD_NOT_LEAK");
+  });
+
   it("summarizes operation-test-results roots without emitting raw evidence", async () => {
     const root = await createTempProject();
     const runRoot = path.join(root, "operation-test-results", "run-001");
