@@ -34,6 +34,7 @@ import {
   formatDiscordHttpServerResult,
   startDiscordHttpCommand
 } from "./commands/discord.js";
+import { daemonReportCommand } from "./commands/daemon.js";
 import {
   deployDryRunCommand,
   mergeDryRunCommand
@@ -384,6 +385,26 @@ export function createProgram(): Command {
     .description("Show runtime, queue, session, approval, and artifact status.")
     .action(async () => {
       console.log(await getStatusText(process.cwd()));
+    });
+
+  const daemon = program
+    .command("daemon")
+    .description("Inspect Kairon daemon evidence and long-run operation reports.");
+
+  daemon
+    .command("report")
+    .description("Generate a daemon long-run evidence report.")
+    .option("--since <duration>", "Lookback window such as 24h, 7d, or an ISO timestamp.", "24h")
+    .option("--format <format>", "Report format: markdown or json.", "markdown")
+    .option("--output <path>", "Write the report to a file instead of stdout.")
+    .option("--heartbeat-gap-ms <ms>", "Heartbeat gap threshold in milliseconds.")
+    .action(async (options: {
+      since?: string;
+      format?: string;
+      output?: string;
+      heartbeatGapMs?: string;
+    }) => {
+      console.log(await daemonReportCommand(process.cwd(), options));
     });
 
   const git = program

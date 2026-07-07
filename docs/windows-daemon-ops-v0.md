@@ -118,6 +118,25 @@ Get-ChildItem .kairon\logs\daemon -File | Sort-Object LastWriteTime -Descending 
 停止後は `daemon.health.status=stopped`、異常終了時は `daemon.health.status=fatal_error` と `daemon.health.lastError*` を確認します。
 `runtime.lastErrorCode` や `discord.gateway.errorCode` が出る場合は、先に `kairon doctor` と該当artifactを確認します。
 
+## 長時間運用の証跡pack
+
+24時間以上のdaemon運用結果は、daemon JSONLを直接共有するのではなく、redaction済みのevidence packへ集約します。
+
+```powershell
+cd M:\EnglishApp
+
+kairon daemon report --since 24h
+kairon daemon report --since 7d --format json
+kairon daemon report --since 24h --output .kairon\reports\daemon\daemon-24h.md
+```
+
+reportには次を含めます。
+
+- tick / idle / processed / fatal error / stop reasonの集計
+- heartbeat gapとstale lock疑い
+- 参照した `.kairon/runtime/daemon/*.jsonl` のpath
+- token / api key / secret / password をredactしたfailure summary
+
 ## stale lock復旧
 
 daemonを停止した後もlockが残る場合は、次の順で確認します。
