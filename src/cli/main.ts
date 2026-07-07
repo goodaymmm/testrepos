@@ -66,6 +66,7 @@ import {
   createTaskCommand,
   runTaskCommand
 } from "./commands/task.js";
+import { generateOperationTestCommandsCommand } from "./commands/test-commands.js";
 import { summarizeOperationTestsCommand } from "./commands/test-summary.js";
 
 export function createProgram(): Command {
@@ -413,6 +414,20 @@ export function createProgram(): Command {
   const operationTest = program
     .command("test")
     .description("Inspect operation test results.");
+
+  operationTest
+    .command("commands")
+    .description("Generate PowerShell commands for operation test profiles.")
+    .option("--profile <id>", "Operation test command profile id. Repeatable.", collectOption, [])
+    .option("--range <range>", "Task range filter, for example T116-T120.")
+    .option("--format <format>", "Output format: powershell or json. Defaults to powershell.")
+    .action(async (options: {
+      profile?: string[];
+      range?: string;
+      format?: string;
+    }) => {
+      console.log(generateOperationTestCommandsCommand(options));
+    });
 
   operationTest
     .command("summarize")

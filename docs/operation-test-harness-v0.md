@@ -40,6 +40,32 @@ aliasはsummary候補のIDを既存テスト行へ解決するためだけに使
 `--patch-preview` は該当行の置換案を表示しますが、テストリストを直接書き換えません。
 同じsource IDに複数aliasがある場合は後勝ちで解決し、warningを出します。
 
+## Command profile generator
+
+`kairon test commands` は、operation test用のPowerShell commandをprofile registryから生成します。
+手書きdocsの長いコマンドを直接コピーする代わりに、profile IDまたはtask rangeを指定して再生成できます。
+
+```powershell
+kairon test commands --profile t116-alias
+kairon test commands --range T116-T118
+kairon test commands --profile branch-protection-public-sandbox --format powershell
+```
+
+生成コマンドは、既定で次の共通変数を用意します。
+
+```powershell
+$KAIRON
+$TARGET
+$RUN_STAMP
+$RESULT_ROOT
+```
+
+`$KAIRON` は既定で現在のdirectory、`$TARGET` は既定で `$KAIRON` です。
+別projectを対象にする場合は、実行前に `KAIRON_ROOT` / `KAIRON_TARGET_ROOT` を環境変数として指定できます。
+
+Node.jsを使うfixture生成は、`node -e` ではなく `$RESULT_ROOT` 配下の一時 `.mjs` ファイルを生成して実行する形式にします。
+`GH_TOKEN` / `GITHUB_TOKEN` などのsecretは値を出さず、必要なenv名だけを表示します。
+
 ## 実行対象
 
 デフォルトでは次をすべて実行します。
