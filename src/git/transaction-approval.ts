@@ -23,7 +23,19 @@ export async function handleGitPushApprovalDecision(
   }
 
   if (input.decision === "approve") {
-    await new WorkQueue(projectRoot).enqueue({
+    const queue = new WorkQueue(projectRoot);
+    const existing = (await queue.list()).find(
+      (item) =>
+        item.type === "git.transaction" &&
+        (item.status === "ready" || item.status === "claimed") &&
+        item.payload?.action === "resume_push" &&
+        item.payload.approval_id === readString(approval.id)
+    );
+    if (existing !== undefined) {
+      return;
+    }
+
+    await queue.enqueue({
       type: "git.transaction",
       priority: 90,
       task_id: readString(approval.task_id),

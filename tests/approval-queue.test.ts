@@ -11,6 +11,7 @@ import {
 import { initializeProject } from "../src/cli/commands/init.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { WorkQueue } from "../src/queue/work-queue.js";
+import { StateApplier } from "../src/state/state-applier.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("ApprovalQueue", () => {
@@ -147,6 +148,31 @@ describe("ApprovalQueue", () => {
         }
       }
     ]);
+
+    await new StateApplier(root).appendEvent({
+      type: "approval.decided",
+      payload: {
+        approval_id: "APR-0001",
+        decision: "approve"
+      },
+      created_at: "2026-05-26T00:01:00.000Z"
+    });
+    await expect(new WorkQueue(root).list("ready")).resolves.toHaveLength(1);
+    await expect(
+      readJsonFile(
+        path.join(
+          root,
+          ".kairon",
+          "follow-ups",
+          "FUP-APR-0001-approve-git-resume_push.json"
+        )
+      )
+    ).resolves.toMatchObject({
+      approval_id: "APR-0001",
+      action_type: "git.resume_push",
+      status: "pending",
+      queue_item_type: "git.transaction"
+    });
   });
 
   it("allows local CLI approval for confirmation-required high-risk approvals", async () => {

@@ -1,4 +1,5 @@
 import type {
+  BoardApprovalFollowUpSummary,
   BoardApprovalSummary,
   BoardCleanupProposalSummary,
   BoardDailyReportSummary,
@@ -92,6 +93,7 @@ export function renderBoardHtml(projection: BoardProjection): string {
       <a href="#discord">Discord</a>
       <a href="#maintenance">Maintenance</a>
       <a href="#approvals">Approvals</a>
+      <a href="#follow-ups">Follow-ups</a>
       <a href="#queue">Queue</a>
       <a href="#runs">Runs</a>
       <a href="#reviews">Reviews</a>
@@ -107,6 +109,7 @@ export function renderBoardHtml(projection: BoardProjection): string {
       ${stat("Runtime", projection.runtime.runtimeLock.locked ? "locked" : "idle", projection.runtime.runtimeLock.stale ? "stale=true" : undefined)}
       ${stat("Queue Ready", String(projection.queue.ready), `failed=${projection.queue.failed}`)}
       ${stat("Approvals", String(projection.approvals.pending), "pending")}
+      ${stat("Follow-ups", String(projection.follow_ups.pending), `snoozed=${projection.follow_ups.snoozed}`)}
       ${stat("Recovery", String(projection.runtime.recovery.targets), "targets")}
       ${stat("Git Push", String(projection.git.transactions_requiring_approval), `approval required | pr=${projection.git.transactions_ready_for_pr}`)}
       ${stat("Discord", projection.discord.gateway?.status ?? "unknown", `audit=${projection.discord.notifications.total}/${projection.discord.decisions.total}`)}
@@ -119,6 +122,7 @@ export function renderBoardHtml(projection: BoardProjection): string {
     </div>
     ${renderDiscord(projection.discord.notifications, projection.discord.decisions)}
     ${renderApprovals(projection.approvals.recent)}
+    ${renderFollowUps(projection.follow_ups.recent)}
     ${renderQueue(projection.queue.recent)}
     ${renderRuns(projection.runs.recent)}
     ${renderTasks(projection.tasks.recent)}
@@ -418,6 +422,23 @@ function renderApprovals(approvals: BoardApprovalSummary[]): string {
   );
 }
 
+function renderFollowUps(followUps: BoardApprovalFollowUpSummary[]): string {
+  return section(
+    "Follow-ups",
+    ["ID", "Status", "Action", "Approval", "Risk", "Hint", "Updated"],
+    followUps.map((followUp) => [
+      `<a id="${followUpAnchor(followUp.id)}" href="#${followUpAnchor(followUp.id)}"><code>${escapeHtml(followUp.id)}</code></a>`,
+      text(followUp.status),
+      text(followUp.action_type),
+      text(followUp.approval_id),
+      text(followUp.risk_level),
+      text(followUp.command_hint),
+      text(followUp.updated_at ?? followUp.created_at)
+    ]),
+    "follow-ups"
+  );
+}
+
 function renderRuns(runs: BoardRunSummary[]): string {
   return section(
     "Runs",
@@ -558,6 +579,10 @@ function reviewResultAnchor(reviewId: string): string {
 
 function gitTransactionAnchor(transactionId: string): string {
   return `git-transaction-${escapeAttribute(transactionId)}`;
+}
+
+function followUpAnchor(followUpId: string): string {
+  return `follow-up-${escapeAttribute(followUpId)}`;
 }
 
 function escapeHtml(value: string): string {
