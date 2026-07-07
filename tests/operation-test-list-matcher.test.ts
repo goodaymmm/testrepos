@@ -6,6 +6,7 @@ import type { OperationTestSummary } from "../src/operation-test/result-summary.
 import {
   createOperationTestUpdateSuggestions,
   formatOperationTestUpdateSuggestions,
+  parseOperationTestListAliases,
   parseOperationTestListMarkdown
 } from "../src/operation-test/test-list-matcher.js";
 import { createTempProject } from "./test-utils.js";
@@ -43,6 +44,28 @@ describe("operation test list matcher", () => {
     ]);
     expect(cases[0].task_id).toBe("T88");
     expect(cases[0].line).toBe(3);
+  });
+
+  it("parses test list aliases for loose summary result ids", () => {
+    const aliases = parseOperationTestListAliases(
+      [
+        "<!-- kairon:alias git.branch_protection=OT-T116-01-01 -->",
+        "<!-- kairon:alias KAIRON_TASK_RUN=RET-T116-01-02 -->"
+      ].join("\n")
+    );
+
+    expect(aliases).toEqual([
+      {
+        source_id: "GIT_BRANCH_PROTECTION",
+        target_id: "OT-T116-01-01",
+        line: 1
+      },
+      {
+        source_id: "KAIRON_TASK_RUN",
+        target_id: "RET-T116-01-02",
+        line: 2
+      }
+    ]);
   });
 
   it("creates non-destructive PASS and unpassed update candidates", () => {
@@ -223,5 +246,126 @@ describe("operation test list matcher", () => {
     expect(output).toContain("patch_preview=(none)");
     expect(output).not.toContain("SHOULD_NOT_LEAK");
     expect(await readFile(testListPath, "utf8")).toBe(originalList);
+  });
+
+  it("maps loose CLI summary results through aliases before creating patch previews", async () => {
+    const root = await createTempProject();
+    const logPath = path.join(root, "manual-cli-log.txt");
+    const testListPath = path.join(root, "operation-test-list.md");
+    const originalList = [
+      "<!-- kairon:alias GIT_BRANCH_PROTECTION=OT-T116-01-01 -->",
+      "<!-- kairon:alias KAIRON_TASK_RUN=RET-T116-01-02 -->",
+      "| ID | Task | 観点 | 結果 | 備考 |",
+      "|---|---|---|---|---|",
+      "| OT-T116-01-01 | T116 | Branch protection | NOT_RUN | pending |",
+      "| RET-T116-01-02 | T116 | Task run | NOT_RUN | pending |"
+    ].join("\n");
+
+    await writeFile(
+      logPath,
+      [
+        "PASS git.branch_protection GitHub branch protection",
+        "Kairon task run failed.",
+        "status=failed",
+        "api_token=SHOULD_NOT_LEAK"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(testListPath, originalList, "utf8");
+
+    const output = await summarizeOperationTestsCommand(root, "manual-cli-log.txt", {
+      testList: "operation-test-list.md",
+      suggest: true,
+      patchPreview: true
+    });
+    const jsonOutput = await summarizeOperationTestsCommand(root, "manual-cli-log.txt", {
+      testList: "operation-test-list.md",
+      suggest: true,
+      json: true
+    });
+
+    expect(output).toContain("aliases.total=2");
+    expect(output).toContain("candidates.total=2");
+    expect(output).toContain("candidates.pass_update=1");
+    expect(output).toContain("candidates.unpassed=1");
+    expect(output).toContain("candidates.missing_from_list=0");
+    expect(output).toContain("candidate.id=OT-T116-01-01 original_id=GIT_BRANCH_PROTECTION");
+    expect(output).toContain("candidate.id=RET-T116-01-02 original_id=KAIRON_TASK_RUN");
+    expect(output).toContain("patch_preview.after=| OT-T116-01-01 | T116 | Branch protection | PASS | pending |");
+    expect(output).not.toContain("SHOULD_NOT_LEAK");
+    expect(await readFile(testListPath, "utf8")).toBe(originalList);
+
+    const parsed = JSON.parse(jsonOutput) as {
+      alias_count: number;
+      counts: { pass_update: number; missing_from_list: number };
+      candidates: Array<{ id: string; original_id?: string }>;
+    };
+    expect(parsed.alias_count).toBe(2);
+    expect(parsed.counts.pass_update).toBe(1);
+    expect(parsed.counts.missing_from_list).toBe(0);
+    expect(parsed.candidates[0]).toMatchObject({
+      id: "OT-T116-01-01",
+      original_id: "GIT_BRANCH_PROTECTION"
+    });
+  });
+
+  it("keeps unresolved aliases as missing candidates with the original summary id", async () => {
+    const root = await createTempProject();
+    const logPath = path.join(root, "manual-cli-log.txt");
+    const testListPath = path.join(root, "operation-test-list.md");
+    const originalList = [
+      "<!-- kairon:alias GIT_BRANCH_PROTECTION=OT-T116-99-99 -->",
+      "| ID | Task | 観点 | 結果 | 備考 |",
+      "|---|---|---|---|---|",
+      "| OT-T116-01-01 | T116 | Branch protection | NOT_RUN | pending |"
+    ].join("\n");
+
+    await writeFile(
+      logPath,
+      "PASS git.branch_protection GitHub branch protection\n",
+      "utf8"
+    );
+    await writeFile(testListPath, originalList, "utf8");
+
+    const output = await summarizeOperationTestsCommand(root, "manual-cli-log.txt", {
+      testList: "operation-test-list.md",
+      suggest: true,
+      patchPreview: true
+    });
+
+    expect(output).toContain("candidate.id=OT-T116-99-99 original_id=GIT_BRANCH_PROTECTION");
+    expect(output).toContain("kind=missing_from_list");
+    expect(output).toContain("patch_preview=(none)");
+  });
+
+  it("uses the latest conflicting alias and reports an alias warning", async () => {
+    const root = await createTempProject();
+    const logPath = path.join(root, "manual-cli-log.txt");
+    const testListPath = path.join(root, "operation-test-list.md");
+    const originalList = [
+      "<!-- kairon:alias GIT_BRANCH_PROTECTION=OT-T116-01-00 -->",
+      "<!-- kairon:alias GIT_BRANCH_PROTECTION=OT-T116-01-01 -->",
+      "| ID | Task | 観点 | 結果 | 備考 |",
+      "|---|---|---|---|---|",
+      "| OT-T116-01-01 | T116 | Branch protection | NOT_RUN | pending |"
+    ].join("\n");
+
+    await writeFile(
+      logPath,
+      "PASS git.branch_protection GitHub branch protection\n",
+      "utf8"
+    );
+    await writeFile(testListPath, originalList, "utf8");
+
+    const output = await summarizeOperationTestsCommand(root, "manual-cli-log.txt", {
+      testList: "operation-test-list.md",
+      suggest: true,
+      patchPreview: true
+    });
+
+    expect(output).toContain("aliases.total=1");
+    expect(output).toContain("alias_warning=Alias GIT_BRANCH_PROTECTION redefined from OT-T116-01-00 to OT-T116-01-01 at line 2; using latest.");
+    expect(output).toContain("candidate.id=OT-T116-01-01 original_id=GIT_BRANCH_PROTECTION");
+    expect(output).toContain("kind=pass_update");
   });
 });

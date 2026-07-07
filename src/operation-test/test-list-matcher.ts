@@ -24,6 +24,12 @@ export type OperationTestListCase = {
   cells: string[];
 };
 
+export type OperationTestListAlias = {
+  source_id: string;
+  target_id: string;
+  line: number;
+};
+
 export type OperationTestUpdateCandidateKind =
   | "pass_update"
   | "unpassed"
@@ -35,6 +41,7 @@ export type OperationTestUpdateCandidateKind =
 
 export type OperationTestUpdateCandidate = {
   id: string;
+  original_id?: string;
   task_id?: string;
   kind: OperationTestUpdateCandidateKind;
   current_status?: OperationTestListStatus;
@@ -52,6 +59,8 @@ export type OperationTestUpdateSuggestions = {
   schema_version: "0.1";
   test_list: string;
   evidence_paths: string[];
+  alias_count: number;
+  alias_warnings: string[];
   counts: Record<OperationTestUpdateCandidateKind, number> & {
     total: number;
   };
@@ -60,16 +69,24 @@ export type OperationTestUpdateSuggestions = {
 
 type SummaryResultById = {
   id: string;
+  original_id?: string;
   status: OperationTestStatus;
   source: string;
   details?: string;
 };
 
-const operationTestIdPattern = /\bOT-[A-Z0-9][A-Z0-9_-]*\b/i;
+type AliasIndex = {
+  aliasesBySourceId: Map<string, OperationTestListAlias>;
+  warnings: string[];
+};
+
+const operationTestIdPattern = /\b(?:OT|RET)-[A-Z0-9][A-Z0-9_-]*\b/i;
 const taskIdPattern = /\bT\d+[A-Z]?\b/i;
 const statusHeaderPattern = /^(status|result|results|判定|結果|現状)$/i;
 const looseStatusHeaderPattern = /(status|result|判定|結果|現状)/i;
 const separatorCellPattern = /^:?-{3,}:?$/;
+const aliasCommentPattern =
+  /<!--\s*kairon:alias\s+([A-Za-z0-9_.:-]+)\s*=\s*((?:OT|RET)-[A-Za-z0-9][A-Za-z0-9_-]*)\s*-->/gi;
 
 const statusPriority: Record<OperationTestStatus, number> = {
   FAIL: 4,
@@ -126,6 +143,31 @@ export function parseOperationTestListMarkdown(
   return cases;
 }
 
+export function parseOperationTestListAliases(
+  markdown: string
+): OperationTestListAlias[] {
+  const aliases: OperationTestListAlias[] = [];
+  const lines = markdown.split(/\r?\n/);
+
+  for (const [index, line] of lines.entries()) {
+    for (const match of line.matchAll(aliasCommentPattern)) {
+      const sourceId = normalizeAliasSourceId(match[1]);
+      const targetId = normalizeOperationTestId(match[2]);
+      if (sourceId === undefined || targetId === undefined) {
+        continue;
+      }
+
+      aliases.push({
+        source_id: sourceId,
+        target_id: targetId,
+        line: index + 1
+      });
+    }
+  }
+
+  return aliases;
+}
+
 export function createOperationTestUpdateSuggestions(input: {
   projectRoot: string;
   testListPath: string;
@@ -136,7 +178,12 @@ export function createOperationTestUpdateSuggestions(input: {
   const testList = toDisplayPath(input.projectRoot, input.testListPath);
   const cases = parseOperationTestListMarkdown(input.testListMarkdown);
   const casesById = new Map(cases.map((testCase) => [testCase.id, testCase]));
-  const summaryResults = summarizeResultsById(input.summary.results);
+  const aliases = buildAliasIndex(parseOperationTestListAliases(input.testListMarkdown));
+  const summaryResults = summarizeResultsById(
+    input.summary.results,
+    casesById,
+    aliases.aliasesBySourceId
+  );
   const candidates = summaryResults.map((result) =>
     toUpdateCandidate(result, casesById.get(result.id), input.patchPreview === true)
   );
@@ -145,6 +192,8 @@ export function createOperationTestUpdateSuggestions(input: {
     schema_version: "0.1",
     test_list: testList,
     evidence_paths: input.summary.sources,
+    alias_count: aliases.aliasesBySourceId.size,
+    alias_warnings: aliases.warnings,
     counts: countCandidates(candidates),
     candidates
   };
@@ -158,6 +207,7 @@ export function formatOperationTestUpdateSuggestions(
     "Kairon operation test update suggestions.",
     `test_list=${suggestions.test_list}`,
     `evidence_paths=${formatList(suggestions.evidence_paths)}`,
+    `aliases.total=${suggestions.alias_count}`,
     `candidates.total=${suggestions.counts.total}`,
     `candidates.pass_update=${suggestions.counts.pass_update}`,
     `candidates.unpassed=${suggestions.counts.unpassed}`,
@@ -166,6 +216,7 @@ export function formatOperationTestUpdateSuggestions(
     `candidates.already_pass=${suggestions.counts.already_pass}`,
     `candidates.unknown_status=${suggestions.counts.unknown_status}`,
     `candidates.missing_from_list=${suggestions.counts.missing_from_list}`,
+    ...suggestions.alias_warnings.map((warning) => `alias_warning=${warning}`),
     ...suggestions.candidates.map(formatCandidate),
     ...(options.patchPreview === true
       ? formatPatchPreview(suggestions.candidates)
@@ -281,6 +332,14 @@ function normalizeOperationTestId(value: string): string | undefined {
   return match?.[0].toUpperCase();
 }
 
+function normalizeAliasSourceId(value: string): string | undefined {
+  const id = stripMarkdown(value)
+    .replace(/[^A-Za-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .toUpperCase();
+  return /^[A-Z0-9][A-Z0-9_]*$/.test(id) ? id : undefined;
+}
+
 function inferTaskId(id: string, cells: string[]): string | undefined {
   const idMatch = id.match(taskIdPattern);
   if (idMatch !== null) {
@@ -304,18 +363,22 @@ function findName(cells: string[], idColumn: number): string | undefined {
 }
 
 function summarizeResultsById(
-  results: OperationTestSummaryItem[]
+  results: OperationTestSummaryItem[],
+  casesById: Map<string, OperationTestListCase>,
+  aliasesBySourceId: Map<string, OperationTestListAlias>
 ): SummaryResultById[] {
   const byId = new Map<string, SummaryResultById>();
 
   for (const result of results) {
-    const existing = byId.get(result.id);
+    const resolved = resolveSummaryResultId(result, casesById, aliasesBySourceId);
+    const existing = byId.get(resolved.id);
     if (
       existing === undefined ||
       statusPriority[result.status] > statusPriority[existing.status]
     ) {
-      byId.set(result.id, {
-        id: result.id,
+      byId.set(resolved.id, {
+        id: resolved.id,
+        original_id: resolved.original_id,
         status: result.status,
         source: result.source,
         details: result.details
@@ -326,6 +389,46 @@ function summarizeResultsById(
   return [...byId.values()].sort((left, right) => left.id.localeCompare(right.id));
 }
 
+function buildAliasIndex(aliases: OperationTestListAlias[]): AliasIndex {
+  const aliasesBySourceId = new Map<string, OperationTestListAlias>();
+  const warnings: string[] = [];
+
+  for (const alias of aliases) {
+    const existing = aliasesBySourceId.get(alias.source_id);
+    if (existing !== undefined && existing.target_id !== alias.target_id) {
+      warnings.push(
+        sanitizeText(
+          `Alias ${alias.source_id} redefined from ${existing.target_id} to ${alias.target_id} at line ${alias.line}; using latest.`
+        ) ?? `Alias ${alias.source_id} redefined at line ${alias.line}; using latest.`
+      );
+    }
+
+    aliasesBySourceId.set(alias.source_id, alias);
+  }
+
+  return { aliasesBySourceId, warnings };
+}
+
+function resolveSummaryResultId(
+  result: OperationTestSummaryItem,
+  casesById: Map<string, OperationTestListCase>,
+  aliasesBySourceId: Map<string, OperationTestListAlias>
+): { id: string; original_id?: string } {
+  if (casesById.has(result.id)) {
+    return { id: result.id };
+  }
+
+  const alias = aliasesBySourceId.get(result.id);
+  if (alias === undefined) {
+    return { id: result.id };
+  }
+
+  return {
+    id: alias.target_id,
+    original_id: result.id
+  };
+}
+
 function toUpdateCandidate(
   result: SummaryResultById,
   testCase: OperationTestListCase | undefined,
@@ -334,6 +437,7 @@ function toUpdateCandidate(
   if (testCase === undefined) {
     return {
       id: result.id,
+      original_id: result.original_id,
       kind: "missing_from_list",
       suggested_status: result.status,
       source: result.source,
@@ -344,6 +448,7 @@ function toUpdateCandidate(
   const kind = classifyCandidate(result.status, testCase.current_status);
   const candidate: OperationTestUpdateCandidate = {
     id: result.id,
+    original_id: result.original_id,
     task_id: testCase.task_id,
     kind,
     current_status: testCase.current_status,
@@ -419,6 +524,9 @@ function countCandidates(
 function formatCandidate(candidate: OperationTestUpdateCandidate): string {
   return [
     `candidate.id=${candidate.id}`,
+    candidate.original_id === undefined
+      ? undefined
+      : `original_id=${candidate.original_id}`,
     candidate.task_id === undefined ? undefined : `task=${candidate.task_id}`,
     `kind=${candidate.kind}`,
     candidate.current_status === undefined

@@ -26,6 +26,20 @@ operation-test-results/<yyyyMMdd-HHmmss>/summary.md
 operation-test-results/<yyyyMMdd-HHmmss>/backup/kairon-state/
 ```
 
+## Result summaryとテストリストalias
+
+`kairon test summarize --test-list <md> --suggest` は、operation test resultからPASS / FAIL / SETUP_REQUIRED / OPTIONAL候補を抽出し、テストリストへの反映候補を表示します。
+ログ由来の汎用IDがテストリストの `OT-*` / `RET-*` IDと一致しない場合は、テストリスト側にalias commentを置いて対応付けできます。
+
+```markdown
+<!-- kairon:alias GIT_BRANCH_PROTECTION=OT-T99-01-04 -->
+<!-- kairon:alias KAIRON_TASK_RUN=RET-T102-01-02 -->
+```
+
+aliasはsummary候補のIDを既存テスト行へ解決するためだけに使います。
+`--patch-preview` は該当行の置換案を表示しますが、テストリストを直接書き換えません。
+同じsource IDに複数aliasがある場合は後勝ちで解決し、warningを出します。
+
 ## 実行対象
 
 デフォルトでは次をすべて実行します。
