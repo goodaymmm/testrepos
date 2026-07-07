@@ -24,6 +24,10 @@ kairon cleanup archive <proposal-id>
 kairon config propose
 kairon config apply <proposal-id> [--dry-run]
 kairon docking analyze
+kairon git pr list
+kairon git pr show <candidate-id>
+kairon git pr create <candidate-id> [--dry-run]
+kairon git pr create <candidate-id> --execute --approval-id <approval-id>
 kairon start
 kairon start --daemon [--interval-ms <ms>] [--max-ticks <count>] [--max-idle-ticks <count>]
 kairon stop
@@ -313,6 +317,40 @@ do not write .kairon/config/project.json
 
 MVPでは、`.mcp.json`、`.claude/**`、`.gemini/**`、`.antigravitycli/**` を protected 候補に寄せる。
 `tmpclaude-*`、`dist/**`、`build/**`、`coverage/**`、`node_modules/**` は generated 候補に寄せる。
+
+## kairon git pr
+
+Git transactionが出力した `.kairon/git/pr-candidates/*.json` を確認し、Pull Request作成のdry-runまたは実行を行う。
+
+```text
+kairon git pr list
+kairon git pr show GTX-0001
+kairon git pr create GTX-0001 --dry-run
+kairon git pr create GTX-0001 --execute --approval-id APR-0001
+```
+
+処理。
+
+```text
+load PR candidate artifact
+build PR title / body / base / head payload
+default to dry-run and do not call GitHub
+require --execute, approved approval id, and GitHub token for actual creation
+use GH_TOKEN first, then GITHUB_TOKEN
+```
+
+主なoption。
+
+```text
+--dry-run                 GitHub APIを呼ばず、作成予定payloadを表示する。既定動作。
+--execute                 GitHub PRを作成する。
+--approval-id <id>        --execute時に必須の承認済みapproval id。
+--repository <owner/repo> .git/configのremoteから推定できない場合に明示する。
+--draft                   --execute時にDraft PRとして作成する。
+--token-env <envName>     GH_TOKEN / GITHUB_TOKEN 以外のtoken環境変数を指定する。
+```
+
+PR本文は日本語テンプレートで生成し、raw diffやtokenは表示しない。実作成は `status=ready_for_pr` の候補だけを許可し、それ以外は候補artifactの `create_hint` を表示して停止する。
 
 ## kairon board
 

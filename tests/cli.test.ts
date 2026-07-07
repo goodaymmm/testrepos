@@ -19,6 +19,7 @@ describe("createProgram", () => {
       "deploy",
       "docking",
       "doctor",
+      "git",
       "init",
       "leave",
       "maintenance",
@@ -278,6 +279,32 @@ describe("createProgram", () => {
         "--check",
         "--rollback-hint",
         "--reason"
+      ])
+    );
+  });
+
+  it("registers git PR candidate commands", () => {
+    const git = createProgram().commands.find((command) => command.name() === "git");
+    const pr = git?.commands.find((command) => command.name() === "pr");
+
+    expect(git?.description()).toContain("git artifacts");
+    expect(pr?.commands.map((command) => command.name()).sort()).toEqual([
+      "create",
+      "list",
+      "show"
+    ]);
+    expect(
+      pr?.commands
+        .find((command) => command.name() === "create")
+        ?.options.map((option) => option.long)
+    ).toEqual(
+      expect.arrayContaining([
+        "--dry-run",
+        "--execute",
+        "--approval-id",
+        "--repository",
+        "--draft",
+        "--token-env"
       ])
     );
   });

@@ -1,5 +1,6 @@
 import path from "node:path";
-import { writeJsonFileAtomic } from "../core/fs/json-file.js";
+import { readdir } from "node:fs/promises";
+import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import type { ChangedFile } from "./diff-snapshot.js";
 import type {
@@ -64,15 +65,93 @@ export async function writePrCandidateArtifact(
   return artifact;
 }
 
+export async function listPrCandidateArtifacts(
+  projectRoot: string
+): Promise<GitPrCandidateArtifact[]> {
+  const artifactsDir = prCandidateArtifactsDir(projectRoot);
+  let entries: string[];
+
+  try {
+    entries = await readdir(artifactsDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  }
+
+  const artifacts = await Promise.all(
+    entries
+      .filter((entry) => entry.endsWith(".json"))
+      .map((entry) =>
+        readJsonFile<GitPrCandidateArtifact>(resolveInside(artifactsDir, entry))
+      )
+  );
+
+  return artifacts
+    .filter((artifact) => artifact.artifact_kind === "git_pr_candidate")
+    .sort(comparePrCandidateArtifacts);
+}
+
+export async function readPrCandidateArtifact(
+  projectRoot: string,
+  candidateId: string
+): Promise<GitPrCandidateArtifact> {
+  const normalized = normalizePrCandidateId(candidateId);
+
+  try {
+    const artifact = await readJsonFile<GitPrCandidateArtifact>(
+      prCandidateArtifactPath(projectRoot, normalized)
+    );
+    if (artifact.artifact_kind !== "git_pr_candidate") {
+      throw new Error(`Invalid PR candidate artifact kind: ${artifact.artifact_kind}`);
+    }
+
+    return artifact;
+  } catch (error) {
+    if (String(error).includes("ENOENT")) {
+      throw new GitPrCandidateNotFoundError(normalized);
+    }
+
+    throw error;
+  }
+}
+
+export function prCandidateArtifactsDir(projectRoot: string): string {
+  return resolveInside(getKaironPaths(projectRoot).kaironDir, "git", "pr-candidates");
+}
+
 export function prCandidateArtifactPath(
   projectRoot: string,
   transactionId: string
 ): string {
-  return resolveInside(
-    getKaironPaths(projectRoot).kaironDir,
-    "git",
-    "pr-candidates",
-    `${transactionId}.json`
+  return resolveInside(prCandidateArtifactsDir(projectRoot), `${transactionId}.json`);
+}
+
+export class GitPrCandidateNotFoundError extends Error {
+  constructor(readonly candidateId: string) {
+    super(`Git PR candidate not found: ${candidateId}`);
+    this.name = "GitPrCandidateNotFoundError";
+  }
+}
+
+function normalizePrCandidateId(candidateId: string): string {
+  const trimmed = candidateId.trim().replace(/\.json$/u, "");
+  if (!/^[A-Za-z0-9._-]+$/u.test(trimmed)) {
+    throw new Error(`Invalid git PR candidate id: ${candidateId}`);
+  }
+
+  return trimmed;
+}
+
+function comparePrCandidateArtifacts(
+  left: GitPrCandidateArtifact,
+  right: GitPrCandidateArtifact
+): number {
+  return (
+    Date.parse(right.updated_at || right.created_at) -
+    Date.parse(left.updated_at || left.created_at)
   );
 }
 
