@@ -166,8 +166,17 @@ describe("createProgram", () => {
   it("registers operation test summary command", () => {
     const test = createProgram().commands.find((command) => command.name() === "test");
     const summarize = test?.commands.find((command) => command.name() === "summarize");
+    const commands = test?.commands.find((command) => command.name() === "commands");
 
     expect(test?.description()).toContain("operation test results");
+    expect(test?.commands.map((command) => command.name()).sort()).toEqual([
+      "commands",
+      "summarize"
+    ]);
+    expect(commands?.description()).toContain("Generate PowerShell commands");
+    expect(commands?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining(["--profile", "--range", "--format"])
+    );
     expect(summarize?.description()).toContain("without editing docs");
     expect(summarize?.options.map((option) => option.long)).toContain("--result-root");
     expect(summarize?.options.map((option) => option.long)).toEqual(
