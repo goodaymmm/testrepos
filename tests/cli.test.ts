@@ -16,6 +16,7 @@ describe("createProgram", () => {
       "board",
       "cleanup",
       "config",
+      "daemon",
       "deploy",
       "discord",
       "docking",
@@ -90,6 +91,24 @@ describe("createProgram", () => {
 
     expect(status?.description()).toContain("artifact status");
     expect(recovery?.description()).toContain("Inspect and resolve");
+  });
+
+  it("registers daemon evidence report command", () => {
+    const daemon = createProgram().commands.find(
+      (command) => command.name() === "daemon"
+    );
+    const report = daemon?.commands.find((command) => command.name() === "report");
+
+    expect(daemon?.description()).toContain("daemon evidence");
+    expect(report?.description()).toContain("long-run evidence report");
+    expect(report?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining([
+        "--since",
+        "--format",
+        "--output",
+        "--heartbeat-gap-ms"
+      ])
+    );
   });
 
   it("registers board export and serve commands", () => {
