@@ -32,6 +32,7 @@ describe("createProgram", () => {
       "release",
       "review",
       "start",
+      "state",
       "status",
       "stop",
       "task",
@@ -108,6 +109,27 @@ describe("createProgram", () => {
         "--output",
         "--heartbeat-gap-ms"
       ])
+    );
+  });
+
+  it("registers state integrity and snapshot commands", () => {
+    const state = createProgram().commands.find(
+      (command) => command.name() === "state"
+    );
+    const check = state?.commands.find((command) => command.name() === "check");
+    const snapshot = state?.commands.find(
+      (command) => command.name() === "snapshot"
+    );
+
+    expect(state?.description()).toContain("file-based state integrity");
+    expect(state?.commands.map((command) => command.name()).sort()).toEqual([
+      "check",
+      "snapshot"
+    ]);
+    expect(check?.options.map((option) => option.long)).toContain("--format");
+    expect(snapshot?.description()).toContain("Restore is intentionally not implemented");
+    expect(snapshot?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining(["--dry-run", "--format"])
     );
   });
 

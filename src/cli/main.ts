@@ -69,6 +69,10 @@ import {
 } from "./commands/release.js";
 import { runReviewLoopCommand } from "./commands/review.js";
 import { startRuntime } from "./commands/start.js";
+import {
+  stateCheckCommand,
+  stateSnapshotCommand
+} from "./commands/state.js";
 import { getStatusText } from "./commands/status.js";
 import { stopRuntime } from "./commands/stop.js";
 import {
@@ -405,6 +409,27 @@ export function createProgram(): Command {
       heartbeatGapMs?: string;
     }) => {
       console.log(await daemonReportCommand(process.cwd(), options));
+    });
+
+  const state = program
+    .command("state")
+    .description("Inspect Kairon file-based state integrity and snapshot targets.");
+
+  state
+    .command("check")
+    .description("Check .kairon file-based state integrity.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: { format?: string }) => {
+      console.log(await stateCheckCommand(process.cwd(), options));
+    });
+
+  state
+    .command("snapshot")
+    .description("Inspect state snapshot targets. Restore is intentionally not implemented.")
+    .option("--dry-run", "List snapshot targets without writing a snapshot.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: { dryRun?: boolean; format?: string }) => {
+      console.log(await stateSnapshotCommand(process.cwd(), options));
     });
 
   const git = program

@@ -324,6 +324,38 @@ MVP は local monotonic counter を使う。
 }
 ```
 
+## State Integrity Check
+
+`.kairon/` 配下の file-based state は、次のコマンドで整合性を確認できる。
+
+```text
+kairon state check
+kairon state check --format json
+```
+
+`state check` は以下を検出する。
+
+- JSON / JSONL の parse error
+- `schema_version` がない state record
+- task / run / approval の missing reference
+- path ID と record ID の mismatch
+- task / run 配下の orphan artifact
+
+この check は read-only であり、broken state の自動修復はしない。
+修復が必要な場合は、検出結果をもとに個別の修正タスクとして扱う。
+
+## State Snapshot Dry Run
+
+snapshot 対象の state file は、次のコマンドで dry-run として確認できる。
+
+```text
+kairon state snapshot --dry-run
+kairon state snapshot --dry-run --format json
+```
+
+dry-run は `.kairon/` 配下の JSON / JSONL / MD state artifact を列挙し、category / file count / total bytes を出力する。
+MVP では restore 実行と snapshot archive 作成は未実装とし、対象確認のみを提供する。
+
 ## Recovery
 
 ```text
