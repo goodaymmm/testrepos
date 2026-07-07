@@ -31,6 +31,10 @@ import {
 import { applyConfig, proposeConfig } from "./commands/config.js";
 import { analyzeDocking } from "./commands/docking.js";
 import {
+  formatDiscordHttpServerResult,
+  startDiscordHttpCommand
+} from "./commands/discord.js";
+import {
   deployDryRunCommand,
   mergeDryRunCommand
 } from "./commands/deploy.js";
@@ -299,6 +303,50 @@ export function createProgram(): Command {
     .argument("<proposalId>", "Cleanup proposal date, for example 2026-06-01.")
     .action(async (proposalId: string) => {
       console.log(await archiveCleanupCommand(process.cwd(), proposalId));
+    });
+
+  const discord = program
+    .command("discord")
+    .description("Run Discord integration helpers.");
+
+  const discordHttp = discord
+    .command("http")
+    .description("Serve Discord HTTP Interactions over local loopback.");
+
+  discordHttp
+    .command("start")
+    .description("Start a loopback-only Discord HTTP Interactions endpoint.")
+    .option("--host <host>", "Loopback host. Defaults to 127.0.0.1.")
+    .option("--port <port>", "Loopback port. Defaults to 18777.")
+    .option("--max-seconds <seconds>", "Stop the HTTP server automatically after this many seconds.")
+    .action(async (options: { host?: string; port?: string; maxSeconds?: string }) => {
+      const maxSeconds = parseOptionalPositiveInteger(options.maxSeconds, "--max-seconds");
+      const server = await startDiscordHttpCommand(process.cwd(), options);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const stop = () => {
+        void server.stop();
+      };
+
+      console.log(formatDiscordHttpServerResult(server));
+      if (server.status !== "ready") {
+        return;
+      }
+
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+      try {
+        if (maxSeconds !== undefined) {
+          timer = setTimeout(stop, maxSeconds * 1000);
+        }
+
+        await server.waitUntilClosed();
+      } finally {
+        if (timer !== undefined) {
+          clearTimeout(timer);
+        }
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+      }
     });
 
   program

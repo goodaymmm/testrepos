@@ -66,6 +66,21 @@ Kairon の初期実装では、公開 HTTP server や cloud deploy は含めず�
 HTTP Interactions を本番運用する場合は `KAIRON_DISCORD_PUBLIC_KEY` 相当の値を secret として渡し、request body を middleware で加工しないこと。
 Express などを使う場合も、署名検証前に JSON body parser で raw body を失わないようにする。
 
+### Local HTTP Interactions Server
+
+Operation test / local検証用に、loopback-onlyのHTTP server adapterを提供する。
+
+```powershell
+kairon discord http start --host 127.0.0.1 --port 18777 --max-seconds 30
+```
+
+- 既定hostは `127.0.0.1`。
+- `0.0.0.0` などpublic bindは拒否する。
+- `/` または `/interactions` へのPOSTを受け付ける。
+- raw bodyをBufferのまま保持し、`X-Signature-Ed25519` / `X-Signature-Timestamp` の検証に使う。
+- public keyは `public_key_env`、既定では `KAIRON_DISCORD_PUBLIC_KEY` から取得する。
+- TLS終端、reverse proxy、public internet公開、cloud deploymentはこのadapterの対象外。
+
 ## Discord Message Design
 
 Discord 上の approval message は、外出時に判断できる情報だけに絞る。
@@ -200,6 +215,7 @@ Board linkはloopback URLを前提にし、スマートフォン用Boardやpubli
       "enabled": true,
       "mode": "gateway",
       "bot_token_env": "KAIRON_DISCORD_BOT_TOKEN",
+      "public_key_env": "KAIRON_DISCORD_PUBLIC_KEY",
       "application_id_env": "KAIRON_DISCORD_APPLICATION_ID",
       "guild_id_env": "KAIRON_DISCORD_GUILD_ID",
       "approval_channel_id_env": "KAIRON_DISCORD_APPROVAL_CHANNEL_ID",
