@@ -35,6 +35,11 @@ import {
   mergeDryRunCommand
 } from "./commands/deploy.js";
 import { runDoctorCommand } from "./commands/doctor.js";
+import {
+  createGitPrCommand,
+  listGitPrCandidatesCommand,
+  showGitPrCandidateCommand
+} from "./commands/git-pr.js";
 import { initializeProject } from "./commands/init.js";
 import { closeActiveWork } from "./commands/leave.js";
 import { runMaintenance } from "./commands/maintenance.js";
@@ -331,6 +336,43 @@ export function createProgram(): Command {
     .description("Show runtime, queue, session, approval, and artifact status.")
     .action(async () => {
       console.log(await getStatusText(process.cwd()));
+    });
+
+  const git = program
+    .command("git")
+    .description("Inspect and act on Kairon git artifacts.");
+
+  const gitPr = git
+    .command("pr")
+    .description("Inspect and create pull requests from git transaction PR candidates.");
+
+  gitPr
+    .command("list")
+    .description("List git transaction PR candidates.")
+    .action(async () => {
+      console.log(await listGitPrCandidatesCommand(process.cwd()));
+    });
+
+  gitPr
+    .command("show")
+    .description("Show one git transaction PR candidate.")
+    .argument("<candidate-id>", "PR candidate id, for example GTX-0001")
+    .action(async (candidateId: string) => {
+      console.log(await showGitPrCandidateCommand(process.cwd(), candidateId));
+    });
+
+  gitPr
+    .command("create")
+    .description("Dry-run or execute PR creation from a git transaction PR candidate.")
+    .argument("<candidate-id>", "PR candidate id, for example GTX-0001")
+    .option("--dry-run", "Show the planned PR payload without calling GitHub. This is the default.")
+    .option("--execute", "Create the GitHub PR after approval and token checks.")
+    .option("--approval-id <approvalId>", "Approved Kairon approval id required with --execute.")
+    .option("--repository <owner/repo>", "GitHub repository. Defaults to the candidate remote.")
+    .option("--draft", "Create the GitHub PR as a draft when --execute is used.")
+    .option("--token-env <envName>", "Token environment variable. Defaults to GH_TOKEN then GITHUB_TOKEN.")
+    .action(async (candidateId: string, options) => {
+      console.log(await createGitPrCommand(process.cwd(), candidateId, options));
     });
 
   const merge = program
