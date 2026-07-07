@@ -50,6 +50,8 @@ Require status checks to pass before merging: enabled
 
 required status checksは、対象repositoryで一度CIを走らせてcheck名を作ってから選択する。
 CIを使わないsandboxでは、手動でbranch protection API検証用の最小workflowを追加するか、harnessの `Goodaymmm14Forge` fixtureを使う。
+T118以降は、required status checksの有無だけでなく、期待するcheck名も検証できる。
+check名まで検証する場合は、実際にGitHubのBranch protection ruleへ登録したcheck名を控えておく。
 
 ### Fine-grained PAT
 
@@ -86,11 +88,13 @@ cd C:\Users\hikar\Documents\AutoRunner
   -BranchProtectionSandboxRoot "$env:TEMP\kairon-branch-protection-sandbox" `
   -BranchProtectionSandboxFixture Goodaymmm14Forge `
   -BranchProtectionSandboxBranch main `
+  -BranchProtectionExpectedStatusChecks "build,ci/test" `
   -BranchProtectionRequireToken
 ```
 
 このprofileは一時workspaceを作成して `git init`、`git remote add origin`、`kairon init`、`kairon doctor` を実行する。
 token未設定、403、404、required gate未設定は `SETUP_REQUIRED` としてsummaryに記録する。
+`-BranchProtectionExpectedStatusChecks` を指定した場合、doctor outputの `required_status_check_contexts` と照合し、不足分を `missing_expected_status_checks=<names>` としてsummaryに記録する。
 別のpublic sandbox repositoryを使う場合は `-BranchProtectionSandboxFixture Custom` と `-BranchProtectionSandboxRepoUrl` を指定する。
 
 ## 手動実行手順
@@ -116,6 +120,7 @@ tokenを現在のPowerShell sessionだけに設定する。
 
 ```powershell
 $env:GH_TOKEN = "<fine-grained PAT>"
+$env:KAIRON_GITHUB_EXPECTED_STATUS_CHECKS = "build,ci/test"
 ```
 
 Kaironを初期化して診断する。
@@ -144,6 +149,9 @@ PASS git.branch_protection GitHub branch protection
   - branch_protection=enabled
   - required_pull_request_reviews=present
   - required_status_checks=present
+  - required_status_check_contexts=build,ci/test
+  - expected_status_checks=build,ci/test
+  - missing_expected_status_checks=none
 ```
 
 ## 判定
@@ -156,6 +164,7 @@ PASS git.branch_protection GitHub branch protection
 | `http_status=404` | repository名、remote URL、tokenのrepository accessを確認する |
 | `required_pull_request_reviews=missing` | Branch protection ruleでpull request review要求を有効にする |
 | `required_status_checks=missing` | Branch protection ruleでrequired status checksを有効にする |
+| `missing_expected_status_checks=<names>` | Branch protection ruleに期待check名が足りない。GitHub側のrequired status checksへ対象check名を追加するか、期待値指定を実際のcheck名へ合わせる |
 
 private repositoryで403になっても、public sandboxで上記PASSが取れるなら、Kaironのbranch protection API実装はlive疎通済みとして扱う。
 EnglishAppのような個人アカウントprivate repositoryで `api_status=plan_or_permission_error` / `http_status=403` になる場合は、GitHub側のplan / enforcement / API制約として扱い、public sandboxで `api_status=ok` を確認する。

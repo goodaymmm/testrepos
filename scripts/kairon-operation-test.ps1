@@ -48,6 +48,8 @@ param(
 
   [string]$BranchProtectionSandboxBranch = "main",
 
+  [string]$BranchProtectionExpectedStatusChecks = "",
+
   [switch]$BranchProtectionRequireToken,
 
   [switch]$SkipRestore
@@ -712,6 +714,29 @@ function Resolve-BranchProtectionSandboxConfig {
     Branch = $branch
     ExpectedRepository = [string]$fixture.ExpectedRepository
   }
+}
+
+function Get-BranchProtectionExpectedStatusChecks {
+  if ([string]::IsNullOrWhiteSpace($BranchProtectionExpectedStatusChecks)) {
+    return @()
+  }
+
+  @(
+    $BranchProtectionExpectedStatusChecks.Split(",") |
+      ForEach-Object { [string]$_ } |
+      ForEach-Object { $_.Trim() } |
+      Where-Object { $_.Length -gt 0 }
+  )
+}
+
+function Format-BranchProtectionExpectedStatusChecks {
+  param([string[]]$Checks)
+
+  if ($Checks.Count -eq 0) {
+    return "none"
+  }
+
+  $Checks -join ","
 }
 
 function Get-BranchProtectionSandboxWorkspace {
@@ -1585,12 +1610,15 @@ try {
       $sandboxConfig = Resolve-BranchProtectionSandboxConfig
       $repoUrl = $sandboxConfig.RepoUrl
       $branch = $sandboxConfig.Branch
+      $expectedStatusChecks = @(Get-BranchProtectionExpectedStatusChecks)
+      $expectedStatusChecksText = Format-BranchProtectionExpectedStatusChecks -Checks $expectedStatusChecks
 
       if ([string]::IsNullOrWhiteSpace($repoUrl)) {
         @(
           "setup_required.missing_repo_url=true",
           "branch_protection.fixture=$($sandboxConfig.Fixture)",
           "branch_protection.require_token=$($BranchProtectionRequireToken.IsPresent)",
+          "branch_protection.expected_status_checks=$expectedStatusChecksText",
           "github.env.snapshot",
           (Format-GitHubTokenSnapshot)
         ) -join [Environment]::NewLine
@@ -1602,7 +1630,8 @@ try {
           (Format-GitHubTokenSnapshot),
           "branch_protection.fixture=$($sandboxConfig.Fixture)",
           "branch_protection.repo_url=$repoUrl",
-          "branch_protection.branch=$branch"
+          "branch_protection.branch=$branch",
+          "branch_protection.expected_status_checks=$expectedStatusChecksText"
         ) -join [Environment]::NewLine
       } else {
         $workspace = Get-BranchProtectionSandboxWorkspace
@@ -1612,8 +1641,17 @@ try {
         Invoke-External -WorkingDirectory $workspace -Script { git branch -M $branch } | Out-Null
         Invoke-External -WorkingDirectory $workspace -Script { git remote add origin $repoUrl } | Out-Null
         Invoke-External -WorkingDirectory $workspace -Script { kairon init } | Out-Null
-        $doctor = Invoke-Captured {
-          Invoke-InDirectory -Path $workspace -CommandBlock { kairon doctor }
+        $doctorScript = {
+          Invoke-Captured {
+            Invoke-InDirectory -Path $workspace -CommandBlock { kairon doctor }
+          }
+        }
+        $doctor = if ($expectedStatusChecks.Count -gt 0) {
+          Invoke-WithEnvOverrides -Values @{
+            KAIRON_GITHUB_EXPECTED_STATUS_CHECKS = $expectedStatusChecksText
+          } -Script $doctorScript
+        } else {
+          & $doctorScript
         }
 
         @(
@@ -1625,6 +1663,7 @@ try {
           "branch_protection.repo_url=$repoUrl",
           "branch_protection.branch=$branch",
           "branch_protection.expected_repository=$($sandboxConfig.ExpectedRepository)",
+          "branch_protection.expected_status_checks=$expectedStatusChecksText",
           "doctor.exit_code=$($doctor.ExitCode)",
           $doctor.Output
         ) -join [Environment]::NewLine
@@ -1662,6 +1701,19 @@ try {
       }
       if ($Evidence -notmatch "required_status_checks=present") {
         return New-StepResult -Status "SETUP_REQUIRED" -Details "required status checks are not configured"
+      }
+      $expectedStatusChecks = @(Get-BranchProtectionExpectedStatusChecks)
+      if ($expectedStatusChecks.Count -gt 0) {
+        $expectedStatusChecksText = Format-BranchProtectionExpectedStatusChecks -Checks $expectedStatusChecks
+        if ($Evidence -notmatch "expected_status_checks=$([regex]::Escape($expectedStatusChecksText))") {
+          return "expected_status_checks=$expectedStatusChecksText was not found"
+        }
+        if ($Evidence -match "missing_expected_status_checks=(?!none)(.+)") {
+          return New-StepResult -Status "SETUP_REQUIRED" -Details "missing expected status checks: $($Matches[1])"
+        }
+        if ($Evidence -notmatch "missing_expected_status_checks=none") {
+          return New-StepResult -Status "SETUP_REQUIRED" -Details "expected status check validation result was not found"
+        }
       }
 
       return $true

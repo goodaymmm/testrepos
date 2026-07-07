@@ -115,6 +115,9 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           "branch_delete"
         ],
         require_clean_base_worktree: true,
+        branch_protection: {
+          expected_status_checks: []
+        },
         max_parallel_writers_per_path: 1,
         conflict_strategy: {
           path_overlap: "block",

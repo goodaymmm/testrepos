@@ -142,21 +142,31 @@ const profiles: OperationTestCommandProfile[] = [
     required_env: ["GH_TOKEN or GITHUB_TOKEN"],
     setup: [
       "Use a public sandbox repository with branch protection enabled.",
-      "Set GH_TOKEN or GITHUB_TOKEN in the current PowerShell process before running."
+      "Set GH_TOKEN or GITHUB_TOKEN in the current PowerShell process before running.",
+      "Optional: set KAIRON_GITHUB_EXPECTED_STATUS_CHECKS to a comma-separated list for strict required check-name validation."
     ],
     commands: [
       {
         kind: "powershell",
         lines: [
-          ".\\scripts\\kairon-operation-test.ps1 `",
-          "  -KaironRoot $KAIRON `",
-          "  -TargetRoot $TARGET `",
-          "  -OutputRoot $RESULT_ROOT `",
-          "  -Test BranchProtectionPublicSandbox `",
-          "  -BranchProtectionSandboxRoot (Join-Path $env:TEMP \"kairon-branch-protection-sandbox\") `",
-          "  -BranchProtectionSandboxFixture Goodaymmm14Forge `",
-          "  -BranchProtectionSandboxBranch main `",
-          "  -BranchProtectionRequireToken"
+          "$BRANCH_PROTECTION_EXPECTED_STATUS_CHECKS = @()",
+          "if (-not [string]::IsNullOrWhiteSpace($env:KAIRON_GITHUB_EXPECTED_STATUS_CHECKS)) {",
+          "  $BRANCH_PROTECTION_EXPECTED_STATUS_CHECKS = @($env:KAIRON_GITHUB_EXPECTED_STATUS_CHECKS.Split(',') | ForEach-Object { $_.Trim() } | Where-Object { $_.Length -gt 0 })",
+          "}",
+          "$BRANCH_PROTECTION_ARGS = @(",
+          "  \"-KaironRoot\", $KAIRON,",
+          "  \"-TargetRoot\", $TARGET,",
+          "  \"-OutputRoot\", $RESULT_ROOT,",
+          "  \"-Test\", \"BranchProtectionPublicSandbox\",",
+          "  \"-BranchProtectionSandboxRoot\", (Join-Path $env:TEMP \"kairon-branch-protection-sandbox\"),",
+          "  \"-BranchProtectionSandboxFixture\", \"Goodaymmm14Forge\",",
+          "  \"-BranchProtectionSandboxBranch\", \"main\",",
+          "  \"-BranchProtectionRequireToken\"",
+          ")",
+          "if ($BRANCH_PROTECTION_EXPECTED_STATUS_CHECKS.Count -gt 0) {",
+          "  $BRANCH_PROTECTION_ARGS += @(\"-BranchProtectionExpectedStatusChecks\", ($BRANCH_PROTECTION_EXPECTED_STATUS_CHECKS -join \",\"))",
+          "}",
+          ".\\scripts\\kairon-operation-test.ps1 @BRANCH_PROTECTION_ARGS"
         ]
       }
     ],
@@ -164,7 +174,8 @@ const profiles: OperationTestCommandProfile[] = [
       "api_status=ok",
       "branch_protection=enabled",
       "required_pull_request_reviews=present",
-      "required_status_checks=present"
+      "required_status_checks=present",
+      "missing_expected_status_checks=none when KAIRON_GITHUB_EXPECTED_STATUS_CHECKS is set"
     ]
   }
 ];

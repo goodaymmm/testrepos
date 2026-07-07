@@ -149,6 +149,9 @@ profile実行例:
 ```
 
 `BranchProtectionPublicSandbox` は `GH_TOKEN` を優先し、未設定時に `GITHUB_TOKEN` を使います。token未設定、403、404、required gate未設定は、コード不具合ではなく外部条件不足として `SETUP_REQUIRED` に記録します。
+expected required status check名まで厳密に確認する場合は、`-BranchProtectionExpectedStatusChecks "build,ci/test"` を指定します。
+同じ期待値は `KAIRON_GITHUB_EXPECTED_STATUS_CHECKS` にcomma-separatedで設定しても `kairon doctor` 側で解釈されます。
+期待check名が指定された場合、doctor / harness evidenceには `required_status_check_contexts=<names>`、`expected_status_checks=<names>`、`missing_expected_status_checks=none|<names>` が記録されます。
 EnglishAppなどの個人アカウントprivate repositoryで `api_status=plan_or_permission_error` / `http_status=403` になる場合も、public sandbox repositoryで `api_status=ok` を確認できればKairon実装側のlive API疎通は確認済みとして扱います。
 
 ## Restore方針

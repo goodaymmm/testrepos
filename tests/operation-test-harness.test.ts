@@ -220,7 +220,9 @@ describe("kairon-operation-test.ps1", () => {
       },
       [
         "-BranchProtectionSandboxRoot",
-        sandboxRoot
+        sandboxRoot,
+        "-BranchProtectionExpectedStatusChecks",
+        "build,ci/test"
       ]
     );
 
@@ -238,6 +240,12 @@ describe("kairon-operation-test.ps1", () => {
     );
     expect(summary.results[0].evidence).toContain(
       "branch_protection.expected_repository=goodaymmm/14Forge"
+    );
+    expect(summary.results[0].evidence).toContain(
+      "branch_protection.expected_status_checks=build,ci/test"
+    );
+    expect(summary.results[0].evidence).toContain(
+      "missing_expected_status_checks=none"
     );
     expect(JSON.stringify(summary)).not.toContain("secret-gh-token-for-test");
   });
@@ -639,6 +647,9 @@ async function writeFakeKairon(binRoot: string): Promise<void> {
         "  echo   - branch_protection=enabled",
         "  echo   - required_pull_request_reviews=present",
         "  echo   - required_status_checks=present",
+        "  echo   - required_status_check_contexts=build,ci/test",
+        "  echo   - expected_status_checks=build,ci/test",
+        "  echo   - missing_expected_status_checks=none",
         "  exit /b 0",
         ")",
         "if \"%1\"==\"approval\" if \"%2\"==\"seed\" (",
@@ -688,6 +699,9 @@ async function writeFakeKairon(binRoot: string): Promise<void> {
       "  echo \"  - branch_protection=enabled\"",
       "  echo \"  - required_pull_request_reviews=present\"",
       "  echo \"  - required_status_checks=present\"",
+      "  echo \"  - required_status_check_contexts=build,ci/test\"",
+      "  echo \"  - expected_status_checks=build,ci/test\"",
+      "  echo \"  - missing_expected_status_checks=none\"",
       "  exit 0",
       "fi",
       "if [ \"$1\" = \"approval\" ] && [ \"$2\" = \"seed\" ]; then",

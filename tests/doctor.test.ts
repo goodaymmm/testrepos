@@ -328,6 +328,118 @@ describe("runDoctor", () => {
     expect(text).not.toContain("git@github.com");
   });
 
+  it("passes GitHub branch protection when expected required status checks are present", async () => {
+    const root = await createInitializedGitProject();
+    await writeGitHubRemote(root, "https://github.com/goodaymmm/Kairon.git");
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {
+        GH_TOKEN: "secret-token",
+        KAIRON_GITHUB_EXPECTED_STATUS_CHECKS: "build,ci/test"
+      },
+      githubBranchProtectionClient: async () => ({
+        kind: "protected",
+        requiredPullRequestReviews: true,
+        requiredStatusChecks: true,
+        requiredStatusCheckContexts: ["build", "ci/test"],
+        enforceAdmins: true
+      })
+    });
+    const check = checkById(result, "git.branch_protection");
+    const text = formatDoctorResult(result);
+
+    expect(result.ok).toBe(true);
+    expect(check?.status).toBe("pass");
+    expect(check?.details).toEqual(
+      expect.arrayContaining([
+        "required_status_check_contexts=build,ci/test",
+        "expected_status_checks=build,ci/test",
+        "missing_expected_status_checks=none"
+      ])
+    );
+    expect(text).not.toContain("secret-token");
+  });
+
+  it("warns when an expected required status check is missing", async () => {
+    const root = await createInitializedGitProject();
+    await writeGitHubRemote(root, "https://github.com/goodaymmm/Kairon.git");
+    const policiesPath = path.join(root, ".kairon", "config", "policies.json");
+    const policies = await readJsonFile<Record<string, any>>(policiesPath);
+    policies.git.branch_protection = {
+      expected_status_checks: ["build", "ci/test"]
+    };
+    await writeJsonFileAtomic(policiesPath, policies);
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: { GH_TOKEN: "secret-token" },
+      githubBranchProtectionClient: async () => ({
+        kind: "protected",
+        requiredPullRequestReviews: true,
+        requiredStatusChecks: true,
+        requiredStatusCheckContexts: ["build"],
+        enforceAdmins: true
+      })
+    });
+    const check = checkById(result, "git.branch_protection");
+
+    expect(result.ok).toBe(true);
+    expect(check?.status).toBe("warning");
+    expect(check?.details).toEqual(
+      expect.arrayContaining([
+        "required_status_check_contexts=build",
+        "expected_status_checks=build,ci/test",
+        "missing_expected_status_checks=ci/test"
+      ])
+    );
+    expect(check?.nextAction).toBe("Add expected required status checks: ci/test.");
+  });
+
+  it("extracts GitHub required status check contexts from the live API payload shape", async () => {
+    const root = await createInitializedGitProject();
+    await writeGitHubRemote(root, "https://github.com/goodaymmm/Kairon.git");
+    const previousFetch = globalThis.fetch;
+
+    globalThis.fetch = async () =>
+      new Response(
+        JSON.stringify({
+          required_pull_request_reviews: {},
+          required_status_checks: {
+            contexts: ["build"],
+            checks: [{ context: "ci/test" }, { context: "build" }]
+          },
+          enforce_admins: { enabled: false }
+        }),
+        { status: 200 }
+      );
+
+    try {
+      const result = await runDoctor({
+        projectRoot: root,
+        commandAvailability: async () => true,
+        env: {
+          GH_TOKEN: "secret-token",
+          KAIRON_GITHUB_EXPECTED_STATUS_CHECKS: "build,ci/test"
+        }
+      });
+      const check = checkById(result, "git.branch_protection");
+
+      expect(result.ok).toBe(true);
+      expect(check?.status).toBe("pass");
+      expect(check?.details).toEqual(
+        expect.arrayContaining([
+          "required_status_check_contexts=build,ci/test",
+          "missing_expected_status_checks=none"
+        ])
+      );
+    } finally {
+      globalThis.fetch = previousFetch;
+    }
+  });
+
   it("can verify GitHub branch protection using a configured Windows credential target", async () => {
     const root = await createInitializedGitProject();
     await writeGitHubRemote(root, "git@github.com:goodaymmm/Kairon.git");

@@ -49,6 +49,7 @@ describe("operation test command profiles", () => {
       id: "branch-protection-public-sandbox",
       required_env: ["GH_TOKEN or GITHUB_TOKEN"]
     });
+    expect(output).toContain("KAIRON_GITHUB_EXPECTED_STATUS_CHECKS");
     expect(output).not.toContain("Bearer ");
   });
 
