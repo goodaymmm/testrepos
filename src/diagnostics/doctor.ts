@@ -90,6 +90,9 @@ type PoliciesConfig = {
     allow_auto_push?: boolean;
     require_approval_for?: string[];
     protected_branches?: string[];
+    branch_protection?: {
+      expected_status_checks?: string[];
+    };
   };
   review?: {
     required_for_code?: boolean;
@@ -121,6 +124,7 @@ export type GitHubBranchProtectionResult =
       kind: "protected";
       requiredPullRequestReviews: boolean;
       requiredStatusChecks: boolean;
+      requiredStatusCheckContexts?: string[];
       enforceAdmins: boolean | "unknown";
     }
   | {
@@ -533,6 +537,7 @@ async function checkGitHubBranchProtection(
   const config = await loadConfigFile<PoliciesConfig>(projectRoot, "policies.json");
   const branch = config.git?.default_base_branch ?? "main";
   const configuredRemote = config.git?.remote;
+  const expectedStatusChecks = resolveExpectedStatusChecks(config, env);
   const remote = await readGitHubRemote(projectRoot, configuredRemote);
 
   if (remote === undefined) {
@@ -582,7 +587,22 @@ async function checkGitHubBranchProtection(
     branch,
     token: token.value
   });
-  const apiDetails = [...details, "network_check=completed", ...formatGitHubApiDetails(apiResult)];
+  const missingExpectedStatusChecks =
+    apiResult.kind === "protected"
+      ? findMissingExpectedStatusChecks(
+          expectedStatusChecks,
+          apiResult.requiredStatusCheckContexts ?? []
+        )
+      : [];
+  const apiDetails = [
+    ...details,
+    "network_check=completed",
+    ...formatGitHubApiDetails(
+      apiResult,
+      expectedStatusChecks,
+      missingExpectedStatusChecks
+    )
+  ];
 
   if (apiResult.kind === "protected") {
     const missingProtections = [
@@ -590,15 +610,27 @@ async function checkGitHubBranchProtection(
       apiResult.requiredStatusChecks ? undefined : "required_status_checks"
     ].filter((value): value is string => value !== undefined);
 
-    if (missingProtections.length === 0) {
+    if (missingProtections.length === 0 && missingExpectedStatusChecks.length === 0) {
       return pass("git.branch_protection", "GitHub branch protection", apiDetails);
+    }
+
+    const nextActions: string[] = [];
+    if (missingProtections.length > 0) {
+      nextActions.push(
+        `Enable GitHub branch protection gates: ${missingProtections.join(", ")}.`
+      );
+    }
+    if (missingExpectedStatusChecks.length > 0) {
+      nextActions.push(
+        `Add expected required status checks: ${missingExpectedStatusChecks.join(", ")}.`
+      );
     }
 
     return warning(
       "git.branch_protection",
       "GitHub branch protection",
       apiDetails,
-      `Enable GitHub branch protection gates: ${missingProtections.join(", ")}.`
+      nextActions.join(" ")
     );
   }
 
@@ -873,15 +905,30 @@ function providerName(resolution: ResolvedSecret | undefined): string {
   return resolution?.status === "present" ? resolution.provider : "none";
 }
 
-function formatGitHubApiDetails(result: GitHubBranchProtectionResult): string[] {
+function formatGitHubApiDetails(
+  result: GitHubBranchProtectionResult,
+  expectedStatusChecks: string[] = [],
+  missingExpectedStatusChecks: string[] = []
+): string[] {
   if (result.kind === "protected") {
-    return [
+    const actualContexts = result.requiredStatusCheckContexts ?? [];
+    const details = [
       "api_status=ok",
       "branch_protection=enabled",
       `required_pull_request_reviews=${result.requiredPullRequestReviews ? "present" : "missing"}`,
       `required_status_checks=${result.requiredStatusChecks ? "present" : "missing"}`,
+      `required_status_check_contexts=${formatCsvDetail(actualContexts)}`,
       `enforce_admins=${String(result.enforceAdmins)}`
     ];
+
+    if (expectedStatusChecks.length > 0) {
+      details.push(
+        `expected_status_checks=${formatCsvDetail(expectedStatusChecks)}`,
+        `missing_expected_status_checks=${formatCsvDetail(missingExpectedStatusChecks)}`
+      );
+    }
+
+    return details;
   }
 
   if (result.kind === "not_found") {
@@ -933,6 +980,9 @@ async function fetchGitHubBranchProtection(
         kind: "protected",
         requiredPullRequestReviews: payload.required_pull_request_reviews != null,
         requiredStatusChecks: payload.required_status_checks != null,
+        requiredStatusCheckContexts: extractRequiredStatusCheckContexts(
+          payload.required_status_checks
+        ),
         enforceAdmins:
           typeof payload.enforce_admins?.enabled === "boolean"
             ? payload.enforce_admins.enabled
@@ -960,11 +1010,93 @@ async function fetchGitHubBranchProtection(
 
 type GitHubBranchProtectionPayload = {
   required_pull_request_reviews?: unknown | null;
-  required_status_checks?: unknown | null;
+  required_status_checks?: {
+    contexts?: unknown;
+    checks?: unknown;
+  } | null;
   enforce_admins?: {
     enabled?: boolean;
   } | null;
 };
+
+function resolveExpectedStatusChecks(
+  config: PoliciesConfig,
+  env: NodeJS.ProcessEnv
+): string[] {
+  const envChecks = parseCommaSeparatedList(env.KAIRON_GITHUB_EXPECTED_STATUS_CHECKS);
+  if (envChecks.length > 0) {
+    return envChecks;
+  }
+
+  return normalizeStringList(config.git?.branch_protection?.expected_status_checks ?? []);
+}
+
+function parseCommaSeparatedList(value: string | undefined): string[] {
+  if (value === undefined) {
+    return [];
+  }
+
+  return normalizeStringList(value.split(","));
+}
+
+function normalizeStringList(values: string[]): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const value of values) {
+    const trimmed = value.trim();
+    if (trimmed.length === 0 || seen.has(trimmed)) {
+      continue;
+    }
+
+    seen.add(trimmed);
+    normalized.push(trimmed);
+  }
+
+  return normalized;
+}
+
+function findMissingExpectedStatusChecks(
+  expected: string[],
+  actual: string[]
+): string[] {
+  const actualSet = new Set(actual);
+  return expected.filter((check) => !actualSet.has(check));
+}
+
+function formatCsvDetail(values: string[]): string {
+  return values.length === 0 ? "none" : values.join(",");
+}
+
+function extractRequiredStatusCheckContexts(
+  requiredStatusChecks: GitHubBranchProtectionPayload["required_status_checks"]
+): string[] {
+  if (requiredStatusChecks == null || typeof requiredStatusChecks !== "object") {
+    return [];
+  }
+
+  const contexts: string[] = [];
+  if (Array.isArray(requiredStatusChecks.contexts)) {
+    contexts.push(
+      ...requiredStatusChecks.contexts.filter(
+        (context): context is string => typeof context === "string"
+      )
+    );
+  }
+
+  if (Array.isArray(requiredStatusChecks.checks)) {
+    for (const check of requiredStatusChecks.checks) {
+      if (check != null && typeof check === "object") {
+        const context = (check as { context?: unknown }).context;
+        if (typeof context === "string") {
+          contexts.push(context);
+        }
+      }
+    }
+  }
+
+  return normalizeStringList(contexts);
+}
 
 async function listConfigBackups(projectRoot: string): Promise<string[]> {
   const configDir = getKaironPaths(projectRoot).configDir;

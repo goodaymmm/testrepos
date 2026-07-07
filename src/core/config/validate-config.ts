@@ -22,7 +22,12 @@ const policiesConfigSchema = schemaVersion.extend({
   git: z
     .object({
       allow_auto_push: z.boolean(),
-      require_review_before_commit: z.literal(true)
+      require_review_before_commit: z.literal(true),
+      branch_protection: z
+        .object({
+          expected_status_checks: z.array(z.string().min(1)).optional()
+        })
+        .optional()
     })
     .passthrough(),
   review: z
