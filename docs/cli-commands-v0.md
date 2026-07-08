@@ -416,7 +416,9 @@ serve HTML and projection.json on loopback only when requested
 ```
 
 `serve` は `127.0.0.1` または `localhost` のようなloopback hostだけを許可する。
-Discord approval messageからBoardを開く場合も、MVPではこのloopback URLを在宅時の詳細確認導線として扱う。public Board公開やスマートフォン最適化は後続のcloud / public endpoint設計に含める。
+Discord approval messageからBoardを開く場合も、MVPではこのloopback URLを在宅時の詳細確認導線として扱う。
+Boardはread-onlyであり、approval action、merge、deploy、protected branch pushは実行しない。
+public Board公開やスマートフォン最適化の安全要件は `docs/board-public-safety-v0.md` に固定し、認証なし公開やpublic bindは対象外とする。
 
 ## kairon cleanup
 

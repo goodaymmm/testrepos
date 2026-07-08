@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { renderBoardHtml } from "../src/board/html.js";
 import { createBoardProjection, exportBoardProjection } from "../src/board/projection.js";
-import { startBoardServer } from "../src/board/server.js";
+import { normalizeLoopbackHost, startBoardServer } from "../src/board/server.js";
 import { exportBoard } from "../src/cli/commands/board.js";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
@@ -526,6 +526,8 @@ describe("board projection", () => {
     expect(html).toContain("status message updated");
     expect(html).toContain("failedRuns");
     expect(html).toContain('class="table-wrap"');
+    expect(html).toContain("overflow-wrap: anywhere");
+    expect(html).toContain("@media (max-width: 520px)");
     expect(html).toContain("/projection.json");
     expect(html).not.toContain("FULL_DIFF_SHOULD_NOT_APPEAR");
     expect(html).not.toContain("FULL_STDOUT_SHOULD_NOT_APPEAR");
@@ -574,6 +576,42 @@ describe("board projection", () => {
     expect(html).toContain("discord-message-missing");
   });
 
+  it("drops external board URLs from public-facing projection and HTML", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await mkdir(path.join(root, ".kairon", "runtime", "discord"), {
+      recursive: true
+    });
+    await writeFile(
+      path.join(root, ".kairon", "runtime", "discord", "approval-notifications.jsonl"),
+      `${JSON.stringify({
+        schema_version: "0.1",
+        approval_id: "APR-PUBLIC",
+        status: "sent",
+        message_id: "discord-message-public",
+        board_anchor: "#approval-APR-PUBLIC",
+        board_url: "https://board.example.test/path?token=SHOULD_NOT_LEAK",
+        recorded_at: "2026-06-01T00:09:00.000Z"
+      })}\n`,
+      "utf8"
+    );
+
+    const projection = await createBoardProjection(root, {
+      now: () => new Date("2026-06-01T00:00:00.000Z")
+    });
+    const html = renderBoardHtml(projection);
+
+    expect(projection.discord.notifications.recent[0]).toMatchObject({
+      approval_id: "APR-PUBLIC",
+      board_anchor: "#approval-APR-PUBLIC"
+    });
+    expect(projection.discord.notifications.recent[0].board_url).toBeUndefined();
+    expect(JSON.stringify(projection)).not.toContain("board.example.test");
+    expect(JSON.stringify(projection)).not.toContain("SHOULD_NOT_LEAK");
+    expect(html).not.toContain("board.example.test");
+    expect(html).not.toContain("SHOULD_NOT_LEAK");
+  });
+
   it("renders an empty operations priority marker for machine checks", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
@@ -599,6 +637,13 @@ describe("board projection", () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
     await seedBoardArtifacts(root);
+
+    expect(normalizeLoopbackHost(undefined)).toBe("127.0.0.1");
+    expect(normalizeLoopbackHost("localhost")).toBe("127.0.0.1");
+    expect(normalizeLoopbackHost("127.0.0.1")).toBe("127.0.0.1");
+    for (const host of ["0.0.0.0", "::", "::1", "192.168.0.10", "10.0.0.2"]) {
+      expect(() => normalizeLoopbackHost(host)).toThrow("loopback-only");
+    }
 
     await expect(
       startBoardServer(root, { host: "0.0.0.0", port: 0 })
