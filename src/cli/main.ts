@@ -767,6 +767,7 @@ export function createProgram(): Command {
     .option("--review-loop-id <reviewLoopId>", "Review loop id filter.")
     .option("--date <date>", "Date filter in YYYY-MM-DD form.")
     .option("--severity <severity>", "Severity filter.")
+    .option("--explain", "Show lexical scoring and source freshness details.")
     .action(async (query: string, options) => {
       console.log(await queryRagIndexCommand(process.cwd(), query, options));
     });
