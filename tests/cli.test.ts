@@ -294,8 +294,14 @@ describe("createProgram", () => {
     const merge = program.commands.find((command) => command.name() === "merge");
     const deploy = program.commands.find((command) => command.name() === "deploy");
 
-    expect(merge?.commands.map((command) => command.name())).toEqual(["dry-run"]);
-    expect(deploy?.commands.map((command) => command.name())).toEqual(["dry-run"]);
+    expect(merge?.commands.map((command) => command.name()).sort()).toEqual([
+      "dry-run",
+      "execute"
+    ]);
+    expect(deploy?.commands.map((command) => command.name()).sort()).toEqual([
+      "dry-run",
+      "execute"
+    ]);
     expect(
       merge?.commands
         .find((command) => command.name() === "dry-run")
@@ -322,6 +328,38 @@ describe("createProgram", () => {
         "--check",
         "--rollback-hint",
         "--reason"
+      ])
+    );
+    expect(
+      merge?.commands
+        .find((command) => command.name() === "execute")
+        ?.options.map((option) => option.long)
+    ).toEqual(
+      expect.arrayContaining([
+        "--dry-run-artifact",
+        "--preflight",
+        "--execute",
+        "--expected-head-sha",
+        "--actual-head-sha",
+        "--required-check",
+        "--approval-id",
+        "--confirm"
+      ])
+    );
+    expect(
+      deploy?.commands
+        .find((command) => command.name() === "execute")
+        ?.options.map((option) => option.long)
+    ).toEqual(
+      expect.arrayContaining([
+        "--dry-run-artifact",
+        "--preflight",
+        "--execute",
+        "--expected-head-sha",
+        "--actual-head-sha",
+        "--required-check",
+        "--approval-id",
+        "--confirm"
       ])
     );
   });

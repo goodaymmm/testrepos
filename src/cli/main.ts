@@ -36,7 +36,9 @@ import {
 } from "./commands/discord.js";
 import { daemonReportCommand } from "./commands/daemon.js";
 import {
+  deployExecuteCommand,
   deployDryRunCommand,
+  mergeExecuteCommand,
   mergeDryRunCommand
 } from "./commands/deploy.js";
 import { runDoctorCommand } from "./commands/doctor.js";
@@ -493,6 +495,30 @@ export function createProgram(): Command {
       console.log(await mergeDryRunCommand(process.cwd(), options));
     });
 
+  merge
+    .command("execute")
+    .description("Run merge execution preflight. Actual merge execution is intentionally disabled.")
+    .requiredOption("--dry-run-artifact <idOrPath>", "Dry-run artifact approval id or JSON path.")
+    .option("--preflight", "Show execution guardrails without executing. This is the default.")
+    .option("--execute", "Request execution after preflight. Execution is still explicitly disabled.")
+    .option("--expected-head-sha <sha>", "Expected current target branch head SHA.")
+    .option("--actual-head-sha <sha>", "Observed target branch head SHA for deterministic checks.")
+    .option("--required-check <name>", "Dry-run check name that must be passed. Repeatable.", collectOption, [])
+    .option("--approval-id <approvalId>", "Approved dry-run approval id.")
+    .option("--confirm <phrase>", "Local confirmation phrase for later execution modes.")
+    .action(async (options: {
+      dryRunArtifact?: string;
+      preflight?: boolean;
+      execute?: boolean;
+      expectedHeadSha?: string;
+      actualHeadSha?: string;
+      requiredCheck?: string[];
+      approvalId?: string;
+      confirm?: string;
+    }) => {
+      console.log(await mergeExecuteCommand(process.cwd(), options));
+    });
+
   const deploy = program
     .command("deploy")
     .description("Prepare deploy approvals without executing a deploy.");
@@ -515,6 +541,30 @@ export function createProgram(): Command {
       reason?: string;
     }) => {
       console.log(await deployDryRunCommand(process.cwd(), options));
+    });
+
+  deploy
+    .command("execute")
+    .description("Run deploy execution preflight. Actual deployment is intentionally disabled.")
+    .requiredOption("--dry-run-artifact <idOrPath>", "Dry-run artifact approval id or JSON path.")
+    .option("--preflight", "Show execution guardrails without executing. This is the default.")
+    .option("--execute", "Request execution after preflight. Execution is still explicitly disabled.")
+    .option("--expected-head-sha <sha>", "Expected current target branch head SHA.")
+    .option("--actual-head-sha <sha>", "Observed target branch head SHA for deterministic checks.")
+    .option("--required-check <name>", "Dry-run check name that must be passed. Repeatable.", collectOption, [])
+    .option("--approval-id <approvalId>", "Approved dry-run approval id.")
+    .option("--confirm <phrase>", "Local confirmation phrase for later execution modes.")
+    .action(async (options: {
+      dryRunArtifact?: string;
+      preflight?: boolean;
+      execute?: boolean;
+      expectedHeadSha?: string;
+      actualHeadSha?: string;
+      requiredCheck?: string[];
+      approvalId?: string;
+      confirm?: string;
+    }) => {
+      console.log(await deployExecuteCommand(process.cwd(), options));
     });
 
   const task = program.command("task").description("Manage Kairon tasks.");

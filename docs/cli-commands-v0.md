@@ -28,6 +28,10 @@ kairon git pr list
 kairon git pr show <candidate-id>
 kairon git pr create <candidate-id> [--dry-run]
 kairon git pr create <candidate-id> --execute --approval-id <approval-id>
+kairon merge dry-run --source <branch> --target <branch>
+kairon merge execute --dry-run-artifact <id> [--preflight]
+kairon deploy dry-run --target <branch> [--environment <name>]
+kairon deploy execute --dry-run-artifact <id> [--preflight]
 kairon start
 kairon start --daemon [--interval-ms <ms>] [--max-ticks <count>] [--max-idle-ticks <count>]
 kairon stop
@@ -354,6 +358,41 @@ use GH_TOKEN first, then GITHUB_TOKEN
 ```
 
 PR本文は日本語テンプレートで生成し、raw diffやtokenは表示しない。実作成は `status=ready_for_pr` の候補だけを許可し、それ以外は候補artifactの `create_hint` を表示して停止する。
+
+## kairon merge / deploy
+
+merge / deploy は dry-run artifact と高リスクapprovalを作成し、実行前preflightで安全条件を確認する。現段階では実際のmerge / deployは実装せず、`execute` modeでも明示的に拒否する。
+
+```text
+kairon merge dry-run --source codex/t127 --target main --check build:passed
+kairon merge execute --dry-run-artifact APR-0001 --preflight --required-check build
+kairon deploy dry-run --target main --environment staging --check smoke:passed
+kairon deploy execute --dry-run-artifact APR-0002 --preflight --required-check smoke
+```
+
+`execute` preflight の主な確認項目。
+
+```text
+dry-run artifactが対象operationと一致すること
+approval recordが存在し、approve済みであること
+required approvalsがpolicy上presentであること
+required checksがpassedであること
+expected head shaとobserved head shaが一致すること
+rollback hintがartifactに残っていること
+```
+
+主なoption。
+
+```text
+--dry-run-artifact <idOrPath>   APR-xxxx または .kairon/deploy/dry-runs/*.json
+--preflight                     実行せずguardrail確認だけを表示する。既定動作。
+--execute                       実行要求を検証するが、現段階では execution_not_implemented で拒否する。
+--expected-head-sha <sha>       対象branch headが動いていないことを確認する期待SHA。
+--actual-head-sha <sha>         運用テスト用に観測SHAを明示する。未指定時はgit rev-parseで確認する。
+--required-check <name>         passed必須のdry-run check。複数指定可。
+--approval-id <approvalId>      artifactと一致すべき承認ID。
+--confirm <phrase>              将来の実行mode向けlocal confirmation phrase。
+```
 
 ## kairon board
 
