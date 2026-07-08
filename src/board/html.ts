@@ -27,7 +27,8 @@ export function renderBoardHtml(projection: BoardProjection): string {
   <title>Kairon Board</title>
   <style>
     :root { color-scheme: light; font-family: Arial, sans-serif; }
-    body { margin: 0; color: #202124; background: #f6f7f9; }
+    html { -webkit-text-size-adjust: 100%; }
+    body { margin: 0; color: #202124; background: #f6f7f9; overflow-x: hidden; }
     header { padding: 22px 32px 16px; background: #ffffff; border-bottom: 1px solid #d9dee7; }
     main { padding: 24px 32px 40px; display: grid; gap: 24px; }
     h1, h2 { margin: 0; }
@@ -45,13 +46,13 @@ export function renderBoardHtml(projection: BoardProjection): string {
     .severity-medium { color: #725200; font-weight: 700; }
     section { overflow: hidden; }
     section h2 { padding: 16px 18px; border-bottom: 1px solid #e6e9ef; }
-    .table-wrap { width: 100%; overflow-x: auto; }
+    .table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
     table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #edf0f5; vertical-align: top; }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #edf0f5; vertical-align: top; overflow-wrap: anywhere; }
     th { color: #5f6673; background: #fbfcfe; font-weight: 600; }
     tr:last-child td { border-bottom: 0; }
-    a { color: #2457c5; text-decoration: none; }
-    code { font-family: Consolas, monospace; font-size: 12px; }
+    a { color: #2457c5; text-decoration: none; overflow-wrap: anywhere; }
+    code { font-family: Consolas, monospace; font-size: 12px; overflow-wrap: anywhere; }
     .empty { padding: 14px 18px; color: #5f6673; }
     .section-group { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; }
     .compact-overview { display: grid; gap: 14px; padding: 16px 18px 18px; }
@@ -76,11 +77,18 @@ export function renderBoardHtml(projection: BoardProjection): string {
       .value { font-size: 20px; }
       .section-group { grid-template-columns: 1fr; gap: 16px; }
       section h2 { padding: 14px 14px; }
+      table { min-width: 640px; }
       th, td { padding: 9px 10px; }
       .compact-overview { padding: 14px; }
       .compact-grid { grid-template-columns: 1fr; }
       .compact-priority-list li { grid-template-columns: 1fr; align-items: start; }
       .compact-action { white-space: normal; }
+    }
+    @media (max-width: 520px) {
+      header { padding: 14px 12px; }
+      main { padding: 12px; }
+      .stats { grid-template-columns: 1fr; }
+      .stat, .compact-card { padding: 12px; }
     }
   </style>
 </head>
