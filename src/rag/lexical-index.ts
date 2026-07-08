@@ -97,6 +97,22 @@ export type RagSearchResult = {
   metadata: RagChunkMetadata;
   score: number;
   text: string;
+  explain?: RagSearchExplain;
+};
+
+export type RagSearchExplain = {
+  lexical_score: number;
+  matched_terms: string[];
+  term_hits: Record<string, number>;
+  phrase_bonus: number;
+  source_last_modified_at?: string;
+  source_first_indexed_at?: string;
+  source_last_seen_at?: string;
+  source_current_modified_at?: string;
+  source_age_days?: number;
+  indexed_age_days?: number;
+  stale_source: boolean;
+  warnings: string[];
 };
 
 export type BuildRagIndexResult = {
@@ -155,6 +171,8 @@ export type CompactRagIndexResult = RagCompactionSummary & {
 export type RagSearchRequest = {
   query: string;
   topK?: number;
+  explain?: boolean;
+  now?: () => Date;
   filters?: {
     source_types?: RagSourceType[];
     collections?: RagCollection[];
@@ -227,6 +245,13 @@ type PreparedCandidateSources = {
 type BuiltSource = {
   source: RagIndexSource;
   chunks: RagIndexChunk[];
+};
+
+type RagLexicalScore = {
+  score: number;
+  matchedTerms: string[];
+  termHits: Map<string, number>;
+  phraseBonus: number;
 };
 
 type PrunedSourceReason = "missing" | "excluded" | "archived" | "ephemeral";
@@ -434,23 +459,41 @@ export async function searchRagIndex(
 
   const index = await loadOrBuildIndex(projectRoot);
   const topK = request.topK ?? 5;
+  const sourceById = new Map(index.sources.map((source) => [source.source_id, source]));
+  const now = request.now?.() ?? new Date();
 
-  return index.chunks
+  const matches = index.chunks
     .filter((chunk) => matchesSearchFilters(chunk, request.filters))
-    .map((chunk) => ({ chunk, score: scoreChunk(chunk.text, queryTerms) }))
-    .filter((entry) => entry.score > 0)
-    .sort((left, right) => right.score - left.score)
-    .slice(0, topK)
-    .map(({ chunk, score }) => ({
-      chunk_id: chunk.chunk_id,
-      source_id: chunk.source_id,
-      source_type: chunk.source_type,
-      path: chunk.path,
-      content_hash: chunk.content_hash,
-      metadata: chunk.metadata,
-      score,
-      text: chunk.text
-    }));
+    .map((chunk) => ({ chunk, scoring: scoreChunk(chunk.text, queryTerms) }))
+    .filter((entry) => entry.scoring.score > 0)
+    .sort((left, right) => right.scoring.score - left.scoring.score)
+    .slice(0, topK);
+
+  return Promise.all(
+    matches.map(async ({ chunk, scoring }) => {
+      const result: RagSearchResult = {
+        chunk_id: chunk.chunk_id,
+        source_id: chunk.source_id,
+        source_type: chunk.source_type,
+        path: chunk.path,
+        content_hash: chunk.content_hash,
+        metadata: chunk.metadata,
+        score: scoring.score,
+        text: chunk.text
+      };
+
+      if (request.explain === true) {
+        result.explain = await buildSearchExplain({
+          projectRoot,
+          source: sourceById.get(chunk.source_id),
+          scoring,
+          now
+        });
+      }
+
+      return result;
+    })
+  );
 }
 
 export async function isRagEnabled(projectRoot: string): Promise<boolean> {
@@ -1080,7 +1123,7 @@ function splitLongText(text: string): string[] {
   return chunks.filter((chunk) => chunk.length > 0);
 }
 
-function scoreChunk(text: string, queryTerms: string[]): number {
+function scoreChunk(text: string, queryTerms: string[]): RagLexicalScore {
   const chunkTerms = tokenize(text);
   const termCounts = new Map<string, number>();
   for (const term of chunkTerms) {
@@ -1088,19 +1131,108 @@ function scoreChunk(text: string, queryTerms: string[]): number {
   }
 
   let score = 0;
-  for (const term of queryTerms) {
-    score += termCounts.get(term) ?? 0;
-  }
-
-  const normalizedText = text.toLowerCase();
   const uniqueQueryTerms = [...new Set(queryTerms)];
+  const termHits = new Map<string, number>();
   for (const term of uniqueQueryTerms) {
-    if (term.length >= 4 && normalizedText.includes(term)) {
-      score += 0.5;
+    const count = termCounts.get(term) ?? 0;
+    if (count > 0) {
+      termHits.set(term, count);
+      score += count;
     }
   }
 
-  return score;
+  const normalizedText = text.toLowerCase();
+  let phraseBonus = 0;
+  for (const term of uniqueQueryTerms) {
+    if (term.length >= 4 && normalizedText.includes(term)) {
+      phraseBonus += 0.5;
+    }
+  }
+
+  return {
+    score: score + phraseBonus,
+    matchedTerms: [...termHits.keys()],
+    termHits,
+    phraseBonus
+  };
+}
+
+async function buildSearchExplain(input: {
+  projectRoot: string;
+  source: RagIndexSource | undefined;
+  scoring: RagLexicalScore;
+  now: Date;
+}): Promise<RagSearchExplain> {
+  const warnings: string[] = [];
+  let sourceCurrentModifiedAt: string | undefined;
+  let staleSource = false;
+
+  if (input.source === undefined) {
+    warnings.push("source_metadata_missing");
+  } else {
+    try {
+      const sourceStat = await stat(resolveInside(input.projectRoot, input.source.path));
+      sourceCurrentModifiedAt = sourceStat.mtime.toISOString();
+      const indexedModifiedAt = parseDate(input.source.last_modified_at);
+      if (
+        indexedModifiedAt !== undefined &&
+        sourceStat.mtime.getTime() - indexedModifiedAt.getTime() > 1000
+      ) {
+        staleSource = true;
+        warnings.push("source_modified_after_index");
+      }
+    } catch (error) {
+      staleSource = true;
+      warnings.push(
+        String(error).includes("ENOENT")
+          ? "source_missing_after_index"
+          : "source_freshness_unavailable"
+      );
+    }
+  }
+
+  return {
+    lexical_score: input.scoring.score,
+    matched_terms: input.scoring.matchedTerms,
+    term_hits: mapToSortedRecord(input.scoring.termHits),
+    phrase_bonus: input.scoring.phraseBonus,
+    source_last_modified_at: input.source?.last_modified_at,
+    source_first_indexed_at: input.source?.first_indexed_at,
+    source_last_seen_at: input.source?.last_seen_at,
+    source_current_modified_at: sourceCurrentModifiedAt,
+    source_age_days: ageDays(input.source?.last_modified_at, input.now),
+    indexed_age_days: ageDays(input.source?.last_seen_at, input.now),
+    stale_source: staleSource,
+    warnings
+  };
+}
+
+function mapToSortedRecord(values: Map<string, number>): Record<string, number> {
+  return [...values.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .reduce<Record<string, number>>((record, [key, value]) => {
+      record[key] = value;
+      return record;
+    }, {});
+}
+
+function ageDays(isoDate: string | undefined, now: Date): number | undefined {
+  const date = parseDate(isoDate);
+  if (date === undefined) {
+    return undefined;
+  }
+
+  const days = Math.max(0, (now.getTime() - date.getTime()) / 86_400_000);
+  return Number(days.toFixed(2));
+}
+
+function parseDate(value: string | undefined): Date | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
 function matchesSearchFilters(

@@ -113,6 +113,28 @@ describe("RAG lexical memory", () => {
         score: expect.any(Number)
       }
     ]);
+
+    const explained = await searchRagIndex(root, {
+      query: "retrieval source hashes",
+      topK: 1,
+      explain: true,
+      now: () => new Date("2026-05-26T00:00:00.000Z")
+    });
+
+    expect(explained[0].explain).toMatchObject({
+      matched_terms: ["retrieval", "source", "hashes"],
+      term_hits: {
+        retrieval: 1,
+        source: 1,
+        hashes: 1
+      },
+      stale_source: false,
+      warnings: []
+    });
+    expect(explained[0].explain?.source_last_modified_at).toEqual(
+      expect.any(String)
+    );
+    expect(explained[0].explain?.indexed_age_days).toEqual(expect.any(Number));
   });
 
   it("prunes missing sources during scoped refresh", async () => {

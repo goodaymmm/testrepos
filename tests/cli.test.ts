@@ -261,7 +261,8 @@ describe("createProgram", () => {
         "--review-id",
         "--review-loop-id",
         "--date",
-        "--severity"
+        "--severity",
+        "--explain"
       ])
     );
   });

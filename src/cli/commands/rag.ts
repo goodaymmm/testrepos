@@ -4,6 +4,7 @@ import {
   getRagIndexStatus,
   type BuildRagIndexOptions,
   type RagCollection,
+  type RagSearchExplain,
   type RagSearchRequest,
   searchRagIndex,
   type RagSourceType
@@ -33,6 +34,7 @@ export type RagQueryCommandOptions = {
   reviewLoopId?: string;
   date?: string;
   severity?: string;
+  explain?: boolean;
 };
 
 const sourceTypes: RagSourceType[] = [
@@ -154,6 +156,7 @@ export async function queryRagIndexCommand(
   const request: RagSearchRequest = {
     query,
     topK: parseLimit(options.limit),
+    explain: options.explain === true,
     filters: buildFilters(options)
   };
   const results = await searchRagIndex(projectRoot, request);
@@ -167,6 +170,7 @@ export async function queryRagIndexCommand(
       `collection=${result.metadata.collection}`,
       `hash=${result.content_hash}`,
       ...formatMetadata(result.metadata),
+      ...formatExplain(result.explain),
       `text=${formatExcerpt(result.text)}`
     );
   }
@@ -307,6 +311,48 @@ function formatMetadata(metadata: Record<string, unknown>): string[] {
       ? [`metadata.${key}=${value}`]
       : [];
   });
+}
+
+function formatExplain(explain: RagSearchExplain | undefined): string[] {
+  if (explain === undefined) {
+    return [];
+  }
+
+  return [
+    `explain.lexical_score=${formatScore(explain.lexical_score)}`,
+    `explain.matched_terms=${explain.matched_terms.join(",")}`,
+    `explain.term_hits=${formatTermHits(explain.term_hits)}`,
+    `explain.phrase_bonus=${formatScore(explain.phrase_bonus)}`,
+    ...(explain.source_last_modified_at === undefined
+      ? []
+      : [`freshness.source_last_modified_at=${explain.source_last_modified_at}`]),
+    ...(explain.source_current_modified_at === undefined
+      ? []
+      : [`freshness.source_current_modified_at=${explain.source_current_modified_at}`]),
+    ...(explain.source_first_indexed_at === undefined
+      ? []
+      : [`freshness.source_first_indexed_at=${explain.source_first_indexed_at}`]),
+    ...(explain.source_last_seen_at === undefined
+      ? []
+      : [`freshness.source_last_seen_at=${explain.source_last_seen_at}`]),
+    ...(explain.source_age_days === undefined
+      ? []
+      : [`freshness.source_age_days=${formatScore(explain.source_age_days)}`]),
+    ...(explain.indexed_age_days === undefined
+      ? []
+      : [`freshness.indexed_age_days=${formatScore(explain.indexed_age_days)}`]),
+    `freshness.stale_source=${explain.stale_source}`,
+    ...explain.warnings.map((warning) => `warning=${warning}`)
+  ];
+}
+
+function formatTermHits(values: Record<string, number>): string {
+  const entries = Object.entries(values).sort(([left], [right]) =>
+    left.localeCompare(right)
+  );
+  return entries.length === 0
+    ? "none"
+    : entries.map(([term, count]) => `${term}:${count}`).join(",");
 }
 
 function formatExcerpt(text: string): string {

@@ -141,8 +141,53 @@ describe("RAG CLI commands", () => {
     expect(output).toContain("source_type=approval");
     expect(output).toContain("metadata.task_id=TASK-0007");
     expect(output).toContain("metadata.approval_id=APR-0007");
+    expect(output).not.toContain("explain.");
     expect(output).not.toContain("api_token");
     expect(output).not.toContain("SHOULD_NOT_LEAK");
+  });
+
+  it("prints query explanation and stale source warnings on request", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    const doc = path.join(root, "docs", "rag-freshness.md");
+    await writeFile(
+      doc,
+      "Approval freshness evidence should explain matched terms.",
+      "utf8"
+    );
+    await utimes(
+      doc,
+      new Date("2026-05-25T00:00:00.000Z"),
+      new Date("2026-05-25T00:00:00.000Z")
+    );
+
+    await refreshRagIndexCommand(root);
+    await writeFile(
+      doc,
+      "Approval freshness evidence should explain matched terms after edit.",
+      "utf8"
+    );
+    await utimes(
+      doc,
+      new Date("2026-05-27T00:00:00.000Z"),
+      new Date("2026-05-27T00:00:00.000Z")
+    );
+
+    const output = await queryRagIndexCommand(root, "freshness evidence", {
+      explain: true,
+      limit: "1"
+    });
+
+    expect(output).toContain("Kairon RAG query completed.");
+    expect(output).toContain("matches=1");
+    expect(output).toContain("explain.lexical_score=");
+    expect(output).toContain("explain.matched_terms=freshness,evidence");
+    expect(output).toContain("explain.term_hits=evidence:1,freshness:1");
+    expect(output).toContain("freshness.source_last_modified_at=");
+    expect(output).toContain("freshness.source_current_modified_at=");
+    expect(output).toContain("freshness.stale_source=true");
+    expect(output).toContain("warning=source_modified_after_index");
   });
 
   it("rejects invalid query filters", async () => {

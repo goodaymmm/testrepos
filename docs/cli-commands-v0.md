@@ -663,6 +663,7 @@ local lexical RAG indexを作成、状態確認、検索する。
 kairon rag refresh
 kairon rag status
 kairon rag query "approval routing" --type approval --limit 5
+kairon rag query "approval routing" --type approval --limit 5 --explain
 ```
 
 主なquery option。
@@ -678,7 +679,11 @@ kairon rag query "approval routing" --type approval --limit 5
 --review-loop-id <reviewLoopId>
 --date <YYYY-MM-DD>
 --severity <severity>
+--explain
 ```
+
+`--explain` は通常のranked resultに加えて、lexical score、matched terms、term hit、source modified timestamp、indexed timestamp、stale source warningを表示する。
+`--explain` を付けない場合、既存のquery出力形式を維持する。
 
 RAG indexは `.kairon/rag/index.json` に保存する。secret-like pathとprotected pathはindex対象から除外する。
 
