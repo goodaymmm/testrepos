@@ -36,7 +36,8 @@ describe("createProgram", () => {
       "status",
       "stop",
       "task",
-      "test"
+      "test",
+      "workflow"
     ]);
   });
 
@@ -224,6 +225,28 @@ describe("createProgram", () => {
     expect(summarize?.options.map((option) => option.long)).toContain("--result-root");
     expect(summarize?.options.map((option) => option.long)).toEqual(
       expect.arrayContaining(["--test-list", "--suggest", "--json", "--patch-preview"])
+    );
+  });
+
+  it("registers workflow runtime candidate command", () => {
+    const workflow = createProgram().commands.find(
+      (command) => command.name() === "workflow"
+    );
+    const run = workflow?.commands.find((command) => command.name() === "run");
+
+    expect(workflow?.description()).toContain("workflow runtime candidates");
+    expect(workflow?.commands.map((command) => command.name())).toEqual(["run"]);
+    expect(run?.description()).toContain("feature-flagged");
+    expect(run?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining([
+        "--candidate",
+        "--dry-run",
+        "--workflow-id",
+        "--task-id",
+        "--queue-item-id",
+        "--approval-id",
+        "--objective"
+      ])
     );
   });
 

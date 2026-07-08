@@ -93,10 +93,29 @@ Reject if:
 - It bypasses `StateApplier`, approval gates, or runtime recovery.
 - It makes queue recovery less explicit.
 
+## Production Candidate Follow-up
+
+T128 keeps the spike isolated but adds a feature-flagged candidate adapter:
+
+```powershell
+$env:KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME = "1"
+kairon workflow run --candidate --dry-run
+```
+
+Candidate scope:
+
+- Read queue item state without claiming, completing, or failing it.
+- Read task metadata as a placeholder without invoking `TaskRunner`.
+- Read approval state as a gate without creating or deciding approvals.
+- Write only `.kairon/experimental/workflows/<workflow_id>.json`.
+- Record blockers and next steps for deciding whether a production adapter is justified.
+
+The candidate is still not a production runtime. It exists to answer whether the current file-based runtime has a concrete integration point that benefits from workflow modeling.
+
 ## Verification
 
 ```powershell
 cd C:\Users\hikar\Documents\AutoRunner
 npm run build
-npx vitest run tests\workflow-runtime-spike.test.ts
+npx vitest run tests\workflow-runtime-spike.test.ts tests\workflow-runtime-candidate.test.ts
 ```

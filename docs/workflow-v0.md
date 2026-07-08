@@ -459,3 +459,11 @@ T110 の LangGraph-style runtime spike は production runtime path ではない�
 - artifact は `.kairon/experimental/workflows/` にのみ出力する。
 
 判断材料は `docs/langgraph-runtime-spike-v0.md` に分離する。
+
+T128 の workflow runtime production candidate も同じ境界を維持する。
+
+- `KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME=1` がない場合はcandidate flowへ入らない。
+- `kairon workflow run --candidate --dry-run` は queue / task / approval をread-onlyで観測する。
+- queue itemをclaimせず、approvalを作らず、task runnerを起動せず、canonical eventをappendしない。
+- candidate artifactには queue intake、task placeholder、approval gate、production handoff の状態を残す。
+- production runtimeへの接続可否はcandidate artifactの `recommendation` と `blockers` を見て判断する。
