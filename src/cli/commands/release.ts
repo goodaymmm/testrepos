@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import {
   spawnCommandRunner,
   type CommandRunner
@@ -24,9 +24,15 @@ export type ReleaseNotesResult = {
   since: string;
   commit_count: number;
   commits: string[];
+  dry_run: boolean;
+  write: boolean;
+  target_path: string;
+  action: "would_append" | "appended";
+  backup_artifact?: string;
+  append_preview: string;
 };
 
-export type ReleaseBumpType = "major" | "minor" | "patch";
+export type ReleaseBumpType = "major" | "minor" | "patch" | "explicit";
 
 export type ReleaseBumpResult = {
   schema_version: string;
@@ -35,6 +41,8 @@ export type ReleaseBumpResult = {
   next_version: string;
   dry_run: boolean;
   write: boolean;
+  backup_artifact?: string;
+  diff_preview: string[];
   files: Array<{
     path: string;
     current: string;
@@ -45,13 +53,19 @@ export type ReleaseBumpResult = {
 
 export type ReleaseNotesCommandOptions = {
   since?: string;
+  dryRun?: boolean;
+  write?: boolean;
   commandRunner?: CommandRunner;
+  now?: () => Date;
 };
 
 export type ReleaseBumpCommandOptions = {
   type?: string;
+  version?: string;
   dryRun?: boolean;
   write?: boolean;
+  commandRunner?: CommandRunner;
+  now?: () => Date;
 };
 
 type PackageJson = {
@@ -130,12 +144,44 @@ export async function createReleaseNotesDraft(
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+  const sanitizedCommits = commits.map(redactReleaseText);
+  const write = options.write === true;
+  if (write && options.dryRun === true) {
+    throw new Error("Use either --write or --dry-run, not both.");
+  }
+  const targetPath = "docs/release-notes-v0.md";
+  const appendPreview = formatReleaseNotesAppendBlock({
+    since,
+    commits: sanitizedCommits,
+    now: options.now?.() ?? new Date()
+  });
+  let backupArtifact: string | undefined;
+
+  if (write) {
+    await assertCleanTrackedTree(projectRoot, commandRunner);
+    const targetAbsolutePath = resolveInside(projectRoot, targetPath);
+    const current = await readFile(targetAbsolutePath, "utf8");
+    const next = appendReleaseNotesBlock(current, appendPreview);
+    backupArtifact = await writeReleaseBackup(projectRoot, [
+      {
+        relativePath: targetPath,
+        content: current
+      }
+    ], options.now?.() ?? new Date());
+    await writeFile(targetAbsolutePath, next, "utf8");
+  }
 
   return {
     schema_version: "0.1",
     since,
-    commit_count: commits.length,
-    commits
+    commit_count: sanitizedCommits.length,
+    commits: sanitizedCommits,
+    dry_run: !write,
+    write,
+    target_path: targetPath,
+    action: write ? "appended" : "would_append",
+    backup_artifact: backupArtifact,
+    append_preview: appendPreview
   };
 }
 
@@ -143,12 +189,13 @@ export async function planReleaseBump(
   projectRoot: string,
   options: ReleaseBumpCommandOptions = {}
 ): Promise<ReleaseBumpResult> {
-  const type = parseBumpType(options.type);
+  const type = parseBumpType(options);
   const write = options.write === true;
   if (write && options.dryRun === true) {
     throw new Error("Use either --write or --dry-run, not both.");
   }
   const dryRun = !write;
+  const commandRunner = options.commandRunner ?? spawnCommandRunner;
   const packagePath = resolveInside(projectRoot, "package.json");
   const indexPath = resolveInside(projectRoot, "src", "index.ts");
   const packageJson = await readJsonFile<PackageJson>(packagePath);
@@ -162,14 +209,31 @@ export async function planReleaseBump(
     );
   }
 
-  const nextVersion = bumpVersion(currentVersion, type);
+  const nextVersion =
+    options.version === undefined
+      ? bumpVersion(currentVersion, type)
+      : normalizeExplicitVersion(options.version);
+  const packageNext = {
+    ...packageJson,
+    version: nextVersion
+  };
+  const indexNextText = replaceCliVersion(cliSource, nextVersion);
+  let backupArtifact: string | undefined;
 
   if (write) {
-    await writeJsonFileAtomic(packagePath, {
-      ...packageJson,
-      version: nextVersion
-    });
-    await writeFile(indexPath, replaceCliVersion(cliSource, nextVersion), "utf8");
+    await assertCleanTrackedTree(projectRoot, commandRunner);
+    backupArtifact = await writeReleaseBackup(projectRoot, [
+      {
+        relativePath: "package.json",
+        content: await readFile(packagePath, "utf8")
+      },
+      {
+        relativePath: "src/index.ts",
+        content: cliSource
+      }
+    ], options.now?.() ?? new Date());
+    await writeJsonFileAtomic(packagePath, packageNext);
+    await writeFile(indexPath, indexNextText, "utf8");
   }
 
   const action = currentVersion === nextVersion
@@ -185,6 +249,11 @@ export async function planReleaseBump(
     next_version: nextVersion,
     dry_run: dryRun,
     write,
+    backup_artifact: backupArtifact,
+    diff_preview: [
+      `package.json: ${currentVersion} -> ${nextVersion}`,
+      `src/index.ts: ${cliVersion} -> ${nextVersion}`
+    ],
     files: [
       {
         path: "package.json",
@@ -227,6 +296,13 @@ export function formatReleaseNotes(result: ReleaseNotesResult): string {
     "Kairon release notes draft:",
     `since=${result.since}`,
     `commit_count=${result.commit_count}`,
+    `dry_run=${result.dry_run}`,
+    `write=${result.write}`,
+    `target=${result.target_path}`,
+    `action=${result.action}`,
+    ...(result.backup_artifact === undefined
+      ? []
+      : [`backup_artifact=${result.backup_artifact}`]),
     "",
     "## Release Notes Draft",
     "",
@@ -245,7 +321,11 @@ export function formatReleaseNotes(result: ReleaseNotesResult): string {
     "",
     "### Known Limitations",
     "",
-    "-"
+    "-",
+    "",
+    "### Append Preview",
+    "",
+    result.append_preview
   ].join("\n");
 }
 
@@ -259,6 +339,11 @@ export function formatReleaseBump(result: ReleaseBumpResult): string {
     `next_version=${result.next_version}`,
     `dry_run=${result.dry_run}`,
     `write=${result.write}`,
+    ...(result.backup_artifact === undefined
+      ? []
+      : [`backup_artifact=${result.backup_artifact}`]),
+    "diff.preview:",
+    ...result.diff_preview.map((line) => `- ${line}`),
     ...result.files.map(
       (file) =>
         `file=${file.path} current=${file.current} next=${file.next} action=${file.action}`
@@ -266,15 +351,24 @@ export function formatReleaseBump(result: ReleaseBumpResult): string {
   ].join("\n");
 }
 
-function parseBumpType(value: string | undefined): ReleaseBumpType {
-  if (value === "major" || value === "minor" || value === "patch") {
-    return value;
+function parseBumpType(options: ReleaseBumpCommandOptions): ReleaseBumpType {
+  if (options.version !== undefined && options.type !== undefined) {
+    throw new Error("Use either --version or --type, not both.");
+  }
+  if (options.version !== undefined) {
+    return "explicit";
+  }
+  if (options.type === "major" || options.type === "minor" || options.type === "patch") {
+    return options.type;
   }
 
-  throw new Error("Specify --type major, minor, or patch.");
+  throw new Error("Specify --version <semver> or --type major, minor, or patch.");
 }
 
 function bumpVersion(version: string, type: ReleaseBumpType): string {
+  if (type === "explicit") {
+    throw new Error("Explicit release bump requires --version.");
+  }
   const parsed = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
   if (parsed === null) {
     throw new Error(`Unsupported version format: ${version}`);
@@ -293,6 +387,14 @@ function bumpVersion(version: string, type: ReleaseBumpType): string {
   }
 
   return `${major}.${minor}.${patch + 1}`;
+}
+
+function normalizeExplicitVersion(value: string): string {
+  const version = value.trim();
+  if (!/^\d+\.\d+\.\d+$/.test(version)) {
+    throw new Error(`Unsupported version format: ${value}`);
+  }
+  return version;
 }
 
 async function readPackageVersion(projectRoot: string): Promise<string> {
@@ -331,6 +433,115 @@ function replaceCliVersion(source: string, nextVersion: string): string {
     (_match, prefix: string, _current: string, suffix: string) =>
       `${prefix}${nextVersion}${suffix}`
   );
+}
+
+async function assertCleanTrackedTree(
+  projectRoot: string,
+  commandRunner: CommandRunner
+): Promise<void> {
+  const result = await commandRunner({
+    command: "git",
+    args: ["status", "--porcelain", "--untracked-files=no"],
+    cwd: projectRoot
+  });
+
+  if (result.exitCode !== 0 || result.timedOut) {
+    throw new Error(`Failed to check tracked worktree cleanliness: ${result.stderr || result.stdout}`);
+  }
+
+  const dirty = result.stdout
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (dirty.length > 0) {
+    throw new Error(
+      `Release write requires a clean tracked worktree. Dirty tracked entries: ${dirty.join(", ")}`
+    );
+  }
+}
+
+async function writeReleaseBackup(
+  projectRoot: string,
+  files: Array<{ relativePath: string; content: string }>,
+  now: Date
+): Promise<string> {
+  const backupRoot = `.kairon/release/backups/${safeTimestamp(now)}`;
+  for (const file of files) {
+    const backupPath = resolveInside(projectRoot, backupRoot, file.relativePath);
+    await mkdir(resolveInside(projectRoot, pathDirectory(`${backupRoot}/${file.relativePath}`)), {
+      recursive: true
+    });
+    await writeFile(backupPath, file.content, "utf8");
+  }
+  return backupRoot;
+}
+
+function pathDirectory(relativePath: string): string {
+  const normalized = relativePath.split("\\").join("/");
+  const directory = normalized.split("/").slice(0, -1).join("/");
+  return directory.length === 0 ? "." : directory;
+}
+
+function safeTimestamp(now: Date): string {
+  return now.toISOString().replace(/[:.]/g, "-");
+}
+
+function formatReleaseNotesAppendBlock(input: {
+  since: string;
+  commits: string[];
+  now: Date;
+}): string {
+  const summaryLines =
+    input.commits.length === 0
+      ? ["- No commits found for the selected range."]
+      : input.commits.map((commit) => `- ${commit}`);
+
+  return [
+    "",
+    `### Release Notes Draft ${input.now.toISOString()}`,
+    "",
+    `since: \`${input.since}\``,
+    "",
+    "#### Summary",
+    "",
+    ...summaryLines,
+    "",
+    "#### Tests",
+    "",
+    "- `npm run build`",
+    "- `npm test`",
+    "",
+    "#### Manual / Operation Test Evidence",
+    "",
+    "-",
+    "",
+    "#### Known Limitations",
+    "",
+    "-"
+  ].join("\n");
+}
+
+function appendReleaseNotesBlock(current: string, block: string): string {
+  const marker = "<!-- kairon:release-notes-unreleased -->";
+  const markerIndex = current.indexOf(marker);
+  if (markerIndex === -1) {
+    throw new Error(`Release notes marker not found: ${marker}`);
+  }
+
+  const insertAt = markerIndex + marker.length;
+  return `${current.slice(0, insertAt)}\n${block}\n${current.slice(insertAt).replace(/^\r?\n/, "")}`;
+}
+
+function redactReleaseText(value: string): string {
+  return value
+    .replace(
+      /"([^"]*(?:api[_-]?key|token|secret|password|authorization)[^"]*)"\s*:\s*"[^"]*"/giu,
+      (_match, key: string) => `"${key}":"[redacted]"`
+    )
+    .replace(
+      /\b(api[_-]?key|token|secret|password|authorization)\b\s*[:=]\s*[^\s"',}]+/giu,
+      "$1=[redacted]"
+    );
 }
 
 async function fileExists(

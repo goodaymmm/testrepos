@@ -85,9 +85,29 @@ npm publishを前提にしたversion bumpではなく、運用上のrelease tag 
 - versionを変更する場合は、`package.json` と `src/index.ts` の `KAIRON_VERSION` を必ず同じ値にする。
 - docsのみ、またはlocal operation test資料のみの更新では、原則versionを変更しない。
 
+Release helperを使う場合は、先にdry-runを確認してからwriteします。
+
+```powershell
+kairon release bump --version 0.2.0
+kairon release bump --version 0.2.0 --write
+```
+
+`--write` はtracked worktreeがcleanな場合だけ実行できます。
+実行時は `.kairon/release/backups/<timestamp>/` に変更前の対象fileを保存します。
+
 ## Release Notes更新
 
 releaseする場合は `docs/release-notes-v0.md` の `Unreleased` から該当versionへ移します。
+
+Draftを生成する場合は、write前にdry-runを確認します。
+
+```powershell
+kairon release notes --since <ref>
+kairon release notes --since <ref> --write
+```
+
+`--write` は `docs/release-notes-v0.md` の `<!-- kairon:release-notes-unreleased -->`
+直下へappend-onlyで追記します。
 
 記録する内容:
 

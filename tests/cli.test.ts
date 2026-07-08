@@ -281,12 +281,12 @@ describe("createProgram", () => {
       release?.commands
         .find((command) => command.name() === "notes")
         ?.options.map((option) => option.long)
-    ).toContain("--since");
+    ).toEqual(expect.arrayContaining(["--since", "--dry-run", "--write"]));
     expect(
       release?.commands
         .find((command) => command.name() === "bump")
         ?.options.map((option) => option.long)
-    ).toEqual(expect.arrayContaining(["--type", "--dry-run", "--write"]));
+    ).toEqual(expect.arrayContaining(["--type", "--version", "--dry-run", "--write"]));
   });
 
   it("registers merge and deploy dry-run approval commands", () => {

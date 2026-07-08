@@ -68,10 +68,41 @@ describe("release commands", () => {
     );
   });
 
+  it("plans an explicit dry-run version bump without mutating files", async () => {
+    const root = await createReleaseProject("0.1.0");
+
+    const result = await planReleaseBump(root, { version: "0.2.0" });
+
+    expect(result).toMatchObject({
+      type: "explicit",
+      current_version: "0.1.0",
+      next_version: "0.2.0",
+      dry_run: true,
+      write: false,
+      files: [
+        {
+          path: "package.json",
+          action: "would_update"
+        },
+        {
+          path: "src/index.ts",
+          action: "would_update"
+        }
+      ]
+    });
+    expect(formatReleaseBump(result)).toContain("diff.preview:");
+    await expect(readPackageVersion(root)).resolves.toBe("0.1.0");
+  });
+
   it("applies a version bump only when write is explicit", async () => {
     const root = await createReleaseProject("0.1.0");
 
-    const result = await planReleaseBump(root, { type: "minor", write: true });
+    const result = await planReleaseBump(root, {
+      type: "minor",
+      write: true,
+      commandRunner: cleanGitStatusRunner,
+      now: () => new Date("2026-07-01T00:00:00.000Z")
+    });
 
     expect(result).toMatchObject({
       type: "minor",
@@ -90,10 +121,34 @@ describe("release commands", () => {
         }
       ]
     });
+    expect(result.backup_artifact).toBe(
+      ".kairon/release/backups/2026-07-01T00-00-00-000Z"
+    );
     await expect(readPackageVersion(root)).resolves.toBe("0.2.0");
     await expect(readFile(path.join(root, "src", "index.ts"), "utf8")).resolves.toContain(
       'KAIRON_VERSION = "0.2.0"'
     );
+    await expect(
+      readFile(
+        path.join(root, result.backup_artifact ?? "", "package.json"),
+        "utf8"
+      )
+    ).resolves.toContain('"version": "0.1.0"');
+  });
+
+  it("rejects release writes when tracked files are dirty", async () => {
+    const root = await createReleaseProject("0.1.0");
+
+    await expect(
+      planReleaseBump(root, {
+        version: "0.2.0",
+        write: true,
+        commandRunner: async (invocation) =>
+          commandResult(invocation, {
+            stdout: " M package.json\n"
+          })
+      })
+    ).rejects.toThrow("clean tracked worktree");
   });
 
   it("drafts release notes from git commit summaries", async () => {
@@ -130,6 +185,42 @@ describe("release commands", () => {
     expect(formatted).toContain("- `npm test`");
   });
 
+  it("appends release notes under the Unreleased marker only when write is explicit", async () => {
+    const root = await createReleaseProject("0.1.0");
+
+    const result = await createReleaseNotesDraft(root, {
+      since: "v0.1.0",
+      write: true,
+      now: () => new Date("2026-07-01T00:00:00.000Z"),
+      commandRunner: async (invocation) => {
+        if (invocation.args[0] === "status") {
+          return commandResult(invocation);
+        }
+        return commandResult(invocation, {
+          stdout: "feat: add release helper\nfix: token=SHOULD_NOT_LEAK\n"
+        });
+      }
+    });
+
+    expect(result).toMatchObject({
+      write: true,
+      dry_run: false,
+      action: "appended",
+      backup_artifact: ".kairon/release/backups/2026-07-01T00-00-00-000Z"
+    });
+    expect(result.commits).toEqual([
+      "feat: add release helper",
+      "fix: token=[redacted]"
+    ]);
+    const notes = await readFile(path.join(root, "docs", "release-notes-v0.md"), "utf8");
+    expect(notes.indexOf("<!-- kairon:release-notes-unreleased -->")).toBeLessThan(
+      notes.indexOf("### Release Notes Draft 2026-07-01T00:00:00.000Z")
+    );
+    expect(notes).toContain("- feat: add release helper");
+    expect(notes).toContain("- fix: token=[redacted]");
+    expect(notes).not.toContain("SHOULD_NOT_LEAK");
+  });
+
   it("rejects inconsistent package and CLI versions before bumping", async () => {
     const root = await createReleaseProject("0.1.0", "0.2.0");
 
@@ -157,7 +248,11 @@ async function createReleaseProject(
     "utf8"
   );
   await writeFile(path.join(root, "docs", "release-checklist-v0.md"), "# Checklist\n", "utf8");
-  await writeFile(path.join(root, "docs", "release-notes-v0.md"), "# Notes\n", "utf8");
+  await writeFile(
+    path.join(root, "docs", "release-notes-v0.md"),
+    "# Notes\n\n## Unreleased\n\n<!-- kairon:release-notes-unreleased -->\nExisting notes.\n",
+    "utf8"
+  );
   return root;
 }
 
@@ -187,3 +282,7 @@ function commandResult(
     ...options
   };
 }
+
+const cleanGitStatusRunner = async (
+  invocation: CliInvocation
+): Promise<CommandRunResult> => commandResult(invocation);
