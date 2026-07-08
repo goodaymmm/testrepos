@@ -654,19 +654,27 @@ export function createProgram(): Command {
 
   release
     .command("notes")
-    .description("Draft release notes from commit summaries.")
+    .description("Draft or append release notes from commit summaries.")
     .requiredOption("--since <ref>", "Git ref used as the lower bound, for example v0.1.0.")
-    .action(async (options: { since?: string }) => {
+    .option("--dry-run", "Show the append preview without writing files. This is the default.")
+    .option("--write", "Append the generated notes under the Unreleased marker.")
+    .action(async (options: { since?: string; dryRun?: boolean; write?: boolean }) => {
       console.log(await releaseNotesCommand(process.cwd(), options));
     });
 
   release
     .command("bump")
     .description("Plan or apply a synchronized package and CLI version bump.")
-    .requiredOption("--type <type>", "major, minor, or patch.")
+    .option("--type <type>", "major, minor, or patch.")
+    .option("--version <version>", "Explicit next semantic version, for example 0.2.0.")
     .option("--dry-run", "Show planned changes without writing files. This is the default.")
     .option("--write", "Apply the version bump to package.json and src/index.ts.")
-    .action(async (options: { type?: string; dryRun?: boolean; write?: boolean }) => {
+    .action(async (options: {
+      type?: string;
+      version?: string;
+      dryRun?: boolean;
+      write?: boolean;
+    }) => {
       console.log(await releaseBumpCommand(process.cwd(), options));
     });
 

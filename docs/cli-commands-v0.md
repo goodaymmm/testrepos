@@ -46,6 +46,9 @@ kairon maintenance run --build-rag
 kairon rag refresh
 kairon rag status
 kairon rag query <query>
+kairon release check
+kairon release notes --since <ref> [--write]
+kairon release bump --version <version> [--write]
 ```
 
 ## kairon init
@@ -686,6 +689,33 @@ kairon rag query "approval routing" --type approval --limit 5 --explain
 `--explain` を付けない場合、既存のquery出力形式を維持する。
 
 RAG indexは `.kairon/rag/index.json` に保存する。secret-like pathとprotected pathはindex対象から除外する。
+
+## kairon release
+
+release readiness、release notes、version bumpを補助する。
+
+```text
+kairon release check
+kairon release notes --since v0.1.0
+kairon release notes --since v0.1.0 --write
+kairon release bump --version 0.2.0
+kairon release bump --version 0.2.0 --write
+kairon release bump --type patch
+```
+
+`release notes` は既定ではdry-runで、`--write` を付けた場合のみ
+`docs/release-notes-v0.md` の `<!-- kairon:release-notes-unreleased -->` 直下へappendする。
+
+`release bump` は既定ではdry-runで、`--write` を付けた場合のみ `package.json` と
+`src/index.ts` を同時に更新する。`--version` と `--type` は同時指定しない。
+
+write modeの安全条件。
+
+```text
+tracked worktreeがcleanであること
+backup artifactを.kairon/release/backups/<timestamp>/へ作成すること
+npm publish / git tag / GitHub Releaseは実行しないこと
+```
 
 ## kairon leave
 
