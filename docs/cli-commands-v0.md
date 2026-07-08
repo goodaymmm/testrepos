@@ -53,6 +53,7 @@ kairon rag query <query>
 kairon release check
 kairon release notes --since <ref> [--write]
 kairon release bump --version <version> [--write]
+kairon workflow run --candidate --dry-run
 ```
 
 ## kairon init
@@ -755,6 +756,36 @@ tracked worktreeがcleanであること
 backup artifactを.kairon/release/backups/<timestamp>/へ作成すること
 npm publish / git tag / GitHub Releaseは実行しないこと
 ```
+
+## kairon workflow
+
+experimental workflow runtimeをproduction接続候補としてdry-run評価する。通常RuntimeLoopとは分離し、feature flagがない場合は拒否する。
+
+```text
+kairon workflow run --candidate --dry-run
+kairon workflow run --candidate --dry-run --workflow-id EXP-WF-CANDIDATE-0001 --queue-item-id JOB-0001 --approval-id APR-0001
+```
+
+有効化条件。
+
+```text
+KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME=1
+```
+
+主なoption。
+
+```text
+--candidate                 production candidate adapterを評価する。
+--dry-run                   production runtimeへ接続せずexperimental artifactだけを書く。既定動作。
+--workflow-id <workflowId>  EXP-WF- prefixのworkflow id。未指定時はtimestampから生成。
+--task-id <taskId>          task placeholderとしてtask fileをread-only参照する。
+--queue-item-id <jobId>     queue itemをclaimせずread-only参照する。
+--approval-id <approvalId>  approval gateとしてapproval fileをread-only参照する。
+--objective <text>          candidate評価の目的。
+```
+
+artifactは `.kairon/experimental/workflows/<workflow_id>.json` に保存する。
+このcommandは `WorkQueue` のclaim / complete / fail、approval作成、TaskRunner起動、StateApplier適用を行わない。
 
 ## kairon leave
 

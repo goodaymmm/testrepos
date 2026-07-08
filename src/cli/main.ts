@@ -84,6 +84,7 @@ import {
 } from "./commands/task.js";
 import { generateOperationTestCommandsCommand } from "./commands/test-commands.js";
 import { summarizeOperationTestsCommand } from "./commands/test-summary.js";
+import { workflowRunCommand } from "./commands/workflow.js";
 
 export function createProgram(): Command {
   const program = new Command();
@@ -595,6 +596,32 @@ export function createProgram(): Command {
     .option("--no-interactive-agents", "Do not dispatch to interactive-only agents such as Antigravity.")
     .action(async (taskId: string, options) => {
       console.log(await runTaskCommand(process.cwd(), taskId, options));
+    });
+
+  const workflow = program
+    .command("workflow")
+    .description("Evaluate experimental workflow runtime candidates.");
+
+  workflow
+    .command("run")
+    .description("Run the feature-flagged workflow runtime candidate dry-run.")
+    .option("--candidate", "Run the production-candidate workflow adapter.")
+    .option("--dry-run", "Write only experimental candidate artifacts. This is the default.")
+    .option("--workflow-id <workflowId>", "Workflow id. Defaults to EXP-WF-CANDIDATE-<timestamp>.")
+    .option("--task-id <taskId>", "Optional task id to read as a placeholder.")
+    .option("--queue-item-id <queueItemId>", "Optional queue item id to read without claiming.")
+    .option("--approval-id <approvalId>", "Optional approval id to read as a gate.")
+    .option("--objective <objective>", "Candidate evaluation objective.")
+    .action(async (options: {
+      candidate?: boolean;
+      dryRun?: boolean;
+      workflowId?: string;
+      taskId?: string;
+      queueItemId?: string;
+      approvalId?: string;
+      objective?: string;
+    }) => {
+      console.log(await workflowRunCommand(process.cwd(), options));
     });
 
   const operationTest = program
