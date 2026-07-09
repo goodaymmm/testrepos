@@ -221,10 +221,16 @@ describe("createProgram", () => {
     expect(commands?.options.map((option) => option.long)).toEqual(
       expect.arrayContaining(["--profile", "--range", "--format"])
     );
-    expect(summarize?.description()).toContain("without editing docs");
+    expect(summarize?.description()).toContain("optionally apply PASS updates");
     expect(summarize?.options.map((option) => option.long)).toContain("--result-root");
     expect(summarize?.options.map((option) => option.long)).toEqual(
-      expect.arrayContaining(["--test-list", "--suggest", "--json", "--patch-preview"])
+      expect.arrayContaining([
+        "--test-list",
+        "--suggest",
+        "--json",
+        "--patch-preview",
+        "--apply-pass"
+      ])
     );
   });
 

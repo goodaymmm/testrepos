@@ -67,6 +67,20 @@ export type OperationTestUpdateSuggestions = {
   candidates: OperationTestUpdateCandidate[];
 };
 
+export type OperationTestPassApplyResult = {
+  schema_version: "0.1";
+  updated: number;
+  skipped_already_pass: number;
+  skipped_non_pass: number;
+  applied: Array<{
+    id: string;
+    line: number;
+    before: string;
+    after: string;
+  }>;
+  markdown: string;
+};
+
 type SummaryResultById = {
   id: string;
   original_id?: string;
@@ -222,6 +236,64 @@ export function formatOperationTestUpdateSuggestions(
       ? formatPatchPreview(suggestions.candidates)
       : [])
   ].join("\n");
+}
+
+export function applyOperationTestPassUpdates(input: {
+  testListMarkdown: string;
+  suggestions: OperationTestUpdateSuggestions;
+}): OperationTestPassApplyResult {
+  const lines = input.testListMarkdown.split(/\r?\n/);
+  const hasTrailingNewline = /\r?\n$/.test(input.testListMarkdown);
+  const casesById = new Map(
+    parseOperationTestListMarkdown(input.testListMarkdown).map((testCase) => [
+      testCase.id,
+      testCase
+    ])
+  );
+  const applied: OperationTestPassApplyResult["applied"] = [];
+  let skippedAlreadyPass = 0;
+  let skippedNonPass = 0;
+
+  for (const candidate of input.suggestions.candidates) {
+    if (candidate.kind === "already_pass") {
+      skippedAlreadyPass += 1;
+      continue;
+    }
+
+    if (candidate.kind !== "pass_update") {
+      skippedNonPass += 1;
+      continue;
+    }
+
+    const testCase = casesById.get(candidate.id);
+    if (
+      testCase === undefined ||
+      testCase.status_column === undefined ||
+      testCase.line < 1 ||
+      testCase.line > lines.length
+    ) {
+      skippedNonPass += 1;
+      continue;
+    }
+
+    const replacement = previewStatusReplacement(testCase, "PASS");
+    lines[testCase.line - 1] = replacement.after;
+    applied.push({
+      id: candidate.id,
+      line: testCase.line,
+      before: replacement.before,
+      after: replacement.after
+    });
+  }
+
+  return {
+    schema_version: "0.1",
+    updated: applied.length,
+    skipped_already_pass: skippedAlreadyPass,
+    skipped_non_pass: skippedNonPass,
+    applied,
+    markdown: hasTrailingNewline ? lines.join("\n") : trimSplitTerminalLine(lines).join("\n")
+  };
 }
 
 function parseMarkdownRow(line: string): string[] | undefined {
@@ -458,7 +530,11 @@ function toUpdateCandidate(
     details: sanitizeText(result.details)
   };
 
-  if (patchPreview && testCase.status_column !== undefined) {
+  if (
+    patchPreview &&
+    testCase.status_column !== undefined &&
+    shouldPreviewStatusReplacement(kind)
+  ) {
     candidate.patch_preview = previewStatusReplacement(testCase, result.status);
   }
 
@@ -488,15 +564,22 @@ function classifyCandidate(
   return "optional";
 }
 
+function shouldPreviewStatusReplacement(
+  kind: OperationTestUpdateCandidateKind
+): boolean {
+  return kind === "pass_update";
+}
+
 function previewStatusReplacement(
   testCase: OperationTestListCase,
   status: OperationTestStatus
 ): { before: string; after: string } {
-  const cells = [...testCase.cells];
-  cells[testCase.status_column ?? 0] = status;
+  const cells = splitRawMarkdownRow(testCase.row) ?? [...testCase.cells];
+  const statusColumn = testCase.status_column ?? 0;
+  cells[statusColumn] = replaceCellValue(cells[statusColumn] ?? "", status);
   return {
     before: sanitizeText(testCase.row) ?? "",
-    after: sanitizeText(`| ${cells.join(" | ")} |`) ?? ""
+    after: sanitizeText(formatRawMarkdownRow(cells)) ?? ""
   };
 }
 
@@ -586,4 +669,27 @@ function toDisplayPath(projectRoot: string, filePath: string): string {
   return relative.startsWith("..") || path.isAbsolute(relative)
     ? toPosixPath(absolutePath)
     : toPosixPath(relative);
+}
+
+function splitRawMarkdownRow(line: string): string[] | undefined {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("|") || !trimmed.endsWith("|")) {
+    return undefined;
+  }
+
+  return trimmed.slice(1, -1).split("|");
+}
+
+function replaceCellValue(cell: string, value: string): string {
+  const leading = cell.match(/^\s*/)?.[0] ?? "";
+  const trailing = cell.match(/\s*$/)?.[0] ?? "";
+  return `${leading}${value}${trailing}`;
+}
+
+function formatRawMarkdownRow(cells: string[]): string {
+  return `|${cells.join("|")}|`;
+}
+
+function trimSplitTerminalLine(lines: string[]): string[] {
+  return lines.length > 0 && lines[lines.length - 1] === "" ? lines.slice(0, -1) : lines;
 }
