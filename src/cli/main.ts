@@ -644,19 +644,21 @@ export function createProgram(): Command {
 
   operationTest
     .command("summarize")
-    .description("Summarize operation test logs or result directories without editing docs.")
+    .description("Summarize operation test logs and optionally apply PASS updates.")
     .argument("[logFile]", "PowerShell transcript, pasted text, summary.md, or summary.json.")
     .option("--result-root <dir>", "Directory containing operation-test-results output.")
     .option("--test-list <path>", "Operation test list Markdown to compare against.")
     .option("--suggest", "Print non-destructive test list update candidates.")
     .option("--json", "Print JSON output.")
     .option("--patch-preview", "Print non-destructive Markdown row replacement previews.")
+    .option("--apply-pass", "Apply only PASS update candidates to the test list with a backup.")
     .action(async (logFile: string | undefined, options: {
       resultRoot?: string;
       testList?: string;
       suggest?: boolean;
       json?: boolean;
       patchPreview?: boolean;
+      applyPass?: boolean;
     }) => {
       console.log(
         await summarizeOperationTestsCommand(process.cwd(), logFile, options)

@@ -1,9 +1,10 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { summarizeOperationTestsCommand } from "../src/cli/commands/test-summary.js";
 import type { OperationTestSummary } from "../src/operation-test/result-summary.js";
 import {
+  applyOperationTestPassUpdates,
   createOperationTestUpdateSuggestions,
   formatOperationTestUpdateSuggestions,
   parseOperationTestListAliases,
@@ -160,8 +161,136 @@ describe("operation test list matcher", () => {
     expect(output).toContain("patch_preview.after=| OT-T88-01-01 | T88 | Log summary | PASS | pending |");
     expect(output).toContain("candidate.id=OT-T88-99-99");
     expect(output).toContain("kind=missing_from_list");
+    expect(output).not.toContain("patch_preview.after=| OT-T88-01-03");
+    expect(output).not.toContain("patch_preview.after=| OT-T88-01-04");
+    expect(output).not.toContain("patch_preview.after=| OT-T88-01-05");
     expect(output).not.toContain("SHOULD_NOT_LEAK");
     expect(output).toContain("token=[redacted]");
+  });
+
+  it("does not generate patch previews that downgrade existing PASS rows", () => {
+    const summary: OperationTestSummary = {
+      schema_version: "0.1",
+      sources: ["operation-test-results/run-001/summary.md"],
+      summary: {
+        pass: 0,
+        fail: 0,
+        setup_required: 1,
+        optional: 0,
+        total: 1,
+        source_files: 1
+      },
+      pass_ids: [],
+      fail_ids: [],
+      setup_required_ids: ["BRANCH_PROTECTION_PUBLIC_SANDBOX"],
+      optional_ids: [],
+      results: [
+        {
+          id: "BRANCH_PROTECTION_PUBLIC_SANDBOX",
+          status: "SETUP_REQUIRED",
+          source: "operation-test-results/run-001/summary.md",
+          details: "missing GH_TOKEN or GITHUB_TOKEN"
+        }
+      ],
+      warnings: []
+    };
+
+    const suggestions = createOperationTestUpdateSuggestions({
+      projectRoot: "C:\\repo",
+      testListPath: "C:\\repo\\docs\\operation-test-list.md",
+      testListMarkdown: [
+        "<!-- kairon:alias BRANCH_PROTECTION_PUBLIC_SANDBOX=OT-T118-01-02 -->",
+        "| ID | Task | 観点 | 結果 | 備考 |",
+        "|---|---|---|---|---|",
+        "| OT-T118-01-02 | T118 | Token missing | PASS | setup_required classification passed |"
+      ].join("\n"),
+      summary,
+      patchPreview: true
+    });
+    const output = formatOperationTestUpdateSuggestions(suggestions, {
+      patchPreview: true
+    });
+
+    expect(output).toContain("candidate.id=OT-T118-01-02");
+    expect(output).toContain("kind=setup_required");
+    expect(output).toContain("current=PASS");
+    expect(output).toContain("patch_preview=(none)");
+    expect(output).not.toContain("patch_preview.after=");
+  });
+
+  it("applies only PASS update candidates without downgrading unpassed rows", () => {
+    const summary: OperationTestSummary = {
+      schema_version: "0.1",
+      sources: ["operation-test-results/run-001/summary.md"],
+      summary: {
+        pass: 2,
+        fail: 1,
+        setup_required: 1,
+        optional: 0,
+        total: 4,
+        source_files: 1
+      },
+      pass_ids: ["OT-T130-01-01", "OT-T130-01-02"],
+      fail_ids: ["OT-T130-01-03"],
+      setup_required_ids: ["OT-T130-01-04"],
+      optional_ids: [],
+      results: [
+        {
+          id: "OT-T130-01-01",
+          status: "PASS",
+          source: "operation-test-results/run-001/summary.md"
+        },
+        {
+          id: "OT-T130-01-02",
+          status: "PASS",
+          source: "operation-test-results/run-001/summary.md"
+        },
+        {
+          id: "OT-T130-01-03",
+          status: "FAIL",
+          source: "operation-test-results/run-001/summary.md"
+        },
+        {
+          id: "OT-T130-01-04",
+          status: "SETUP_REQUIRED",
+          source: "operation-test-results/run-001/summary.md"
+        }
+      ],
+      warnings: []
+    };
+    const testListMarkdown = [
+      "| ID | Task | 観点 | 結果 | 備考 |",
+      "|---|---|---|---|---|",
+      "| OT-T130-01-01 | T130 | Apply | NOT_RUN | `SETUP_REQUIRED` text is preserved |",
+      "| OT-T130-01-02 | T130 | Existing | PASS | done |",
+      "| OT-T130-01-03 | T130 | Failure | PASS | should not downgrade |",
+      "| OT-T130-01-04 | T130 | Setup | NOT_RUN | should not auto apply |"
+    ].join("\n");
+    const suggestions = createOperationTestUpdateSuggestions({
+      projectRoot: "C:\\repo",
+      testListPath: "C:\\repo\\docs\\operation-test-list.md",
+      testListMarkdown,
+      summary,
+      patchPreview: true
+    });
+
+    const result = applyOperationTestPassUpdates({
+      testListMarkdown,
+      suggestions
+    });
+
+    expect(result.updated).toBe(1);
+    expect(result.skipped_already_pass).toBe(1);
+    expect(result.skipped_non_pass).toBe(2);
+    expect(result.markdown).toContain(
+      "| OT-T130-01-01 | T130 | Apply | PASS | `SETUP_REQUIRED` text is preserved |"
+    );
+    expect(result.markdown).toContain(
+      "| OT-T130-01-03 | T130 | Failure | PASS | should not downgrade |"
+    );
+    expect(result.markdown).toContain(
+      "| OT-T130-01-04 | T130 | Setup | NOT_RUN | should not auto apply |"
+    );
   });
 
   it("prints suggestions from the CLI command without editing the test list", async () => {
@@ -207,6 +336,60 @@ describe("operation test list matcher", () => {
 
     const parsed = JSON.parse(jsonOutput) as { counts: { pass_update: number } };
     expect(parsed.counts.pass_update).toBe(1);
+  });
+
+  it("applies PASS candidates from the CLI command with a backup", async () => {
+    const root = await createTempProject();
+    const logPath = path.join(root, "summary.md");
+    const testListPath = path.join(root, "operation-test-list.md");
+    const originalList = [
+      "| ID | Task | 観点 | 結果 | 備考 |",
+      "|---|---|---|---|---|",
+      "| OT-T130-01-01 | T130 | Summary | NOT_RUN | pending |",
+      "| OT-T130-01-02 | T130 | Failure | PASS | should stay pass |",
+      "| OT-T130-01-03 | T130 | Setup | NOT_RUN | should stay not run |"
+    ].join("\n");
+
+    await writeFile(
+      logPath,
+      [
+        "| ID | Name | Status | Details |",
+        "|---|---|---|---|",
+        "| OT-T130-01-01 | Summary | PASS | passed |",
+        "| OT-T130-01-02 | Failure | FAIL | failed |",
+        "| OT-T130-01-03 | Setup | SETUP_REQUIRED | env missing |"
+      ].join("\n"),
+      "utf8"
+    );
+    await writeFile(testListPath, originalList, "utf8");
+
+    const output = await summarizeOperationTestsCommand(root, "summary.md", {
+      testList: "operation-test-list.md",
+      applyPass: true
+    });
+    const updatedList = await readFile(testListPath, "utf8");
+    const backupFiles = (await readdir(root)).filter((name) =>
+      /^operation-test-list\.md\.bak-\d{14}$/.test(name)
+    );
+
+    expect(output).toContain("Kairon operation test PASS updates applied.");
+    expect(output).toContain("apply_pass.updated=1");
+    expect(output).toContain("apply_pass.skipped_already_pass=0");
+    expect(output).toContain("apply_pass.skipped_non_pass=2");
+    expect(output).toContain("apply_pass.backup=operation-test-list.md.bak-");
+    expect(updatedList).toContain(
+      "| OT-T130-01-01 | T130 | Summary | PASS | pending |"
+    );
+    expect(updatedList).toContain(
+      "| OT-T130-01-02 | T130 | Failure | PASS | should stay pass |"
+    );
+    expect(updatedList).toContain(
+      "| OT-T130-01-03 | T130 | Setup | NOT_RUN | should stay not run |"
+    );
+    expect(backupFiles).toHaveLength(1);
+    expect(await readFile(path.join(root, backupFiles[0] ?? ""), "utf8")).toBe(
+      originalList
+    );
   });
 
   it("prints suggestions for loose CLI summary results", async () => {
