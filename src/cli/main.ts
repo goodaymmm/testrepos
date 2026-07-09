@@ -82,7 +82,10 @@ import {
   createTaskCommand,
   runTaskCommand
 } from "./commands/task.js";
-import { generateOperationTestCommandsCommand } from "./commands/test-commands.js";
+import {
+  generateOperationTestCommandsCommand,
+  generateOperationTestDocsCommand
+} from "./commands/test-commands.js";
 import { summarizeOperationTestsCommand } from "./commands/test-summary.js";
 import { workflowRunCommand } from "./commands/workflow.js";
 
@@ -640,6 +643,24 @@ export function createProgram(): Command {
       format?: string;
     }) => {
       console.log(generateOperationTestCommandsCommand(options));
+    });
+
+  operationTest
+    .command("docs")
+    .description("Generate operation test list and command documents.")
+    .requiredOption("--range <range>", "Task range, for example T130-T143.")
+    .option("--output-dir <dir>", "Output directory. Defaults to docs.")
+    .option("--name-prefix <prefix>", "Output file prefix. Defaults to the normalized range.")
+    .option("--overwrite", "Replace existing generated documents.")
+    .option("--dry-run", "Show planned output paths without writing files.")
+    .action(async (options: {
+      range?: string;
+      outputDir?: string;
+      namePrefix?: string;
+      overwrite?: boolean;
+      dryRun?: boolean;
+    }) => {
+      console.log(await generateOperationTestDocsCommand(process.cwd(), options));
     });
 
   operationTest
