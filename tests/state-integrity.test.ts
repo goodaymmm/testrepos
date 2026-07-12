@@ -131,7 +131,7 @@ describe("state integrity", () => {
       "\"status\": \"ok\""
     );
     await expect(stateSnapshotCommand(root)).resolves.toContain(
-      "status=not_implemented"
+      "Kairon state snapshot created."
     );
 
     const snapshotText = await stateSnapshotCommand(root, { dryRun: true });

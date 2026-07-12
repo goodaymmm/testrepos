@@ -121,6 +121,9 @@ describe("createProgram", () => {
     const snapshot = state?.commands.find(
       (command) => command.name() === "snapshot"
     );
+    const restore = snapshot?.commands.find(
+      (command) => command.name() === "restore"
+    );
 
     expect(state?.description()).toContain("file-based state integrity");
     expect(state?.commands.map((command) => command.name()).sort()).toEqual([
@@ -128,9 +131,13 @@ describe("createProgram", () => {
       "snapshot"
     ]);
     expect(check?.options.map((option) => option.long)).toContain("--format");
-    expect(snapshot?.description()).toContain("Restore is intentionally not implemented");
+    expect(snapshot?.description()).toContain("safely plan or execute restores");
     expect(snapshot?.options.map((option) => option.long)).toEqual(
       expect.arrayContaining(["--dry-run", "--format"])
+    );
+    expect(restore?.description()).toContain("explicit confirmation");
+    expect(restore?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining(["--dry-run", "--confirm", "--format"])
     );
   });
 

@@ -73,7 +73,8 @@ import { runReviewLoopCommand } from "./commands/review.js";
 import { startRuntime } from "./commands/start.js";
 import {
   stateCheckCommand,
-  stateSnapshotCommand
+  stateSnapshotCommand,
+  stateSnapshotRestoreCommand
 } from "./commands/state.js";
 import { getStatusText } from "./commands/status.js";
 import { stopRuntime } from "./commands/stop.js";
@@ -429,14 +430,32 @@ export function createProgram(): Command {
       console.log(await stateCheckCommand(process.cwd(), options));
     });
 
-  state
+  const stateSnapshot = state
     .command("snapshot")
-    .description("Inspect state snapshot targets. Restore is intentionally not implemented.")
+    .description("Create state snapshots and safely plan or execute restores.")
     .option("--dry-run", "List snapshot targets without writing a snapshot.")
     .option("--format <format>", "Output format: text or json.", "text")
     .action(async (options: { dryRun?: boolean; format?: string }) => {
       console.log(await stateSnapshotCommand(process.cwd(), options));
     });
+
+  stateSnapshot
+    .command("restore")
+    .description("Plan or restore one state snapshot with explicit confirmation.")
+    .argument("<snapshot-id>", "Snapshot id, for example SNP-20260712000000000")
+    .option("--dry-run", "Show add, update, and delete candidates without writing state.")
+    .option("--confirm <snapshotId>", "Restore only when this value matches snapshot-id.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(
+      async (
+        snapshotId: string,
+        options: { dryRun?: boolean; confirm?: string; format?: string }
+      ) => {
+        console.log(
+          await stateSnapshotRestoreCommand(process.cwd(), snapshotId, options)
+        );
+      }
+    );
 
   const git = program
     .command("git")
