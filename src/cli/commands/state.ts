@@ -4,7 +4,13 @@ import {
 } from "../../state/integrity-check.js";
 import {
   collectStateSnapshotDryRun,
-  formatStateSnapshotDryRun
+  createStateSnapshot,
+  formatStateSnapshotCreate,
+  formatStateSnapshotDryRun,
+  formatStateSnapshotRestorePlan,
+  formatStateSnapshotRestoreResult,
+  planStateSnapshotRestore,
+  restoreStateSnapshot
 } from "../../state/snapshot.js";
 
 export type StateCheckCommandOptions = {
@@ -13,6 +19,12 @@ export type StateCheckCommandOptions = {
 
 export type StateSnapshotCommandOptions = {
   dryRun?: boolean;
+  format?: string;
+};
+
+export type StateSnapshotRestoreCommandOptions = {
+  dryRun?: boolean;
+  confirm?: string;
   format?: string;
 };
 
@@ -29,17 +41,39 @@ export async function stateSnapshotCommand(
   projectRoot: string,
   options: StateSnapshotCommandOptions = {}
 ): Promise<string> {
-  if (options.dryRun !== true) {
-    return [
-      "Kairon state snapshot is not implemented.",
-      "status=not_implemented",
-      "next_action=rerun with --dry-run to list snapshot targets"
-    ].join("\n");
+  const format = parseStateOutputFormat(options.format);
+  if (options.dryRun === true) {
+    const result = await collectStateSnapshotDryRun(projectRoot);
+    return formatStateSnapshotDryRun(result, { format });
   }
 
+  const result = await createStateSnapshot(projectRoot);
+  return formatStateSnapshotCreate(result, { format });
+}
+
+export async function stateSnapshotRestoreCommand(
+  projectRoot: string,
+  snapshotId: string,
+  options: StateSnapshotRestoreCommandOptions = {}
+): Promise<string> {
   const format = parseStateOutputFormat(options.format);
-  const result = await collectStateSnapshotDryRun(projectRoot);
-  return formatStateSnapshotDryRun(result, { format });
+  if (options.dryRun === true && options.confirm !== undefined) {
+    throw new Error("Use either --dry-run or --confirm, not both.");
+  }
+  if (options.dryRun === true) {
+    const result = await planStateSnapshotRestore(projectRoot, snapshotId);
+    return formatStateSnapshotRestorePlan(result, { format });
+  }
+  if (options.confirm === undefined) {
+    throw new Error(
+      `Restore requires --dry-run or --confirm ${snapshotId}.`
+    );
+  }
+
+  const result = await restoreStateSnapshot(projectRoot, snapshotId, {
+    confirm: options.confirm
+  });
+  return formatStateSnapshotRestoreResult(result, { format });
 }
 
 function parseStateOutputFormat(value: string | undefined): "text" | "json" {
