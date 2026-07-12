@@ -428,6 +428,29 @@ describe("board projection", () => {
         updated_at: "2026-06-01T00:01:00.000Z"
       }
     );
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "follow-ups", "FUP-APR-0002-approve-git-resume_push.json"),
+      {
+        schema_version: "0.1",
+        artifact_kind: "approval_follow_up",
+        id: "FUP-APR-0002-approve-git-resume_push",
+        idempotency_key: "APR-0002:approve:git.resume_push",
+        approval_id: "APR-0002",
+        approval_type: "git_push",
+        decision: "approve",
+        action_type: "git.resume_push",
+        status: "running",
+        risk_level: "high",
+        task_id: "TASK-0002",
+        queue_item_type: "git.transaction",
+        queue_item_id: "JOB-0002",
+        attempts: 1,
+        command_hint: "Reconcile the approved git resume queue item.",
+        source_approval_path: ".kairon/approvals/APR-0002.json",
+        created_at: "2026-06-01T00:01:00.000Z",
+        updated_at: "2026-06-01T00:02:00.000Z"
+      }
+    );
 
     const projection = await createBoardProjection(root, {
       now: () => new Date("2026-06-01T00:02:00.000Z")
@@ -436,8 +459,18 @@ describe("board projection", () => {
 
     expect(projection.follow_ups).toMatchObject({
       pending: 1,
+      running: 1,
       snoozed: 0,
       recent: [
+        {
+          id: "FUP-APR-0002-approve-git-resume_push",
+          approval_id: "APR-0002",
+          action_type: "git.resume_push",
+          status: "running",
+          risk_level: "high",
+          queue_item_id: "JOB-0002",
+          attempts: 1
+        },
         {
           id: "FUP-APR-0001-approve-merge-execute_preflight",
           approval_id: "APR-0001",
@@ -448,19 +481,27 @@ describe("board projection", () => {
       ]
     });
     expect(projection.operations).toMatchObject({
-      pending_follow_ups: 1,
-      attention_total: 1
+      pending_follow_ups: 2,
+      attention_total: 2
     });
-    expect(projection.operations.priority).toEqual([
-      expect.objectContaining({
-        kind: "follow_up",
-        id: "FUP-APR-0001-approve-merge-execute_preflight",
-        anchor: "#follow-up-FUP-APR-0001-approve-merge-execute_preflight"
-      })
-    ]);
+    expect(projection.operations.priority).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "follow_up",
+          id: "FUP-APR-0001-approve-merge-execute_preflight",
+          anchor: "#follow-up-FUP-APR-0001-approve-merge-execute_preflight"
+        }),
+        expect.objectContaining({
+          kind: "follow_up",
+          id: "FUP-APR-0002-approve-git-resume_push",
+          status: "running"
+        })
+      ])
+    );
     expect(html).toContain("Follow-ups");
     expect(html).toContain('id="follow-up-FUP-APR-0001-approve-merge-execute_preflight"');
     expect(html).toContain("merge.execute_preflight");
+    expect(html).toContain("running=1");
   });
 
   it("formats the CLI export result", async () => {

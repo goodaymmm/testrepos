@@ -13,8 +13,11 @@ import {
 } from "./commands/agent.js";
 import {
   decideApprovalCommand,
+  listApprovalFollowUpsCommand,
   listApprovalsCommand,
+  runApprovalFollowUpCommand,
   seedApprovalCommand,
+  showApprovalFollowUpCommand,
   showApprovalCommand
 } from "./commands/approval.js";
 import {
@@ -234,6 +237,43 @@ export function createProgram(): Command {
     .action(async (approvalId: string, options) => {
       console.log(await seedApprovalCommand(process.cwd(), approvalId, options));
     });
+
+  const approvalFollowUp = approval
+    .command("follow-up")
+    .description("Inspect and explicitly run approval follow-up artifacts.");
+
+  approvalFollowUp
+    .command("list")
+    .description("List approval follow-up artifacts.")
+    .option("--status <status>", "Optional follow-up status filter.")
+    .action(async (options: { status?: string }) => {
+      console.log(await listApprovalFollowUpsCommand(process.cwd(), options));
+    });
+
+  approvalFollowUp
+    .command("show")
+    .description("Show one sanitized approval follow-up artifact.")
+    .argument("<follow-up-id>", "Follow-up id, for example FUP-APR-0001-approve-git-resume_push")
+    .action(async (followUpId: string) => {
+      console.log(await showApprovalFollowUpCommand(process.cwd(), followUpId));
+    });
+
+  approvalFollowUp
+    .command("run")
+    .description("Dry-run or explicitly execute one approval follow-up.")
+    .argument("<follow-up-id>", "Follow-up id to run")
+    .option("--dry-run", "Show the executor, readiness, and next action without writing state.")
+    .option("--confirm <followUpId>", "Execute only when this value matches follow-up-id.")
+    .action(
+      async (
+        followUpId: string,
+        options: { dryRun?: boolean; confirm?: string }
+      ) => {
+        console.log(
+          await runApprovalFollowUpCommand(process.cwd(), followUpId, options)
+        );
+      }
+    );
 
   const board = program
     .command("board")

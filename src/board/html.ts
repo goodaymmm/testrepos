@@ -120,7 +120,7 @@ export function renderBoardHtml(projection: BoardProjection): string {
       ${stat("Runtime", projection.runtime.runtimeLock.locked ? "locked" : "idle", projection.runtime.runtimeLock.stale ? "stale=true" : undefined)}
       ${stat("Queue Ready", String(projection.queue.ready), `failed=${projection.queue.failed}`)}
       ${stat("Approvals", String(projection.approvals.pending), "pending")}
-      ${stat("Follow-ups", String(projection.follow_ups.pending), `snoozed=${projection.follow_ups.snoozed}`)}
+      ${stat("Follow-ups", String(projection.follow_ups.pending), `running=${projection.follow_ups.running} snoozed=${projection.follow_ups.snoozed}`)}
       ${stat("Recovery", String(projection.runtime.recovery.targets), "targets")}
       ${stat("Git Push", String(projection.git.transactions_requiring_approval), `approval required | pr=${projection.git.transactions_ready_for_pr}`)}
       ${stat("Discord", projection.discord.gateway?.status ?? "unknown", `audit=${projection.discord.notifications.total}/${projection.discord.decisions.total}`)}
