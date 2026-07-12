@@ -211,15 +211,27 @@ describe("createProgram", () => {
     const test = createProgram().commands.find((command) => command.name() === "test");
     const summarize = test?.commands.find((command) => command.name() === "summarize");
     const commands = test?.commands.find((command) => command.name() === "commands");
+    const docs = test?.commands.find((command) => command.name() === "docs");
 
     expect(test?.description()).toContain("operation test results");
     expect(test?.commands.map((command) => command.name()).sort()).toEqual([
       "commands",
+      "docs",
       "summarize"
     ]);
     expect(commands?.description()).toContain("Generate PowerShell commands");
     expect(commands?.options.map((option) => option.long)).toEqual(
       expect.arrayContaining(["--profile", "--range", "--format"])
+    );
+    expect(docs?.description()).toContain("Generate operation test list");
+    expect(docs?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining([
+        "--range",
+        "--output-dir",
+        "--name-prefix",
+        "--overwrite",
+        "--dry-run"
+      ])
     );
     expect(summarize?.description()).toContain("optionally apply PASS updates");
     expect(summarize?.options.map((option) => option.long)).toContain("--result-root");
