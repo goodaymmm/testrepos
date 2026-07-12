@@ -8,6 +8,14 @@ import {
   formatApprovalList,
   type ApprovalAction
 } from "../../approvals/approval-queue.js";
+import {
+  formatApprovalFollowUpDetail,
+  formatApprovalFollowUpList,
+  formatApprovalFollowUpRun,
+  listApprovalFollowUps,
+  runApprovalFollowUp,
+  showApprovalFollowUp
+} from "../../approvals/follow-up-runner.js";
 import { StateApplier } from "../../state/state-applier.js";
 
 export const APPROVAL_COMMAND_ERROR_EXIT_CODE = 4;
@@ -29,6 +37,15 @@ export type ApprovalSeedCommandOptions = {
   taskId?: string;
   runId?: string;
   redactionFixture?: boolean;
+};
+
+export type ApprovalFollowUpListCommandOptions = {
+  status?: string;
+};
+
+export type ApprovalFollowUpRunCommandOptions = {
+  dryRun?: boolean;
+  confirm?: string;
 };
 
 const approvalActions: ApprovalAction[] = [
@@ -136,6 +153,34 @@ export async function seedApprovalCommand(
     `actions=${actions.join(",")}`,
     `event_id=${event.event_id}`
   ].join("\n");
+}
+
+export async function listApprovalFollowUpsCommand(
+  projectRoot: string,
+  options: ApprovalFollowUpListCommandOptions = {}
+): Promise<string> {
+  return formatApprovalFollowUpList(
+    await listApprovalFollowUps(projectRoot, { status: options.status })
+  );
+}
+
+export async function showApprovalFollowUpCommand(
+  projectRoot: string,
+  followUpId: string
+): Promise<string> {
+  return formatApprovalFollowUpDetail(
+    await showApprovalFollowUp(projectRoot, followUpId)
+  );
+}
+
+export async function runApprovalFollowUpCommand(
+  projectRoot: string,
+  followUpId: string,
+  options: ApprovalFollowUpRunCommandOptions = {}
+): Promise<string> {
+  return formatApprovalFollowUpRun(
+    await runApprovalFollowUp(projectRoot, followUpId, options)
+  );
 }
 
 function formatApprovalCommandError(error: unknown): string | null {

@@ -63,6 +63,28 @@ describe("createProgram", () => {
     ).toBe(true);
   });
 
+  it("registers approval follow-up tracking and execution commands", () => {
+    const approval = createProgram().commands.find(
+      (command) => command.name() === "approval"
+    );
+    const followUp = approval?.commands.find(
+      (command) => command.name() === "follow-up"
+    );
+    const list = followUp?.commands.find((command) => command.name() === "list");
+    const run = followUp?.commands.find((command) => command.name() === "run");
+
+    expect(followUp?.commands.map((command) => command.name()).sort()).toEqual([
+      "list",
+      "run",
+      "show"
+    ]);
+    expect(list?.options.map((option) => option.long)).toContain("--status");
+    expect(run?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining(["--dry-run", "--confirm"])
+    );
+    expect(run?.description()).toContain("explicitly execute");
+  });
+
   it("maps Commander --no-interactive-agents to task run dispatch options", () => {
     expect(
       resolveAllowInteractiveAgents({ interactiveAgents: false })

@@ -44,6 +44,7 @@ export type BoardProjection = {
   };
   follow_ups: {
     pending: number;
+    running: number;
     snoozed: number;
     recent: BoardApprovalFollowUpSummary[];
   };
@@ -229,6 +230,10 @@ export type BoardApprovalFollowUpSummary = {
   run_id?: string;
   transaction_id?: string;
   queue_item_type?: string;
+  queue_item_id?: string;
+  attempts?: number;
+  last_execution_status?: string;
+  execution_performed?: boolean;
   command_hint?: string;
   due_at?: string;
   created_at?: string;
@@ -552,6 +557,7 @@ export async function createBoardProjection(
     },
     follow_ups: {
       pending: followUpSummaries.filter((followUp) => followUp.status === "pending").length,
+      running: followUpSummaries.filter((followUp) => followUp.status === "running").length,
       snoozed: followUpSummaries.filter((followUp) => followUp.status === "snoozed").length,
       recent: followUpSummaries.slice(0, recentLimit)
     },
@@ -1060,6 +1066,10 @@ function summarizeApprovalFollowUp(
     run_id: followUp.run_id,
     transaction_id: followUp.transaction_id,
     queue_item_type: followUp.queue_item_type,
+    queue_item_id: followUp.queue_item_id,
+    attempts: followUp.attempts,
+    last_execution_status: followUp.last_execution?.status,
+    execution_performed: followUp.last_execution?.execution_performed,
     command_hint: sanitizeInline(followUp.command_hint),
     due_at: followUp.due_at,
     created_at: followUp.created_at,
@@ -1147,8 +1157,8 @@ function summarizeOperations(input: {
   recentLimit: number;
 }): BoardOperationsSummary {
   const pendingApprovals = input.approvals.filter(isOpenApprovalSummary);
-  const pendingFollowUps = input.followUps.filter(
-    (followUp) => followUp.status === "pending"
+  const pendingFollowUps = input.followUps.filter((followUp) =>
+    ["pending", "running"].includes(followUp.status)
   );
   const failedRuns = input.runs.filter((run) => run.status === "failed" || run.outbox_status === "failed");
   const setupRequiredRuns = input.runs.filter((run) =>
