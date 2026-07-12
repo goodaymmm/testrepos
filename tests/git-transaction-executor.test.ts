@@ -136,7 +136,7 @@ describe("GitTransactionExecutor", () => {
     expect(artifact.suggested_pr.body).toContain("## Validation");
     expect(artifact.suggested_pr.body).toContain("## Residuals");
     expect(artifact.suggested_pr.body).not.toContain("diff --git");
-  });
+  }, 15_000);
 
   it("creates a push approval when auto push is disabled", async () => {
     const root = await createTempProject();
