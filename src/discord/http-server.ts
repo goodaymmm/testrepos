@@ -25,9 +25,13 @@ import {
   validateDiscordEnvValues
 } from "./env-validation.js";
 import {
+  DiscordHttpReplayGuard,
+  defaultDiscordReplayTtlSeconds,
+  defaultDiscordTimestampToleranceSeconds,
   handleDiscordHttpInteraction,
   type DiscordHttpInteractionResponse
 } from "./http-interactions.js";
+import { discordHttpSecurityAuditPath } from "./http-security-audit.js";
 
 export type DiscordHttpServerOptions = {
   host?: string;
@@ -36,6 +40,8 @@ export type DiscordHttpServerOptions = {
   secretResolver?: SecretResolver;
   now?: () => Date;
   maxBodyBytes?: number;
+  timestampToleranceSeconds?: number;
+  replayTtlSeconds?: number;
 };
 
 export type DiscordHttpServerRuntimeStatus =
@@ -66,6 +72,12 @@ export type DiscordHttpServerRuntimeStatus =
       host: string;
       port: number;
       url: string;
+      health_url: string;
+      security: {
+        timestamp_tolerance_seconds: number;
+        replay_ttl_seconds: number;
+        audit_path: string;
+      };
       updated_at: string;
     };
 
@@ -76,6 +88,7 @@ export type DiscordHttpServerHandle = {
   host?: string;
   port?: number;
   url?: string;
+  health_url?: string;
   reason?: string;
   missing_env?: string[];
   invalid_env?: string[];
@@ -113,6 +126,15 @@ export async function startDiscordHttpInteractionsServer(
   const host = normalizeLoopbackHost(options.host);
   const requestedPort = options.port ?? 18777;
   assertValidPort(requestedPort);
+  const timestampToleranceSeconds =
+    options.timestampToleranceSeconds ?? defaultDiscordTimestampToleranceSeconds;
+  const replayTtlSeconds =
+    options.replayTtlSeconds ?? defaultDiscordReplayTtlSeconds;
+  assertPositiveInteger(
+    timestampToleranceSeconds,
+    "Discord timestamp tolerance"
+  );
+  assertPositiveInteger(replayTtlSeconds, "Discord replay TTL");
   const statusPath = discordHttpServerStatusPath(projectRoot);
   const prepared = await prepareDiscordHttpServer(projectRoot, options);
 
@@ -142,9 +164,26 @@ export async function startDiscordHttpInteractionsServer(
   }
 
   const maxBodyBytes = options.maxBodyBytes ?? defaultMaxBodyBytes;
+  const replayGuard = new DiscordHttpReplayGuard(replayTtlSeconds);
   const server = createServer(async (request, response) => {
     try {
       const requestUrl = new URL(request.url ?? "/", `http://${host}`);
+      if (requestUrl.pathname === "/health") {
+        if ((request.method ?? "GET").toUpperCase() !== "GET") {
+          send(response, 405, { "content-type": "application/json" }, {
+            error: "method_not_allowed"
+          });
+          return;
+        }
+
+        send(response, 200, { "content-type": "application/json" }, {
+          schema_version: "0.1",
+          status: "ok",
+          mode: "http_interactions"
+        });
+        return;
+      }
+
       if (requestUrl.pathname !== "/" && requestUrl.pathname !== "/interactions") {
         send(response, 404, { "content-type": "application/json" }, {
           error: "not_found"
@@ -158,7 +197,9 @@ export async function startDiscordHttpInteractionsServer(
           projectRoot,
           gateway: prepared.gateway,
           publicKey: prepared.publicKey,
-          now
+          now,
+          timestampToleranceSeconds,
+          replayGuard
         },
         {
           method: request.method,
@@ -181,6 +222,12 @@ export async function startDiscordHttpInteractionsServer(
 
   const actualPort = readActualPort(server);
   const url = `http://${host}:${actualPort}/`;
+  const healthUrl = `${url}health`;
+  const security = {
+    timestamp_tolerance_seconds: timestampToleranceSeconds,
+    replay_ttl_seconds: replayTtlSeconds,
+    audit_path: toProjectPath(projectRoot, discordHttpSecurityAuditPath(projectRoot))
+  };
   let closed = false;
   const closedPromise = new Promise<void>((resolve) => {
     server.once("close", () => {
@@ -199,6 +246,8 @@ export async function startDiscordHttpInteractionsServer(
     host,
     port: actualPort,
     url,
+    health_url: healthUrl,
+    security,
     updated_at: now().toISOString()
   });
 
@@ -209,6 +258,7 @@ export async function startDiscordHttpInteractionsServer(
     host,
     port: actualPort,
     url,
+    health_url: healthUrl,
     stop: async () => {
       if (closed) {
         return;
@@ -225,6 +275,8 @@ export async function startDiscordHttpInteractionsServer(
         host,
         port: actualPort,
         url,
+        health_url: healthUrl,
+        security,
         updated_at: now().toISOString()
       });
     },
@@ -239,6 +291,7 @@ export function formatDiscordHttpServerResult(
     return [
       "Kairon Discord HTTP interactions server started.",
       `discord.http.url=${result.url}`,
+      `discord.http.health_url=${result.health_url}`,
       `status_path=${result.status_path}`,
       `host=${result.host}`,
       `port=${result.port}`
@@ -395,6 +448,12 @@ function normalizeLoopbackHost(host: string | undefined): string {
 function assertValidPort(port: number): void {
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new Error(`Invalid Discord HTTP interactions port: ${port}`);
+  }
+}
+
+function assertPositiveInteger(value: number, label: string): void {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive integer.`);
   }
 }
 

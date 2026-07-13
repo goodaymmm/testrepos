@@ -1,4 +1,8 @@
-import { createPublicKey, verify as verifySignature } from "node:crypto";
+import {
+  createHash,
+  createPublicKey,
+  verify as verifySignature
+} from "node:crypto";
 import {
   normalizeDiscordApprovalInteraction,
   normalizeDiscordLeaveCommand,
@@ -7,6 +11,10 @@ import {
   type NormalizedDiscordCommand
 } from "./interactions.js";
 import type { PreparedDiscordGateway } from "./gateway.js";
+import {
+  auditDiscordHttpSecurityRejection,
+  type DiscordHttpSecurityRejectReason
+} from "./http-security-audit.js";
 
 export type DiscordHttpInteractionRequest = {
   method?: string;
@@ -25,7 +33,46 @@ export type DiscordHttpInteractionHandlerOptions = {
   gateway: PreparedDiscordGateway;
   publicKey: string;
   now?: () => Date;
+  timestampToleranceSeconds?: number;
+  replayGuard?: DiscordHttpReplayGuard;
 };
+
+export class DiscordHttpReplayGuard {
+  readonly #entries = new Map<string, number>();
+  readonly #ttlMilliseconds: number;
+
+  constructor(ttlSeconds = defaultDiscordReplayTtlSeconds) {
+    assertPositiveInteger(ttlSeconds, "Discord replay TTL");
+    this.#ttlMilliseconds = ttlSeconds * 1000;
+  }
+
+  claim(input: {
+    signature: string;
+    timestamp: string;
+    body: string | Buffer;
+    now: Date;
+  }): boolean {
+    const nowMilliseconds = input.now.getTime();
+    this.#removeExpired(nowMilliseconds);
+    const key = replayKey(input);
+    const expiresAt = this.#entries.get(key);
+
+    if (expiresAt !== undefined && expiresAt > nowMilliseconds) {
+      return false;
+    }
+
+    this.#entries.set(key, nowMilliseconds + this.#ttlMilliseconds);
+    return true;
+  }
+
+  #removeExpired(nowMilliseconds: number): void {
+    for (const [key, expiresAt] of this.#entries) {
+      if (expiresAt <= nowMilliseconds) {
+        this.#entries.delete(key);
+      }
+    }
+  }
+}
 
 type DiscordInteractionPayload = {
   id?: unknown;
@@ -51,6 +98,9 @@ const interactionCallback = {
   pong: 1,
   channelMessageWithSource: 4
 } as const;
+
+export const defaultDiscordTimestampToleranceSeconds = 300;
+export const defaultDiscordReplayTtlSeconds = 300;
 
 export function verifyDiscordHttpInteractionSignature(input: {
   publicKey: string;
@@ -85,15 +135,57 @@ export async function handleDiscordHttpInteraction(
   options: DiscordHttpInteractionHandlerOptions,
   request: DiscordHttpInteractionRequest
 ): Promise<DiscordHttpInteractionResponse> {
-  if ((request.method ?? "POST").toUpperCase() !== "POST") {
-    return jsonResponse(405, { error: "method_not_allowed" });
+  const now = options.now?.() ?? new Date();
+  const method = (request.method ?? "POST").toUpperCase();
+  const reject = async (
+    status: number,
+    reason: DiscordHttpSecurityRejectReason,
+    responseError = reason,
+    timestamp?: string
+  ): Promise<DiscordHttpInteractionResponse> => {
+    await auditDiscordHttpSecurityRejection(options.projectRoot, {
+      reason,
+      method,
+      timestamp,
+      body: request.body,
+      recordedAt: now
+    });
+    return jsonResponse(status, { error: responseError });
+  };
+
+  if (method !== "POST") {
+    return reject(405, "method_not_allowed");
   }
 
   const signature = readHeader(request.headers, "x-signature-ed25519");
   const timestamp = readHeader(request.headers, "x-signature-timestamp");
+  if (signature === undefined || timestamp === undefined) {
+    return reject(
+      401,
+      "missing_signature_headers",
+      "invalid_request_signature",
+      timestamp
+    );
+  }
+
+  const toleranceSeconds =
+    options.timestampToleranceSeconds ?? defaultDiscordTimestampToleranceSeconds;
+  assertPositiveInteger(toleranceSeconds, "Discord timestamp tolerance");
+  const requestTime = parseDiscordSignatureTimestamp(timestamp);
+  if (requestTime === null) {
+    return reject(
+      401,
+      "invalid_signature_timestamp",
+      "invalid_request_signature",
+      timestamp
+    );
+  }
+
+  if (Math.abs(now.getTime() - requestTime) > toleranceSeconds * 1000) {
+    return reject(401, "signature_timestamp_out_of_range", undefined, timestamp);
+  }
+
   if (
-    signature === undefined ||
-    timestamp === undefined ||
     !verifyDiscordHttpInteractionSignature({
       publicKey: options.publicKey,
       signature,
@@ -101,19 +193,25 @@ export async function handleDiscordHttpInteraction(
       body: request.body
     })
   ) {
-    return jsonResponse(401, { error: "invalid_request_signature" });
+    return reject(401, "invalid_request_signature", undefined, timestamp);
+  }
+
+  if (
+    options.replayGuard !== undefined &&
+    !options.replayGuard.claim({ signature, timestamp, body: request.body, now })
+  ) {
+    return reject(409, "replayed_request", undefined, timestamp);
   }
 
   const payload = parseInteractionPayload(request.body);
   if (payload === null) {
-    return jsonResponse(400, { error: "invalid_json_body" });
+    return reject(400, "invalid_json_body", undefined, timestamp);
   }
 
   if (payload.type === 1) {
     return jsonResponse(200, { type: interactionCallback.pong });
   }
 
-  const now = options.now?.() ?? new Date();
   const result = await normalizeHttpInteraction(
     options.projectRoot,
     options.gateway,
@@ -128,6 +226,40 @@ export async function handleDiscordHttpInteraction(
       flags: 64
     }
   });
+}
+
+function parseDiscordSignatureTimestamp(value: string): number | null {
+  if (!/^\d{1,16}$/.test(value)) {
+    return null;
+  }
+
+  const seconds = Number(value);
+  if (!Number.isSafeInteger(seconds)) {
+    return null;
+  }
+
+  const milliseconds = seconds * 1000;
+  return Number.isSafeInteger(milliseconds) ? milliseconds : null;
+}
+
+function replayKey(input: {
+  signature: string;
+  timestamp: string;
+  body: string | Buffer;
+}): string {
+  return createHash("sha256")
+    .update(input.signature)
+    .update("\0")
+    .update(input.timestamp)
+    .update("\0")
+    .update(bodyBuffer(input.body))
+    .digest("hex");
+}
+
+function assertPositiveInteger(value: number, label: string): void {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive integer.`);
+  }
 }
 
 async function normalizeHttpInteraction(

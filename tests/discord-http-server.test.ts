@@ -14,6 +14,8 @@ const discordIds = {
   owner: "1512769542366036072"
 };
 
+const fixedNow = new Date("2026-06-01T00:00:00.000Z");
+
 describe("Discord HTTP interactions server", () => {
   it("serves signed Discord ping interactions over loopback with raw body preservation", async () => {
     const root = await createTempProject();
@@ -22,13 +24,24 @@ describe("Discord HTTP interactions server", () => {
     const keys = createDiscordSigningKeys();
     const server = await startDiscordHttpInteractionsServer(root, {
       port: 0,
-      env: discordHttpEnv(keys.publicKeyHex)
+      env: discordHttpEnv(keys.publicKeyHex),
+      now: () => fixedNow
     });
 
     try {
       expect(server).toMatchObject({
         status: "ready",
-        host: "127.0.0.1"
+        host: "127.0.0.1",
+        health_url: expect.stringContaining("/health")
+      });
+
+      await expect(getJson(server.health_url!)).resolves.toEqual({
+        status: 200,
+        body: JSON.stringify({
+          schema_version: "0.1",
+          status: "ok",
+          mode: "http_interactions"
+        })
       });
 
       const body = '{ "type" : 1 }';
@@ -39,13 +52,23 @@ describe("Discord HTTP interactions server", () => {
         status: 200,
         body: JSON.stringify({ type: 1 })
       });
+      await expect(postJson(server.url!, body, signed.headers)).resolves.toEqual({
+        status: 409,
+        body: JSON.stringify({ error: "replayed_request" })
+      });
 
       await expect(
         readJsonFile(path.join(root, ".kairon", "runtime", "discord", "http-server.json"))
       ).resolves.toMatchObject({
         status: "ready",
         mode: "http_interactions",
-        host: "127.0.0.1"
+        host: "127.0.0.1",
+        health_url: server.health_url,
+        security: {
+          timestamp_tolerance_seconds: 300,
+          replay_ttl_seconds: 300,
+          audit_path: ".kairon/runtime/discord/http-security.jsonl"
+        }
       });
     } finally {
       await server.stop();
@@ -66,7 +89,8 @@ describe("Discord HTTP interactions server", () => {
     const keys = createDiscordSigningKeys();
     const server = await startDiscordHttpInteractionsServer(root, {
       port: 0,
-      env: discordHttpEnv(keys.publicKeyHex)
+      env: discordHttpEnv(keys.publicKeyHex),
+      now: () => fixedNow
     });
 
     try {
@@ -160,7 +184,7 @@ function signDiscordBody(
   body: string,
   keys: ReturnType<typeof createDiscordSigningKeys>
 ): { headers: Record<string, string> } {
-  const timestamp = "2026-06-01T00:00:00.000Z";
+  const timestamp = Math.floor(fixedNow.getTime() / 1000).toString();
   const message = Buffer.concat([
     Buffer.from(timestamp, "utf8"),
     Buffer.from(body, "utf8")
@@ -172,6 +196,24 @@ function signDiscordBody(
       "content-type": "application/json"
     }
   };
+}
+
+function getJson(url: string): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(url, { method: "GET" }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(Buffer.from(chunk)));
+      response.on("error", reject);
+      response.on("end", () => {
+        resolve({
+          status: response.statusCode ?? 0,
+          body: Buffer.concat(chunks).toString("utf8")
+        });
+      });
+    });
+    request.on("error", reject);
+    request.end();
+  });
 }
 
 function postJson(

@@ -6,11 +6,20 @@ import {
 
 export async function startDiscordHttpCommand(
   projectRoot: string,
-  options: { host?: string; port?: string } = {}
+  options: {
+    host?: string;
+    port?: string;
+    timestampToleranceSeconds?: string;
+    replayTtlSeconds?: string;
+  } = {}
 ): Promise<DiscordHttpServerHandle> {
   return startDiscordHttpInteractionsServer(projectRoot, {
     host: options.host,
-    port: parseOptionalInteger(options.port)
+    port: parseOptionalInteger(options.port),
+    timestampToleranceSeconds: parseOptionalPositiveInteger(
+      options.timestampToleranceSeconds
+    ),
+    replayTtlSeconds: parseOptionalPositiveInteger(options.replayTtlSeconds)
   });
 }
 
@@ -28,4 +37,15 @@ function parseOptionalInteger(value: string | undefined): number | undefined {
   }
 
   throw new Error(`Invalid numeric option: ${value}`);
+}
+
+function parseOptionalPositiveInteger(
+  value: string | undefined
+): number | undefined {
+  const parsed = parseOptionalInteger(value);
+  if (parsed === undefined || parsed > 0) {
+    return parsed;
+  }
+
+  throw new Error(`Invalid positive numeric option: ${value}`);
 }
