@@ -12,6 +12,8 @@ Kairon Board は `.kairon/` の運用状態を集約する read-only view であ
 - `0.0.0.0`、LAN IP、IPv6 wildcard、public hostname への bind は拒否する。
 - defaultはtoken不要のloopback-onlyを維持し、opt-inで短期`board.read` Bearer tokenを要求できる。
 - token本体は起動時だけ表示し、status artifactにはSHA-256 hash、期限、scopeだけを保存する。
+- projectionは最終出力前に再帰的なsecret scanを通し、結果を`meta.secret_scan`へ保存する。
+- access auditは`.kairon/runtime/board/access.jsonl`へ保存し、raw token、IP、User-Agentを含めない。
 - Board は approval の状態確認と local CLI hint の表示だけを行う。
 - Board から approval action、merge、deploy、protected branch push を直接実行しない。
 - Board projection は raw diff、stdout/stderr、secret-like key、非local Board URLを表示しない。
@@ -55,6 +57,17 @@ kairon board serve --require-token --access-token-ttl-seconds 900
 - clientは`Authorization: Bearer <token>`を付ける。
 - tokenはprocess memoryと起動時CLI出力だけで扱い、`.kairon/runtime/board/server.json`にはhash、`expires_at`、`board.read` scopeだけを残す。
 - 認証後もserverはGET/HEADだけを許可し、state変更endpointは持たない。
+
+## Access audit / secret scan
+
+- access auditは`allowed`、`denied`、`error`、method、分類済みroute、HTTP status、認証結果だけを記録する。
+- clientは`loopback`として分類し、raw IPは保存しない。
+- User-Agentは値を保存せず、存在したかだけを記録する。
+- URL query、Authorization header、Bearer tokenはaudit対象外とする。
+- secret scanはsecret-like keyを`[redacted]`または`[omitted]`へ置換する。
+- inline assignment、Bearer token、high-confidenceなGitHub/OpenAI credential形式も置換する。
+- 正常にredactできた件数はPASS summaryとして扱い、redaction発生だけでDoctorをwarningにしない。
+- 保存済みprojectionに未redact値がある場合、またはscan summaryがない場合だけ`board.secret_scan`をwarningにする。
 
 ### Approval forgery
 

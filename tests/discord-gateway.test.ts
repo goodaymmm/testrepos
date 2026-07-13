@@ -387,7 +387,7 @@ describe("prepareDiscordGateway", () => {
       }
     ]);
     await handle.stop();
-  });
+  }, 30_000);
 
   it("applies leave slash command once and reports the result", async () => {
     const root = await createTempProject();

@@ -13,9 +13,14 @@ import {
   normalizeLoopbackHost,
   startBoardServer
 } from "../src/board/server.js";
+import {
+  inspectBoardProjectionSecrets,
+  sanitizeBoardProjection
+} from "../src/board/secret-scan.js";
 import { exportBoard } from "../src/cli/commands/board.js";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
+import { readJsonLines } from "../src/core/fs/jsonl-file.js";
 import { WorkQueue } from "../src/queue/work-queue.js";
 import { createTempProject } from "./test-utils.js";
 
@@ -44,6 +49,12 @@ describe("board projection", () => {
       schema_version: "0.1",
       kind: "board_projection",
       generated_at: "2026-06-01T00:00:00.000Z",
+      meta: {
+        secret_scan: {
+          status: "passed",
+          unresolved_findings: 0
+        }
+      },
       queue: {
         ready: 1
       },
@@ -219,6 +230,44 @@ describe("board projection", () => {
       queue: {
         ready: 1
       }
+    });
+  });
+
+  it("redacts secret-like fields and opaque credentials before projection output", () => {
+    const githubToken = `github_pat_${"A".repeat(30)}`;
+    const input = {
+      safe: "visible",
+      api_token: "field-secret",
+      nested: {
+        message: `Authorization: Bearer ${"B".repeat(32)}`,
+        opaque: `credential ${githubToken}`,
+        secret_scan_passed: true
+      }
+    };
+
+    const sanitized = sanitizeBoardProjection(input);
+    expect(sanitized.projection).toEqual({
+      safe: "visible",
+      api_token: "[redacted]",
+      nested: {
+        message: "Authorization: Bearer [redacted]",
+        opaque: "credential [redacted]",
+        secret_scan_passed: true
+      }
+    });
+    expect(sanitized.summary).toMatchObject({
+      status: "passed",
+      redacted_fields: 1,
+      redacted_values: 2,
+      unresolved_findings: 0
+    });
+    expect(inspectBoardProjectionSecrets(input)).toMatchObject({
+      status: "warning",
+      exposed_findings: 3
+    });
+    expect(inspectBoardProjectionSecrets(sanitized.projection)).toMatchObject({
+      status: "passed",
+      exposed_findings: 0
     });
   });
 
@@ -708,6 +757,7 @@ describe("board projection", () => {
     try {
       expect(server.board_url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/$/);
       expect(server.projection_path).toBe(".kairon/board/projection.json");
+      expect(server.audit_path).toBe(".kairon/runtime/board/access.jsonl");
 
       const htmlResponse = await fetch(server.board_url);
       expect(htmlResponse.status).toBe(200);
@@ -730,6 +780,7 @@ describe("board projection", () => {
       ).resolves.toMatchObject({
         status: "ready",
         mode: "loopback_read_only",
+        audit_path: ".kairon/runtime/board/access.jsonl",
         access: {
           required: false,
           scope: boardReadScope
@@ -759,7 +810,8 @@ describe("board projection", () => {
         access_token: rawToken,
         access_token_expires_at: "2026-06-01T00:01:00.000Z",
         access_scope: boardReadScope,
-        status_path: ".kairon/runtime/board/server.json"
+        status_path: ".kairon/runtime/board/server.json",
+        audit_path: ".kairon/runtime/board/access.jsonl"
       });
       const formatted = formatBoardServeResult(server);
       expect(formatted.split(rawToken)).toHaveLength(2);
@@ -772,7 +824,10 @@ describe("board projection", () => {
       });
 
       const invalid = await fetch(server.board_url, {
-        headers: { authorization: "Bearer invalid-token" }
+        headers: {
+          authorization: "Bearer invalid-token",
+          "user-agent": "T137-UA-SHOULD-NOT-LEAK"
+        }
       });
       expect(invalid.status).toBe(401);
 
@@ -832,6 +887,38 @@ describe("board projection", () => {
         scope: boardReadScope
       }
     });
+
+    const audit = await readJsonLines<Record<string, unknown>>(
+      path.join(root, ".kairon", "runtime", "board", "access.jsonl")
+    );
+    expect(audit).toHaveLength(6);
+    expect(audit).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          outcome: "allowed",
+          route: "index",
+          http_status: 200,
+          auth_status: "accepted",
+          client: "loopback"
+        }),
+        expect.objectContaining({
+          outcome: "denied",
+          route: "index",
+          http_status: 401,
+          auth_status: "missing_token"
+        }),
+        expect.objectContaining({
+          outcome: "denied",
+          method: "POST",
+          http_status: 405,
+          auth_status: "not_evaluated"
+        })
+      ])
+    );
+    const auditText = JSON.stringify(audit);
+    expect(auditText).not.toContain(rawToken);
+    expect(auditText).not.toContain("invalid-token");
+    expect(auditText).not.toContain("T137-UA-SHOULD-NOT-LEAK");
   });
 
   it("rejects a Board token whose stored scope is not read-only", () => {

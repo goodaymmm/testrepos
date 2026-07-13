@@ -15,6 +15,13 @@ import {
   issueBoardAccessToken,
   validateBoardAccessToken
 } from "./access-token.js";
+import {
+  auditBoardAccess,
+  boardAccessAuditPath,
+  classifyBoardAccessRoute,
+  type BoardAccessAuditAuthStatus,
+  type BoardAccessAuditRoute
+} from "./access-audit.js";
 
 export type BoardServerOptions = BoardProjectionOptions & {
   host?: string;
@@ -31,6 +38,7 @@ export type BoardServeResult = {
   host: string;
   port: number;
   status_path: string;
+  audit_path: string;
   access_token?: string;
   access_token_expires_at?: string;
   access_scope?: string;
@@ -44,6 +52,7 @@ export type BoardServerRuntimeStatus = {
   projection_path: string;
   host: string;
   port: number;
+  audit_path: string;
   access: {
     required: boolean;
     token_hash?: string;
@@ -68,8 +77,25 @@ export async function startBoardServer(
   const now = options.now ?? (() => new Date());
   const access = createBoardAccess(options, now());
   const server = createServer(async (request, response) => {
+    const method = request.method ?? "UNKNOWN";
+    const requestUrl = new URL(request.url ?? "/", `http://${host}`);
+    const route = classifyBoardAccessRoute(requestUrl.pathname);
+    const userAgentPresent = hasUserAgent(request.headers["user-agent"]);
+    let authStatus: BoardAccessAuditAuthStatus =
+      access === undefined ? "not_required" : "not_evaluated";
+
     try {
-      if (request.method !== "GET" && request.method !== "HEAD") {
+      if (method !== "GET" && method !== "HEAD") {
+        await recordBoardAccess({
+          projectRoot,
+          method,
+          route,
+          status: 405,
+          outcome: "denied",
+          authStatus,
+          userAgentPresent,
+          now
+        });
         response.writeHead(405, {
           "Content-Type": "text/plain; charset=utf-8",
           "Cache-Control": "no-store"
@@ -78,7 +104,6 @@ export async function startBoardServer(
         return;
       }
 
-      const requestUrl = new URL(request.url ?? "/", `http://${host}`);
       if (access !== undefined) {
         const validation = validateBoardAccessToken({
           token: readBearerToken(request.headers.authorization),
@@ -87,22 +112,54 @@ export async function startBoardServer(
           requiredScope: boardReadScope
         });
         if (!validation.accepted) {
-          sendUnauthorized(response, request.method, validation.reason);
+          authStatus = validation.reason;
+          await recordBoardAccess({
+            projectRoot,
+            method,
+            route,
+            status: validation.reason === "scope_mismatch" ? 403 : 401,
+            outcome: "denied",
+            authStatus,
+            userAgentPresent,
+            now
+          });
+          sendUnauthorized(response, method, validation.reason);
           return;
         }
+        authStatus = "accepted";
       }
 
       const projection = await createBoardProjection(projectRoot, options);
 
       if (requestUrl.pathname === "/" || requestUrl.pathname === "/index.html") {
-        send(response, request.method, 200, "text/html; charset=utf-8", renderBoardHtml(projection));
+        await recordBoardAccess({
+          projectRoot,
+          method,
+          route,
+          status: 200,
+          outcome: "allowed",
+          authStatus,
+          userAgentPresent,
+          now
+        });
+        send(response, method, 200, "text/html; charset=utf-8", renderBoardHtml(projection));
         return;
       }
 
       if (requestUrl.pathname === "/projection.json") {
+        await recordBoardAccess({
+          projectRoot,
+          method,
+          route,
+          status: 200,
+          outcome: "allowed",
+          authStatus,
+          userAgentPresent,
+          now
+        });
         send(
           response,
-          request.method,
+          method,
           200,
           "application/json; charset=utf-8",
           `${JSON.stringify(projection, null, 2)}\n`
@@ -110,15 +167,29 @@ export async function startBoardServer(
         return;
       }
 
-      send(response, request.method, 404, "text/plain; charset=utf-8", "Not found");
-    } catch (error) {
-      send(
-        response,
-        request.method ?? "GET",
-        500,
-        "text/plain; charset=utf-8",
-        `Board render failed: ${String(error)}`
-      );
+      await recordBoardAccess({
+        projectRoot,
+        method,
+        route,
+        status: 404,
+        outcome: "denied",
+        authStatus,
+        userAgentPresent,
+        now
+      });
+      send(response, method, 404, "text/plain; charset=utf-8", "Not found");
+    } catch {
+      await recordBoardAccessBestEffort({
+        projectRoot,
+        method,
+        route,
+        status: 500,
+        outcome: "error",
+        authStatus,
+        userAgentPresent,
+        now
+      });
+      send(response, method, 500, "text/plain; charset=utf-8", "Board render failed.");
     }
   });
 
@@ -130,6 +201,7 @@ export async function startBoardServer(
     const actualPort = readActualPort(server);
     const boardUrl = `http://${host}:${actualPort}/`;
     const statusPath = boardServerStatusPath(projectRoot);
+    const auditPath = boardAccessAuditPath(projectRoot);
     const statusBase = {
       schema_version: "0.1" as const,
       mode: "loopback_read_only" as const,
@@ -137,6 +209,7 @@ export async function startBoardServer(
       projection_path: exportResult.projection_path,
       host,
       port: actualPort,
+      audit_path: toProjectPath(projectRoot, auditPath),
       access: accessStatus(access)
     };
     let closed = false;
@@ -154,6 +227,7 @@ export async function startBoardServer(
       host,
       port: actualPort,
       status_path: toProjectPath(projectRoot, statusPath),
+      audit_path: toProjectPath(projectRoot, auditPath),
       access_token: access?.token,
       access_token_expires_at: access?.metadata.expires_at,
       access_scope: access?.metadata.scope,
@@ -191,6 +265,7 @@ export function formatBoardServeResult(result: BoardServeResult): string {
     `board.url=${result.board_url}`,
     `projection=${result.projection_path}`,
     `status_path=${result.status_path}`,
+    `audit_path=${result.audit_path}`,
     `host=${result.host}`,
     `port=${result.port}`
   ];
@@ -351,4 +426,44 @@ function boardServerStatusPath(projectRoot: string): string {
 
 function toProjectPath(projectRoot: string, filePath: string): string {
   return toPosixPath(path.relative(projectRoot, filePath));
+}
+
+type BoardAccessRecordInput = {
+  projectRoot: string;
+  method: string;
+  route: BoardAccessAuditRoute;
+  status: number;
+  outcome: "allowed" | "denied" | "error";
+  authStatus: BoardAccessAuditAuthStatus;
+  userAgentPresent: boolean;
+  now: () => Date;
+};
+
+async function recordBoardAccess(input: BoardAccessRecordInput): Promise<void> {
+  await auditBoardAccess(input.projectRoot, {
+    outcome: input.outcome,
+    method: input.method,
+    route: input.route,
+    http_status: input.status,
+    auth_status: input.authStatus,
+    user_agent_present: input.userAgentPresent,
+    recorded_at: input.now().toISOString()
+  });
+}
+
+async function recordBoardAccessBestEffort(
+  input: BoardAccessRecordInput
+): Promise<void> {
+  try {
+    await recordBoardAccess(input);
+  } catch {
+    // The response remains generic when the audit sink itself is unavailable.
+  }
+}
+
+function hasUserAgent(value: string | string[] | undefined): boolean {
+  if (Array.isArray(value)) {
+    return value.some((item) => item.length > 0);
+  }
+  return value !== undefined && value.length > 0;
 }

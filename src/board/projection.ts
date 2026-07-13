@@ -16,11 +16,18 @@ import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js"
 import { type QueueItem, WorkQueue } from "../queue/work-queue.js";
 import { getRuntimeStatus, type RuntimeStatus } from "../runtime/status.js";
 import type { TaskRecord } from "../tasks/task-runner.js";
+import {
+  sanitizeBoardProjection,
+  type BoardSecretScanSummary
+} from "./secret-scan.js";
 
 export type BoardProjection = {
   schema_version: "0.1";
   kind: "board_projection";
   generated_at: string;
+  meta: {
+    secret_scan: BoardSecretScanSummary;
+  };
   runtime: RuntimeStatus;
   queue: {
     ready: number;
@@ -92,6 +99,8 @@ export type BoardExportResult = {
   approvals_pending: number;
   operations_attention: number;
   recent_runs: number;
+  secret_scan_status: BoardSecretScanSummary["status"];
+  secret_scan_redactions: number;
 };
 
 export type BoardOperationsSummary = {
@@ -517,7 +526,7 @@ export async function createBoardProjection(
       })
     );
 
-  return {
+  const candidate: Omit<BoardProjection, "meta"> = {
     schema_version: "0.1",
     kind: "board_projection",
     generated_at: generatedAt,
@@ -607,6 +616,14 @@ export async function createBoardProjection(
       decisions: summarizeDiscordDecisionAudits(discordAudits.decisions, recentLimit)
     }
   };
+  const sanitized = sanitizeBoardProjection(candidate);
+
+  return {
+    ...sanitized.projection,
+    meta: {
+      secret_scan: sanitized.summary
+    }
+  };
 }
 
 export async function exportBoardProjection(
@@ -628,7 +645,11 @@ export async function exportBoardProjection(
     queue_ready: projection.queue.ready,
     approvals_pending: projection.approvals.pending,
     operations_attention: projection.operations.attention_total,
-    recent_runs: projection.runs.recent.length
+    recent_runs: projection.runs.recent.length,
+    secret_scan_status: projection.meta.secret_scan.status,
+    secret_scan_redactions:
+      projection.meta.secret_scan.redacted_fields +
+      projection.meta.secret_scan.redacted_values
   };
 }
 
@@ -640,7 +661,9 @@ export function formatBoardExportResult(result: BoardExportResult): string {
     `queue.ready=${result.queue_ready}`,
     `approvals.pending=${result.approvals_pending}`,
     `operations.attention=${result.operations_attention}`,
-    `runs.recent=${result.recent_runs}`
+    `runs.recent=${result.recent_runs}`,
+    `secret_scan.status=${result.secret_scan_status}`,
+    `secret_scan.redactions=${result.secret_scan_redactions}`
   ].join("\n");
 }
 
