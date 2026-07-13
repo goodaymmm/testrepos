@@ -3,8 +3,12 @@ import { readJsonFile } from "../core/fs/json-file.js";
 import { writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import { ApprovalQueue, type ApprovalRecord } from "../approvals/approval-queue.js";
-import { WorkQueue, type QueueItem } from "../queue/work-queue.js";
-import type { TaskRecord } from "../tasks/task-runner.js";
+import {
+  WorkQueue,
+  type QueueItem,
+  type WorkflowRuntimeQueueMetadata
+} from "../queue/work-queue.js";
+import { TaskRunner, type TaskRecord } from "../tasks/task-runner.js";
 
 export type ExperimentalWorkflowNodeStatus =
   | "completed"
@@ -75,11 +79,15 @@ export type RunExperimentalWorkflowOptions = {
 export type WorkflowRuntimeCandidateRequest = {
   candidate?: boolean;
   dryRun?: boolean;
+  connectQueue?: boolean;
   workflowId?: string;
   taskId?: string;
   queueItemId?: string;
   approvalId?: string;
   objective?: string;
+  resourceLocks?: string[];
+  retryMaxAttempts?: number;
+  retryBackoffSeconds?: number;
 };
 
 export type WorkflowRuntimeCandidateStatus =
@@ -93,7 +101,7 @@ export type WorkflowRuntimeCandidateArtifact = {
   runtime: "kairon_workflow_runtime_candidate";
   experimental: true;
   candidate: true;
-  dry_run: true;
+  dry_run: boolean;
   workflow_id: string;
   status: WorkflowRuntimeCandidateStatus;
   task_id?: string;
@@ -105,17 +113,21 @@ export type WorkflowRuntimeCandidateArtifact = {
   queue_intake: WorkflowRuntimeQueueIntake;
   task_placeholder: WorkflowRuntimeTaskPlaceholder;
   approval_gate: WorkflowRuntimeApprovalGate;
+  queue_connection: WorkflowRuntimeQueueConnection;
+  execution_policy: WorkflowRuntimeExecutionPolicy;
+  recovery: WorkflowRuntimeRecoveryReference;
   production_boundary: {
     feature_flag: "KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME";
     flag_enabled: true;
-    production_runtime_touched: false;
+    production_runtime_touched: boolean;
     queue_read: boolean;
+    queue_enqueued: boolean;
     queue_claimed: false;
     queue_completed: false;
     approval_read: boolean;
     approval_created: false;
     task_read: boolean;
-    task_runner_touched: false;
+    task_runner_touched: boolean;
     state_applier_touched: false;
     artifact_path: string;
   };
@@ -124,6 +136,28 @@ export type WorkflowRuntimeCandidateArtifact = {
     blockers: string[];
     next_steps: string[];
   };
+  created_at: string;
+};
+
+export type WorkflowRuntimeRecoveryArtifact = {
+  schema_version: "0.1";
+  artifact_kind: "workflow_runtime_queue_recovery";
+  workflow_id: string;
+  task_id: string;
+  queue_item_id: string;
+  status: "queued";
+  retry_policy: WorkflowRuntimeExecutionPolicy["retry_policy"];
+  resource_locks: WorkflowRuntimeExecutionPolicy["resource_locks"];
+  recovery: {
+    expired_claim: "work_queue_requeues_after_claim_ttl";
+    dispatch_failure: "queue_worker_marks_item_failed";
+  };
+  rollback: {
+    automatic: false;
+    strategy: "fail_queue_item_before_claim";
+    operator_steps: string[];
+  };
+  artifact_path: string;
   created_at: string;
 };
 
@@ -160,6 +194,31 @@ type WorkflowRuntimeApprovalGate = {
   status?: string;
   type?: string;
   decision?: string;
+};
+
+type WorkflowRuntimeQueueConnection = {
+  requested: boolean;
+  status: "not_requested" | "blocked" | "connected";
+  queue_item_id?: string;
+  queue_item_type?: QueueItem["type"];
+  reason?: string;
+};
+
+type WorkflowRuntimeExecutionPolicy = {
+  approval_gate: {
+    required: boolean;
+    approval_id?: string;
+    status: string;
+  };
+  resource_locks: WorkflowRuntimeQueueMetadata["resource_locks"];
+  retry_policy: WorkflowRuntimeQueueMetadata["retry_policy"];
+};
+
+type WorkflowRuntimeRecoveryReference = {
+  required: boolean;
+  artifact_path: string;
+  written: boolean;
+  rollback_strategy: WorkflowRuntimeQueueMetadata["rollback"]["strategy"];
 };
 
 export class WorkflowRuntimeCandidateDisabledError extends Error {
@@ -201,15 +260,38 @@ export async function runWorkflowRuntimeCandidate(
     throw new WorkflowRuntimeCandidateDisabledError();
   }
 
+  if (request.connectQueue === true && options.writeArtifact === false) {
+    throw new Error(
+      "Workflow runtime queue connection requires candidate and recovery artifacts."
+    );
+  }
+
   const artifact = await evaluateWorkflowRuntimeCandidate(projectRoot, request, {
     now: options.now
   });
 
+  if (request.connectQueue === true) {
+    await connectWorkflowRuntimeCandidate(projectRoot, artifact, options);
+  }
+
   if (options.writeArtifact !== false) {
-    await writeJsonFileAtomic(
-      experimentalWorkflowArtifactPath(projectRoot, artifact.workflow_id),
-      artifact
-    );
+    try {
+      await writeJsonFileAtomic(
+        experimentalWorkflowArtifactPath(projectRoot, artifact.workflow_id),
+        artifact
+      );
+    } catch (error) {
+      if (
+        artifact.queue_connection.status === "connected" &&
+        artifact.queue_item_id !== undefined
+      ) {
+        await new WorkQueue(projectRoot).fail(artifact.queue_item_id, {
+          message: "Workflow candidate artifact write failed after enqueue.",
+          code: "workflow_candidate_artifact_write_failed"
+        });
+      }
+      throw error;
+    }
   }
 
   return artifact;
@@ -283,10 +365,23 @@ export async function evaluateWorkflowRuntimeCandidate(
   const blockers = [
     ...queueBlockers(queueIntake),
     ...taskBlockers(taskPlaceholder),
-    ...approvalBlockers(approvalGate)
+    ...approvalBlockers(approvalGate),
+    ...queueConnectionBlockers(
+      request,
+      effectiveTaskId,
+      taskPlaceholder,
+      approvalGate
+    )
   ];
   const status = deriveCandidateStatus(blockers, approvalGate);
   const artifactPath = experimentalWorkflowArtifactPath(projectRoot, workflowId);
+  const recoveryPath = workflowRuntimeRecoveryArtifactPath(projectRoot, workflowId);
+  const executionPolicy = buildExecutionPolicy(
+    request,
+    effectiveTaskId,
+    taskPlaceholder,
+    approvalGate
+  );
 
   return {
     schema_version: "0.1",
@@ -294,7 +389,7 @@ export async function evaluateWorkflowRuntimeCandidate(
     runtime: "kairon_workflow_runtime_candidate",
     experimental: true,
     candidate: true,
-    dry_run: true,
+    dry_run: request.connectQueue !== true,
     workflow_id: workflowId,
     status,
     task_id: effectiveTaskId,
@@ -310,11 +405,27 @@ export async function evaluateWorkflowRuntimeCandidate(
     queue_intake: queueIntake,
     task_placeholder: taskPlaceholder,
     approval_gate: approvalGate,
+    queue_connection: {
+      requested: request.connectQueue === true,
+      status: request.connectQueue === true ? "blocked" : "not_requested",
+      reason:
+        request.connectQueue === true
+          ? queueConnectionReason(status, blockers)
+          : undefined
+    },
+    execution_policy: executionPolicy,
+    recovery: {
+      required: request.connectQueue === true,
+      artifact_path: toProjectPath(projectRoot, recoveryPath),
+      written: false,
+      rollback_strategy: "fail_queue_item_before_claim"
+    },
     production_boundary: {
       feature_flag: "KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME",
       flag_enabled: true,
       production_runtime_touched: false,
       queue_read: request.queueItemId !== undefined,
+      queue_enqueued: false,
       queue_claimed: false,
       queue_completed: false,
       approval_read: request.approvalId !== undefined,
@@ -342,11 +453,13 @@ export function formatWorkflowRuntimeCandidate(
     `workflow_id=${artifact.workflow_id}`,
     `status=${artifact.status}`,
     "candidate=true",
-    "dry_run=true",
-    "execution_allowed=false",
+    `dry_run=${artifact.dry_run}`,
+    `execution_allowed=${artifact.queue_connection.status === "connected"}`,
     `artifact=${artifact.production_boundary.artifact_path}`,
     `queue_item=${artifact.queue_intake.item_id ?? "not_requested"}`,
     `queue_intake=${nodeStatus(artifact.nodes, "queue_intake")}`,
+    `queue_connection=${artifact.queue_connection.status}`,
+    `recovery_artifact=${artifact.recovery.artifact_path}`,
     `task=${artifact.task_placeholder.task_id ?? "not_requested"}`,
     `task_placeholder=${nodeStatus(artifact.nodes, "task_placeholder")}`,
     `approval=${artifact.approval_gate.approval_id ?? "not_requested"}`,
@@ -378,6 +491,18 @@ export function experimentalWorkflowArtifactPath(
     "experimental",
     "workflows",
     `${workflowId}.json`
+  );
+}
+
+export function workflowRuntimeRecoveryArtifactPath(
+  projectRoot: string,
+  workflowId: string
+): string {
+  return resolveInside(
+    getKaironPaths(projectRoot).kaironDir,
+    "experimental",
+    "workflows",
+    `${workflowId}-recovery.json`
   );
 }
 
@@ -415,8 +540,14 @@ function assertWorkflowCandidateRequest(
     throw new Error("Workflow runtime candidate requires candidate=true.");
   }
 
-  if (request.dryRun === false) {
+  if (request.dryRun === false && request.connectQueue !== true) {
     throw new Error("Workflow runtime candidate only supports dry_run=true.");
+  }
+
+  if (request.connectQueue === true && request.queueItemId !== undefined) {
+    throw new Error(
+      "Workflow runtime queue connection cannot reuse an existing queue item."
+    );
   }
 
   if (
@@ -432,6 +563,26 @@ function assertWorkflowCandidateRequest(
 
   if (request.objective !== undefined && request.objective.trim().length === 0) {
     throw new Error("Workflow runtime candidate objective must not be empty.");
+  }
+
+  if (
+    request.retryMaxAttempts !== undefined &&
+    (!Number.isInteger(request.retryMaxAttempts) ||
+      request.retryMaxAttempts < 1 ||
+      request.retryMaxAttempts > 10)
+  ) {
+    throw new Error("Workflow runtime retryMaxAttempts must be between 1 and 10.");
+  }
+
+  if (
+    request.retryBackoffSeconds !== undefined &&
+    (!Number.isInteger(request.retryBackoffSeconds) ||
+      request.retryBackoffSeconds < 0 ||
+      request.retryBackoffSeconds > 3600)
+  ) {
+    throw new Error(
+      "Workflow runtime retryBackoffSeconds must be between 0 and 3600."
+    );
   }
 }
 
@@ -489,6 +640,219 @@ function deriveWorkflowStatus(
   return approvalRequired || agentOutcome === "setup_required"
     ? "waiting_for_approval"
     : "completed";
+}
+
+async function connectWorkflowRuntimeCandidate(
+  projectRoot: string,
+  artifact: WorkflowRuntimeCandidateArtifact,
+  options: RunWorkflowRuntimeCandidateOptions
+): Promise<void> {
+  if (artifact.status !== "candidate_ready" || artifact.task_id === undefined) {
+    artifact.queue_connection = {
+      requested: true,
+      status: "blocked",
+      reason: queueConnectionReason(
+        artifact.status,
+        artifact.recommendation.blockers
+      )
+    };
+    return;
+  }
+
+  const metadata = buildWorkflowQueueMetadata(artifact);
+  const queueItem = await new TaskRunner(projectRoot, {
+    now: options.now
+  }).enqueueTask({
+    taskId: artifact.task_id,
+    metadata: { workflow_runtime: metadata },
+    createdAt: options.now?.()
+  });
+  const queueIntake = buildQueueIntake(queueItem.id, queueItem);
+
+  artifact.queue_item_id = queueItem.id;
+  artifact.queue_intake = queueIntake;
+  artifact.queue_connection = {
+    requested: true,
+    status: "connected",
+    queue_item_id: queueItem.id,
+    queue_item_type: queueItem.type
+  };
+  artifact.production_boundary.queue_enqueued = true;
+  artifact.production_boundary.task_runner_touched = true;
+  artifact.nodes = buildCandidateNodes(
+    queueIntake,
+    artifact.task_placeholder,
+    artifact.approval_gate,
+    []
+  );
+
+  const handoff = artifact.nodes.find((node) => node.id === "production_handoff");
+  if (handoff !== undefined) {
+    handoff.status = "completed";
+    handoff.summary = "Candidate was queued; RuntimeLoop dispatch remains feature-flagged.";
+    handoff.output = {
+      production_runtime_touched: false,
+      queue_item_id: queueItem.id,
+      blockers: []
+    };
+  }
+
+  const recoveryArtifact = buildRecoveryArtifact(
+    projectRoot,
+    artifact,
+    queueItem,
+    options.now?.() ?? new Date()
+  );
+  try {
+    await writeJsonFileAtomic(
+      workflowRuntimeRecoveryArtifactPath(projectRoot, artifact.workflow_id),
+      recoveryArtifact
+    );
+  } catch (error) {
+    await new WorkQueue(projectRoot).fail(queueItem.id, {
+      message: "Workflow recovery artifact write failed after enqueue.",
+      code: "workflow_recovery_artifact_write_failed"
+    });
+    throw error;
+  }
+  artifact.recovery.written = true;
+  artifact.recommendation.next_steps = [
+    "Run RuntimeLoop with the workflow feature flag enabled to dispatch the queued candidate."
+  ];
+}
+
+function buildWorkflowQueueMetadata(
+  artifact: WorkflowRuntimeCandidateArtifact
+): WorkflowRuntimeQueueMetadata {
+  return {
+    schema_version: "0.1",
+    workflow_id: artifact.workflow_id,
+    candidate_artifact_path: artifact.production_boundary.artifact_path,
+    feature_flag: "KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME",
+    approval_gate: artifact.execution_policy.approval_gate,
+    resource_locks: artifact.execution_policy.resource_locks,
+    retry_policy: artifact.execution_policy.retry_policy,
+    recovery_artifact_path: artifact.recovery.artifact_path,
+    rollback: {
+      strategy: artifact.recovery.rollback_strategy,
+      automatic: false
+    }
+  };
+}
+
+function buildRecoveryArtifact(
+  projectRoot: string,
+  artifact: WorkflowRuntimeCandidateArtifact,
+  queueItem: QueueItem,
+  now: Date
+): WorkflowRuntimeRecoveryArtifact {
+  if (artifact.task_id === undefined) {
+    throw new Error("Connected workflow candidate is missing task_id.");
+  }
+
+  return {
+    schema_version: "0.1",
+    artifact_kind: "workflow_runtime_queue_recovery",
+    workflow_id: artifact.workflow_id,
+    task_id: artifact.task_id,
+    queue_item_id: queueItem.id,
+    status: "queued",
+    retry_policy: artifact.execution_policy.retry_policy,
+    resource_locks: artifact.execution_policy.resource_locks,
+    recovery: {
+      expired_claim: "work_queue_requeues_after_claim_ttl",
+      dispatch_failure: "queue_worker_marks_item_failed"
+    },
+    rollback: {
+      automatic: false,
+      strategy: "fail_queue_item_before_claim",
+      operator_steps: [
+        `Inspect queue item ${queueItem.id} before RuntimeLoop dispatch.`,
+        "Disable KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME to keep the item unclaimed.",
+        "Mark or isolate the queue item through the normal recovery workflow."
+      ]
+    },
+    artifact_path: toProjectPath(
+      projectRoot,
+      workflowRuntimeRecoveryArtifactPath(projectRoot, artifact.workflow_id)
+    ),
+    created_at: now.toISOString()
+  };
+}
+
+function buildExecutionPolicy(
+  request: WorkflowRuntimeCandidateRequest,
+  taskId: string | undefined,
+  task: WorkflowRuntimeTaskPlaceholder,
+  approvalGate: WorkflowRuntimeApprovalGate
+): WorkflowRuntimeExecutionPolicy {
+  const approvalRequired =
+    approvalGate.requested || task.approval_required === true;
+  const requestedLocks = (request.resourceLocks ?? [])
+    .map((key) => key.trim())
+    .filter((key) => key.length > 0);
+  const lockKeys = Array.from(
+    new Set(
+      requestedLocks.length > 0
+        ? requestedLocks
+        : taskId === undefined
+          ? []
+          : [`task:${taskId}`]
+    )
+  );
+
+  return {
+    approval_gate: {
+      required: approvalRequired,
+      approval_id: approvalGate.approval_id,
+      status:
+        approvalGate.status ??
+        (approvalRequired ? "missing" : "not_required")
+    },
+    resource_locks: {
+      mode: "exclusive",
+      keys: lockKeys,
+      release_on: ["completed", "failed"]
+    },
+    retry_policy: {
+      max_attempts: request.retryMaxAttempts ?? 1,
+      backoff_seconds: request.retryBackoffSeconds ?? 0
+    }
+  };
+}
+
+function queueConnectionBlockers(
+  request: WorkflowRuntimeCandidateRequest,
+  taskId: string | undefined,
+  task: WorkflowRuntimeTaskPlaceholder,
+  approvalGate: WorkflowRuntimeApprovalGate
+): string[] {
+  if (request.connectQueue === true && taskId === undefined) {
+    return ["task id is required for queue connection"];
+  }
+
+  if (
+    request.connectQueue === true &&
+    task.approval_required === true &&
+    !approvalGate.requested
+  ) {
+    return ["approval id is required for an approval-gated task"];
+  }
+
+  return [];
+}
+
+function queueConnectionReason(
+  status: WorkflowRuntimeCandidateStatus,
+  blockers: string[]
+): string {
+  if (blockers.length > 0) {
+    return blockers.join(";");
+  }
+
+  return status === "waiting_for_approval"
+    ? "approval decision is required before queue connection"
+    : "ready_to_connect";
 }
 
 async function readQueueItem(

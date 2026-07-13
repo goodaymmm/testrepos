@@ -112,6 +112,22 @@ Candidate scope:
 
 The candidate is still not a production runtime. It exists to answer whether the current file-based runtime has a concrete integration point that benefits from workflow modeling.
 
+## Feature-flagged Queue Connection
+
+T138 adds an explicit queue connection while preserving the T128 dry-run:
+
+```powershell
+$env:KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME = "1"
+kairon workflow run --candidate --connect-queue --task-id TASK-0001 --approval-id APR-0001
+```
+
+- Queue connection is opt-in and requires an existing task.
+- Approval-gated tasks are not enqueued before an approve decision.
+- Queue metadata records approval, exclusive resource keys, retry policy, and recovery paths.
+- RuntimeLoop leaves connected items ready while the feature flag is disabled.
+- Dispatch uses the existing `agent.run` / `TaskRunner` path; workflow code does not apply canonical state directly.
+- A separate recovery artifact records claim expiry, dispatch failure, and manual rollback guidance.
+
 ## Verification
 
 ```powershell

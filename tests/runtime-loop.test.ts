@@ -5,6 +5,8 @@ import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { CommandInbox } from "../src/queue/command-inbox.js";
 import { WorkQueue } from "../src/queue/work-queue.js";
 import { RuntimeLoop, type RuntimeTickResult } from "../src/runtime/runtime-loop.js";
+import { runWorkflowRuntimeCandidate } from "../src/experimental/workflow-runtime.js";
+import { TaskRunner } from "../src/tasks/task-runner.js";
 import {
   getScheduleStatus,
   type ScheduleConfig
@@ -618,6 +620,81 @@ describe("RuntimeLoop", () => {
       mode: result.mode,
       action: result.action
     });
+  });
+
+  it("dispatches connected workflow items only while the feature flag is enabled", async () => {
+    const root = await createInitializedProject();
+    const queue = new WorkQueue(root);
+    const task = await new TaskRunner(root, {
+      now: () => new Date("2026-07-14T07:00:00.000Z")
+    }).createTask({
+      title: "T138 runtime queue connection",
+      persona: "researcher",
+      priority: 80,
+      scheduleMode: "active_work"
+    });
+    const artifact = await runWorkflowRuntimeCandidate(
+      root,
+      {
+        candidate: true,
+        connectQueue: true,
+        workflowId: "EXP-WF-RUNTIME-0138",
+        taskId: task.task_id
+      },
+      {
+        env: { KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME: "1" },
+        now: () => new Date("2026-07-14T07:01:00.000Z")
+      }
+    );
+    const fallback = await queue.enqueue({
+      type: "maintenance.run",
+      priority: 10,
+      schedule_mode: "active_work"
+    });
+
+    const disabledResult = await new RuntimeLoop(root, {
+      env: {},
+      now: () => new Date("2026-07-14T08:00:00.000Z"),
+      handlers: {
+        items: {
+          "agent.run": async () => {
+            throw new Error("disabled workflow item must not run");
+          },
+          "maintenance.run": async () => ({ fallback: true })
+        }
+      }
+    }).runTick();
+
+    expect(disabledResult.queue_result).toMatchObject({
+      status: "processed-item",
+      item_id: fallback.id
+    });
+    await expect(queue.list("ready")).resolves.toMatchObject([
+      { id: artifact.queue_item_id, attempts: 0 }
+    ]);
+
+    const enabledResult = await new RuntimeLoop(root, {
+      env: { KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME: "true" },
+      now: () => new Date("2026-07-14T08:01:00.000Z"),
+      handlers: {
+        items: {
+          "agent.run": async (item) => ({ workflow_id: item.metadata?.workflow_runtime?.workflow_id })
+        }
+      }
+    }).runTick();
+
+    expect(enabledResult.queue_result).toMatchObject({
+      status: "processed-item",
+      item_id: artifact.queue_item_id
+    });
+    await expect(queue.list("completed")).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: artifact.queue_item_id,
+          result: { workflow_id: "EXP-WF-RUNTIME-0138" }
+        })
+      ])
+    );
   });
 });
 

@@ -6,7 +6,10 @@ import {
   type QueueWorkerHandlers,
   type QueueWorkerResult
 } from "../queue/queue-worker.js";
-import { WorkQueue } from "../queue/work-queue.js";
+import {
+  WorkQueue,
+  type QueueItem
+} from "../queue/work-queue.js";
 import { StateApplier, type InternalCommand } from "../state/state-applier.js";
 import { createAntigravityPtySessionRunner } from "../agents/pty-session-runner.js";
 import type { AgentSessionAvailability } from "../agents/dispatcher.js";
@@ -36,6 +39,7 @@ import {
   type ScheduleStatus
 } from "./schedule-engine.js";
 import { formatRuntimeStatus, getRuntimeStatus } from "./status.js";
+import { isWorkflowRuntimeCandidateEnabled } from "../experimental/workflow-runtime.js";
 
 export type RuntimeTickAction =
   | "processed-command"
@@ -78,6 +82,7 @@ export type RuntimeLoopOptions = {
     request: RuntimeGitTransactionRequest
   ) => Promise<GitTransactionRecord>;
   commandAvailability?: CommandAvailabilityChecker;
+  env?: NodeJS.ProcessEnv;
 };
 
 export type RuntimeGitTransactionRequest =
@@ -112,7 +117,8 @@ export class RuntimeLoop {
       date
     ).processNext(workerId, {
       scheduleMode: schedule.mode,
-      now
+      now,
+      blocked: (item) => this.isWorkflowRuntimeItemBlocked(item)
     });
     return this.recordTick({
       ...this.baseTick(schedule, workerId, now, sessions),
@@ -213,6 +219,13 @@ export class RuntimeLoop {
 
   private now(): Date {
     return this.options.now?.() ?? new Date();
+  }
+
+  private isWorkflowRuntimeItemBlocked(item: QueueItem): boolean {
+    return (
+      item.metadata?.workflow_runtime !== undefined &&
+      !isWorkflowRuntimeCandidateEnabled(this.options.env ?? process.env)
+    );
   }
 }
 

@@ -22,6 +22,36 @@ export type QueueTestScope = {
   expires_at: string;
 };
 
+export type WorkflowRuntimeQueueMetadata = {
+  schema_version: "0.1";
+  workflow_id: string;
+  candidate_artifact_path: string;
+  feature_flag: "KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME";
+  approval_gate: {
+    required: boolean;
+    approval_id?: string;
+    status: string;
+  };
+  resource_locks: {
+    mode: "exclusive";
+    keys: string[];
+    release_on: ["completed", "failed"];
+  };
+  retry_policy: {
+    max_attempts: number;
+    backoff_seconds: number;
+  };
+  recovery_artifact_path: string;
+  rollback: {
+    strategy: "fail_queue_item_before_claim";
+    automatic: false;
+  };
+};
+
+export type QueueMetadata = {
+  workflow_runtime?: WorkflowRuntimeQueueMetadata;
+};
+
 export type QueueItem = {
   id: string;
   type: QueueItemType;
@@ -29,6 +59,7 @@ export type QueueItem = {
   priority: number;
   task_id?: string;
   payload?: Record<string, unknown>;
+  metadata?: QueueMetadata;
   schedule_mode?: ScheduleMode;
   test_scope?: QueueTestScope;
   attempts: number;
@@ -58,6 +89,7 @@ export type EnqueueInput = {
   priority?: number;
   task_id?: string;
   payload?: Record<string, unknown>;
+  metadata?: QueueMetadata;
   schedule_mode?: ScheduleMode;
   test_scope?: QueueTestScope;
   created_at?: string;
@@ -104,6 +136,7 @@ export class WorkQueue {
         priority: input.priority ?? 50,
         task_id: input.task_id,
         payload: input.payload,
+        metadata: input.metadata,
         schedule_mode: input.schedule_mode,
         test_scope: input.test_scope,
         attempts: 0,

@@ -467,3 +467,12 @@ T128 の workflow runtime production candidate も同じ境界を維持する。
 - queue itemをclaimせず、approvalを作らず、task runnerを起動せず、canonical eventをappendしない。
 - candidate artifactには queue intake、task placeholder、approval gate、production handoff の状態を残す。
 - production runtimeへの接続可否はcandidate artifactの `recommendation` と `blockers` を見て判断する。
+
+T138では明示的なqueue接続だけを追加する。
+
+- `kairon workflow run --candidate --connect-queue --task-id <TASK-ID>` で既存taskを`agent.run`へ変換する。
+- approval必須taskは、参照したapprovalがapprove済みになるまでenqueueしない。
+- queue metadataにapproval gate、resource lock、retry policy、recovery artifact pathを残す。
+- recovery / rollback導線を `<workflow_id>-recovery.json` に保存する。
+- feature flagが無効なRuntimeLoopはworkflow metadata付きitemをclaimしない。
+- workflow runtimeはcanonical stateを直接更新せず、dispatch時は既存TaskRunner / QueueWorker境界を使う。

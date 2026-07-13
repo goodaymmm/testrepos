@@ -40,6 +40,7 @@ export type QueueWorkerHandlers = {
 export type ProcessNextOptions = {
   scheduleMode?: ScheduleMode;
   now?: Date;
+  blocked?: (item: QueueItem) => boolean;
 };
 
 export class QueueWorker {
@@ -66,6 +67,7 @@ export class QueueWorker {
     const item = await this.workQueue.claim(workerId, {
       now: options.now,
       blocked: (candidate) =>
+        (options.blocked?.(candidate) ?? false) ||
         isBlockedBySchedule(candidate, {
           activeWorkClosed,
           scheduleMode: options.scheduleMode

@@ -297,6 +297,7 @@ describe("createProgram", () => {
       expect.arrayContaining([
         "--candidate",
         "--dry-run",
+        "--connect-queue",
         "--workflow-id",
         "--task-id",
         "--queue-item-id",
