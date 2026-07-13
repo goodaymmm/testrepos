@@ -761,11 +761,12 @@ npm publish / git tag / GitHub Releaseは実行しないこと
 
 ## kairon workflow
 
-experimental workflow runtimeをproduction接続候補としてdry-run評価する。通常RuntimeLoopとは分離し、feature flagがない場合は拒否する。
+experimental workflow runtimeをproduction接続候補として評価する。既定はread-only dry-runで、明示した場合だけfeature flag配下のqueueへ接続する。
 
 ```text
 kairon workflow run --candidate --dry-run
 kairon workflow run --candidate --dry-run --workflow-id EXP-WF-CANDIDATE-0001 --queue-item-id JOB-0001 --approval-id APR-0001
+kairon workflow run --candidate --connect-queue --workflow-id EXP-WF-CONNECT-0001 --task-id TASK-0001 --approval-id APR-0001
 ```
 
 有効化条件。
@@ -779,6 +780,7 @@ KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME=1
 ```text
 --candidate                 production candidate adapterを評価する。
 --dry-run                   production runtimeへ接続せずexperimental artifactだけを書く。既定動作。
+--connect-queue             candidate taskをagent.run itemへ変換する。task idが必須。
 --workflow-id <workflowId>  EXP-WF- prefixのworkflow id。未指定時はtimestampから生成。
 --task-id <taskId>          task placeholderとしてtask fileをread-only参照する。
 --queue-item-id <jobId>     queue itemをclaimせずread-only参照する。
@@ -786,8 +788,16 @@ KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME=1
 --objective <text>          candidate評価の目的。
 ```
 
-artifactは `.kairon/experimental/workflows/<workflow_id>.json` に保存する。
-このcommandは `WorkQueue` のclaim / complete / fail、approval作成、TaskRunner起動、StateApplier適用を行わない。
+candidate artifactは `.kairon/experimental/workflows/<workflow_id>.json` に保存する。
+dry-runは `WorkQueue` のenqueue / claim / complete / fail、approval作成、TaskRunner起動、StateApplier適用を行わない。
+
+`--connect-queue` は次の境界で動作する。
+
+- `--task-id`で指定した既存taskだけを`TaskRunner.enqueueTask`経由でqueue item化する。
+- taskがapproval必須の場合、`--approval-id`がapprove済みでなければenqueueしない。
+- queue itemへapproval gate、exclusive resource lock、retry policy、recovery artifact pathを保存する。
+- recovery artifactは `.kairon/experimental/workflows/<workflow_id>-recovery.json` に保存する。
+- RuntimeLoopはfeature flagが無効なら接続済みitemをclaimしない。有効時だけ通常の`agent.run` handlerへ渡す。
 
 ## kairon leave
 

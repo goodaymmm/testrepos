@@ -7,6 +7,7 @@ import { initializeProject } from "../src/cli/commands/init.js";
 import {
   experimentalWorkflowArtifactPath,
   runWorkflowRuntimeCandidate,
+  workflowRuntimeRecoveryArtifactPath,
   WorkflowRuntimeCandidateDisabledError
 } from "../src/experimental/workflow-runtime.js";
 import { WorkQueue } from "../src/queue/work-queue.js";
@@ -201,6 +202,162 @@ describe("workflow runtime production candidate", () => {
     expect(artifact.nodes.find((node) => node.id === "queue_intake")).toMatchObject({
       status: "failed"
     });
+  });
+
+  it("connects an approved task to WorkQueue with execution and recovery metadata", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const task = await new TaskRunner(root, {
+      now: () => new Date("2026-07-14T00:00:00.000Z")
+    }).createTask({
+      title: "T138 connected workflow candidate",
+      persona: "researcher",
+      approvalRequired: true,
+      priority: 80
+    });
+    await new StateApplier(root).appendEvent({
+      type: "approval.requested",
+      actor: "workflow-connection-test",
+      payload: {
+        approval: {
+          id: "APR-WF-0138",
+          type: "workflow_candidate",
+          title: "Connect workflow candidate",
+          actions: ["approve", "reject"]
+        }
+      }
+    });
+    await new ApprovalQueue(root).decide({
+      approvalId: "APR-WF-0138",
+      action: "approve"
+    });
+
+    const artifact = await runWorkflowRuntimeCandidate(
+      root,
+      {
+        candidate: true,
+        dryRun: false,
+        connectQueue: true,
+        workflowId: "EXP-WF-CONNECT-0138",
+        taskId: task.task_id,
+        approvalId: "APR-WF-0138",
+        resourceLocks: ["task:TASK-0138", "workspace:source"],
+        retryMaxAttempts: 3,
+        retryBackoffSeconds: 30
+      },
+      {
+        env: { KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME: "1" },
+        now: () => new Date("2026-07-14T00:05:00.000Z")
+      }
+    );
+
+    expect(artifact).toMatchObject({
+      dry_run: false,
+      status: "candidate_ready",
+      queue_connection: {
+        requested: true,
+        status: "connected",
+        queue_item_type: "agent.run"
+      },
+      execution_policy: {
+        approval_gate: {
+          required: true,
+          approval_id: "APR-WF-0138",
+          status: "decided"
+        },
+        resource_locks: {
+          mode: "exclusive",
+          keys: ["task:TASK-0138", "workspace:source"]
+        },
+        retry_policy: {
+          max_attempts: 3,
+          backoff_seconds: 30
+        }
+      },
+      recovery: {
+        required: true,
+        written: true,
+        rollback_strategy: "fail_queue_item_before_claim"
+      },
+      production_boundary: {
+        queue_enqueued: true,
+        queue_claimed: false,
+        task_runner_touched: true
+      }
+    });
+    await expect(new WorkQueue(root).list("ready")).resolves.toMatchObject([
+      {
+        id: artifact.queue_item_id,
+        task_id: task.task_id,
+        attempts: 0,
+        metadata: {
+          workflow_runtime: {
+            workflow_id: "EXP-WF-CONNECT-0138",
+            feature_flag: "KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME",
+            retry_policy: { max_attempts: 3, backoff_seconds: 30 }
+          }
+        }
+      }
+    ]);
+    await expect(
+      readJson(workflowRuntimeRecoveryArtifactPath(root, "EXP-WF-CONNECT-0138"))
+    ).resolves.toMatchObject({
+      artifact_kind: "workflow_runtime_queue_recovery",
+      queue_item_id: artifact.queue_item_id,
+      status: "queued",
+      rollback: {
+        automatic: false,
+        strategy: "fail_queue_item_before_claim"
+      }
+    });
+  });
+
+  it("keeps an approval-gated connection out of WorkQueue until approval", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const task = await new TaskRunner(root).createTask({
+      title: "T138 pending workflow candidate",
+      persona: "researcher",
+      approvalRequired: true
+    });
+    await new StateApplier(root).appendEvent({
+      type: "approval.requested",
+      actor: "workflow-connection-test",
+      payload: {
+        approval: {
+          id: "APR-WF-PENDING-0138",
+          type: "workflow_candidate",
+          title: "Pending workflow candidate",
+          actions: ["approve", "reject"]
+        }
+      }
+    });
+
+    const artifact = await runWorkflowRuntimeCandidate(
+      root,
+      {
+        candidate: true,
+        connectQueue: true,
+        workflowId: "EXP-WF-PENDING-0138",
+        taskId: task.task_id,
+        approvalId: "APR-WF-PENDING-0138"
+      },
+      { env: { KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME: "true" } }
+    );
+
+    expect(artifact).toMatchObject({
+      status: "waiting_for_approval",
+      queue_connection: {
+        requested: true,
+        status: "blocked",
+        reason: "approval decision is required before queue connection"
+      },
+      recovery: { required: true, written: false }
+    });
+    await expect(new WorkQueue(root).list()).resolves.toEqual([]);
+    await expect(
+      fileExists(workflowRuntimeRecoveryArtifactPath(root, "EXP-WF-PENDING-0138"))
+    ).resolves.toBe(false);
   });
 });
 

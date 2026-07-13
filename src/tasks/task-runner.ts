@@ -17,6 +17,7 @@ import { readJsonFile } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import {
   WorkQueue,
+  type QueueMetadata,
   type QueueItem,
   type QueueTestScope,
   type ScheduleMode
@@ -76,6 +77,14 @@ export type RunTaskRequest = {
   date?: string;
   allowInteractiveAgents?: boolean;
   availableSessions?: AgentSessionAvailability[];
+};
+
+export type EnqueueTaskRequest = {
+  taskId: string;
+  timeoutMs?: number;
+  allowInteractiveAgents?: boolean;
+  metadata?: QueueMetadata;
+  createdAt?: Date;
 };
 
 export type RunQueuedTaskRequest = {
@@ -163,27 +172,13 @@ export class TaskRunner {
 
   async runTask(request: RunTaskRequest): Promise<RunTaskResult> {
     assertTaskId(request.taskId);
-    const task = await readJsonFile<TaskRecord>(taskPath(this.projectRoot, request.taskId));
     const queue = new WorkQueue(this.projectRoot);
-    const now = this.now();
-    const queueItem = await queue.enqueue({
-      type: "agent.run",
-      task_id: request.taskId,
-      priority: task.priority,
-      schedule_mode: task.schedule_mode,
-      test_scope: buildTestScope(task.tags, now),
-      created_at: now.toISOString(),
-      payload: {
-        persona: task.persona,
-        capabilities: task.capabilities,
-        tags: task.tags,
-        allow_interactive_agents: request.allowInteractiveAgents,
-        code_producing: task.code_producing,
-        commit_requested: task.commit_requested,
-        approval_required: task.approval_required,
-        timeout_ms: request.timeoutMs
-      }
+    const queueItem = await this.enqueueTask({
+      taskId: request.taskId,
+      timeoutMs: request.timeoutMs,
+      allowInteractiveAgents: request.allowInteractiveAgents
     });
+    const task = await readJsonFile<TaskRecord>(taskPath(this.projectRoot, request.taskId));
     const claimed = await queue.claimById(
       queueItem.id,
       request.workerId ?? "task-runner"
@@ -207,6 +202,32 @@ export class TaskRunner {
       await queue.fail(queueItem.id, { message: String(error) });
       throw error;
     }
+  }
+
+  async enqueueTask(request: EnqueueTaskRequest): Promise<QueueItem> {
+    assertTaskId(request.taskId);
+    const task = await readJsonFile<TaskRecord>(taskPath(this.projectRoot, request.taskId));
+    const now = request.createdAt ?? this.now();
+
+    return new WorkQueue(this.projectRoot).enqueue({
+      type: "agent.run",
+      task_id: request.taskId,
+      priority: task.priority,
+      schedule_mode: task.schedule_mode,
+      metadata: request.metadata,
+      test_scope: buildTestScope(task.tags, now),
+      created_at: now.toISOString(),
+      payload: {
+        persona: task.persona,
+        capabilities: task.capabilities,
+        tags: task.tags,
+        allow_interactive_agents: request.allowInteractiveAgents,
+        code_producing: task.code_producing,
+        commit_requested: task.commit_requested,
+        approval_required: task.approval_required,
+        timeout_ms: request.timeoutMs
+      }
+    });
   }
 
   async runQueuedAgentItem(

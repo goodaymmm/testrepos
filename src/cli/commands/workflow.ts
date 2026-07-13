@@ -8,6 +8,7 @@ import {
 export type WorkflowRunCommandOptions = {
   candidate?: boolean;
   dryRun?: boolean;
+  connectQueue?: boolean;
   workflowId?: string;
   taskId?: string;
   queueItemId?: string;
@@ -24,7 +25,7 @@ export async function workflowRunCommand(
     return formatWorkflowRuntimeCandidateRejected("candidate_required");
   }
 
-  if (options.dryRun === false) {
+  if (options.dryRun === false && options.connectQueue !== true) {
     return formatWorkflowRuntimeCandidateRejected("dry_run_required");
   }
 
@@ -33,7 +34,8 @@ export async function workflowRunCommand(
       projectRoot,
       {
         candidate: true,
-        dryRun: true,
+        dryRun: options.connectQueue !== true,
+        connectQueue: options.connectQueue,
         workflowId: options.workflowId,
         taskId: options.taskId,
         queueItemId: options.queueItemId,

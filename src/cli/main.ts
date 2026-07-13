@@ -697,9 +697,10 @@ export function createProgram(): Command {
 
   workflow
     .command("run")
-    .description("Run the feature-flagged workflow runtime candidate dry-run.")
+    .description("Run a feature-flagged workflow candidate dry-run or queue connection.")
     .option("--candidate", "Run the production-candidate workflow adapter.")
     .option("--dry-run", "Write only experimental candidate artifacts. This is the default.")
+    .option("--connect-queue", "Enqueue an approved candidate task behind the workflow feature flag.")
     .option("--workflow-id <workflowId>", "Workflow id. Defaults to EXP-WF-CANDIDATE-<timestamp>.")
     .option("--task-id <taskId>", "Optional task id to read as a placeholder.")
     .option("--queue-item-id <queueItemId>", "Optional queue item id to read without claiming.")
@@ -708,6 +709,7 @@ export function createProgram(): Command {
     .action(async (options: {
       candidate?: boolean;
       dryRun?: boolean;
+      connectQueue?: boolean;
       workflowId?: string;
       taskId?: string;
       queueItemId?: string;
