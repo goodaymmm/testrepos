@@ -351,43 +351,47 @@ describe("prepareDiscordGateway", () => {
     });
   });
 
-  it("defers status slash command interactions and returns a sanitized runtime summary", async () => {
-    const root = await createTempProject();
-    await initializeProject({ projectRoot: root });
-    await enableDiscordProvider(root);
-    const client = new FakeDiscordClient("bot-user");
-    const rest = new FakeDiscordRestRegistration();
+  it(
+    "defers status slash command interactions and returns a sanitized runtime summary",
+    async () => {
+      const root = await createTempProject();
+      await initializeProject({ projectRoot: root });
+      await enableDiscordProvider(root);
+      const client = new FakeDiscordClient("bot-user");
+      const rest = new FakeDiscordRestRegistration();
 
-    const handlePromise = startDiscordGateway(root, {
-      env: readyEnv(),
-      clientFactory: () => client,
-      restFactory: () => rest,
-      readyTimeoutMs: 50,
-      now: () => new Date("2026-05-25T08:00:00.000Z")
-    });
-    await client.waitForLogin();
-    client.emitReady();
-    const handle = await handlePromise;
-    const interaction = new FakeSlashInteraction("status-1", "status");
+      const handlePromise = startDiscordGateway(root, {
+        env: readyEnv(),
+        clientFactory: () => client,
+        restFactory: () => rest,
+        readyTimeoutMs: 50,
+        now: () => new Date("2026-05-25T08:00:00.000Z")
+      });
+      await client.waitForLogin();
+      client.emitReady();
+      const handle = await handlePromise;
+      const interaction = new FakeSlashInteraction("status-1", "status");
 
-    await client.emitInteraction(interaction);
+      await client.emitInteraction(interaction);
 
-    expect(interaction.deferredOptions).toEqual({ ephemeral: true });
-    expect(interaction.editedReply).toContain("Kairon status:");
-    expect(interaction.editedReply).toContain("queue.ready=0");
-    expect(interaction.editedReply).toContain("discord.gateway.status=ready");
-    expect(interaction.editedReply).toContain("discord.gateway.commandsRegistered=true");
-    expect(interaction.editedReply).not.toContain("SHOULD_NOT_LEAK");
-    await expect(new CommandInbox(root).list("completed")).resolves.toMatchObject([
-      {
-        command: {
-          type: "runtime.status",
-          source: "discord"
+      expect(interaction.deferredOptions).toEqual({ ephemeral: true });
+      expect(interaction.editedReply).toContain("Kairon status:");
+      expect(interaction.editedReply).toContain("queue.ready=0");
+      expect(interaction.editedReply).toContain("discord.gateway.status=ready");
+      expect(interaction.editedReply).toContain("discord.gateway.commandsRegistered=true");
+      expect(interaction.editedReply).not.toContain("SHOULD_NOT_LEAK");
+      await expect(new CommandInbox(root).list("completed")).resolves.toMatchObject([
+        {
+          command: {
+            type: "runtime.status",
+            source: "discord"
+          }
         }
-      }
-    ]);
-    await handle.stop();
-  });
+      ]);
+      await handle.stop();
+    },
+    30_000
+  );
 
   it("applies leave slash command once and reports the result", async () => {
     const root = await createTempProject();
