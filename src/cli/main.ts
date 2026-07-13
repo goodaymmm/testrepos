@@ -294,8 +294,23 @@ export function createProgram(): Command {
     .option("--host <host>", "Loopback host. Defaults to 127.0.0.1.")
     .option("--port <port>", "Loopback port. Defaults to 8787.")
     .option("--recent <count>", "Number of recent items to include per section.")
+    .option(
+      "--require-token",
+      "Require a generated short-lived read-only Bearer token."
+    )
+    .option(
+      "--access-token-ttl-seconds <seconds>",
+      "Require a Bearer token with this lifetime. Defaults to 900 seconds."
+    )
     .option("--max-seconds <seconds>", "Stop the board server automatically after this many seconds.")
-    .action(async (options: { host?: string; port?: string; recent?: string; maxSeconds?: string }) => {
+    .action(async (options: {
+      host?: string;
+      port?: string;
+      recent?: string;
+      requireToken?: boolean;
+      accessTokenTtlSeconds?: string;
+      maxSeconds?: string;
+    }) => {
       const server = await serveBoard(process.cwd(), options);
       const maxSeconds = parseOptionalPositiveInteger(options.maxSeconds, "--max-seconds");
       let timer: ReturnType<typeof setTimeout> | undefined;

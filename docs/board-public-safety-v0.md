@@ -10,6 +10,8 @@ Kairon Board は `.kairon/` の運用状態を集約する read-only view であ
 
 - `kairon board serve` は `127.0.0.1` / `localhost` だけを許可する。
 - `0.0.0.0`、LAN IP、IPv6 wildcard、public hostname への bind は拒否する。
+- defaultはtoken不要のloopback-onlyを維持し、opt-inで短期`board.read` Bearer tokenを要求できる。
+- token本体は起動時だけ表示し、status artifactにはSHA-256 hash、期限、scopeだけを保存する。
 - Board は approval の状態確認と local CLI hint の表示だけを行う。
 - Board から approval action、merge、deploy、protected branch push を直接実行しない。
 - Board projection は raw diff、stdout/stderr、secret-like key、非local Board URLを表示しない。
@@ -39,6 +41,20 @@ Kairon Board は `.kairon/` の運用状態を集約する read-only view であ
 - secret-like key は projection生成時にredactする。
 - inline textは `token=...`、`api_key=...` 形式をredactする。
 - `board_url` は `http://127.0.0.1` / `http://localhost` 以外を除外する。
+- Bearer tokenをURL query、HTML、projection、status artifactへ書かない。
+- token必須modeでは短いTTLを使用し、期限切れと`board.read`以外のscopeを拒否する。
+
+## Local short-lived access
+
+```powershell
+kairon board serve --require-token --access-token-ttl-seconds 900
+```
+
+- `--require-token`は既定900秒のtokenを生成する。
+- `--access-token-ttl-seconds`を指定すると、最大86400秒の範囲でtoken必須modeを有効にする。
+- clientは`Authorization: Bearer <token>`を付ける。
+- tokenはprocess memoryと起動時CLI出力だけで扱い、`.kairon/runtime/board/server.json`にはhash、`expires_at`、`board.read` scopeだけを残す。
+- 認証後もserverはGET/HEADだけを許可し、state変更endpointは持たない。
 
 ### Approval forgery
 

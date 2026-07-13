@@ -232,9 +232,12 @@ runtime lock を取得し、現在のscheduleに基づいて runtime tick を実
 ```powershell
 kairon board export
 kairon board serve --host 127.0.0.1 --port 8787
+kairon board serve --require-token --access-token-ttl-seconds 900
 ```
 
 approval、queue、run、review、recovery、cleanup、Discord decision auditをredaction済みのread-only projectionとして出力します。HTML dashboardにはcompact viewがあり、狭い画面でもapproval、failed/setup_required run、recovery、daemon healthを先に確認できます。`serve` はloopback hostだけを許可し、既定では `http://127.0.0.1:8787/` でHTML dashboardと `projection.json` を提供します。
+
+`--require-token`または`--access-token-ttl-seconds`を指定すると、起動時に短時間有効な`board.read` Bearer tokenを1回だけ表示します。requestには`Authorization: Bearer <token>`を付けます。`.kairon/runtime/board/server.json`にはtoken本体ではなくSHA-256 hash、`expires_at`、scopeだけを保存し、期限切れtokenやread-only以外のscopeは拒否します。認証を有効にしてもBoardはGET/HEAD専用で、approval、merge、deploy操作は実行できません。
 
 ### Cleanup proposal
 

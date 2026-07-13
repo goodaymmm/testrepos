@@ -2,8 +2,17 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { renderBoardHtml } from "../src/board/html.js";
+import {
+  boardReadScope,
+  issueBoardAccessToken,
+  validateBoardAccessToken
+} from "../src/board/access-token.js";
 import { createBoardProjection, exportBoardProjection } from "../src/board/projection.js";
-import { normalizeLoopbackHost, startBoardServer } from "../src/board/server.js";
+import {
+  formatBoardServeResult,
+  normalizeLoopbackHost,
+  startBoardServer
+} from "../src/board/server.js";
 import { exportBoard } from "../src/cli/commands/board.js";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
@@ -716,9 +725,129 @@ describe("board projection", () => {
         kind: "board_projection",
         generated_at: "2026-06-01T00:00:00.000Z"
       });
+      await expect(
+        readJsonFile(path.join(root, ".kairon", "runtime", "board", "server.json"))
+      ).resolves.toMatchObject({
+        status: "ready",
+        mode: "loopback_read_only",
+        access: {
+          required: false,
+          scope: boardReadScope
+        }
+      });
     } finally {
       await server.stop();
     }
+  });
+
+  it("requires a short-lived read-only token without persisting the raw value", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await seedBoardArtifacts(root);
+    let currentTime = new Date("2026-06-01T00:00:00.000Z");
+    const rawToken = "board-test-token-abcdefghijklmnopqrstuvwxyz0123456789";
+    const server = await startBoardServer(root, {
+      port: 0,
+      requireToken: true,
+      accessTokenTtlSeconds: 60,
+      randomToken: () => rawToken,
+      now: () => currentTime
+    });
+
+    try {
+      expect(server).toMatchObject({
+        access_token: rawToken,
+        access_token_expires_at: "2026-06-01T00:01:00.000Z",
+        access_scope: boardReadScope,
+        status_path: ".kairon/runtime/board/server.json"
+      });
+      const formatted = formatBoardServeResult(server);
+      expect(formatted.split(rawToken)).toHaveLength(2);
+
+      const missing = await fetch(server.board_url);
+      expect(missing.status).toBe(401);
+      await expect(missing.json()).resolves.toMatchObject({
+        error: "board_access_denied",
+        reason: "missing_token"
+      });
+
+      const invalid = await fetch(server.board_url, {
+        headers: { authorization: "Bearer invalid-token" }
+      });
+      expect(invalid.status).toBe(401);
+
+      const authorized = await fetch(server.board_url, {
+        headers: { authorization: `Bearer ${rawToken}` }
+      });
+      expect(authorized.status).toBe(200);
+      const html = await authorized.text();
+      expect(html).toContain("Kairon Board");
+      expect(html).not.toContain(rawToken);
+
+      const projection = await fetch(`${server.board_url}projection.json`, {
+        headers: { authorization: `Bearer ${rawToken}` }
+      });
+      expect(projection.status).toBe(200);
+      expect(await projection.text()).not.toContain(rawToken);
+
+      const mutation = await fetch(server.board_url, {
+        method: "POST",
+        headers: { authorization: `Bearer ${rawToken}` }
+      });
+      expect(mutation.status).toBe(405);
+
+      const status = await readJsonFile<Record<string, unknown>>(
+        path.join(root, ".kairon", "runtime", "board", "server.json")
+      );
+      expect(status).toMatchObject({
+        status: "ready",
+        mode: "loopback_read_only",
+        access: {
+          required: true,
+          token_hash: expect.stringMatching(/^[0-9a-f]{64}$/),
+          expires_at: "2026-06-01T00:01:00.000Z",
+          scope: boardReadScope
+        }
+      });
+      expect(JSON.stringify(status)).not.toContain(rawToken);
+
+      currentTime = new Date("2026-06-01T00:01:01.000Z");
+      const expired = await fetch(server.board_url, {
+        headers: { authorization: `Bearer ${rawToken}` }
+      });
+      expect(expired.status).toBe(401);
+      await expect(expired.json()).resolves.toMatchObject({
+        reason: "expired_token"
+      });
+    } finally {
+      await server.stop();
+    }
+
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runtime", "board", "server.json"))
+    ).resolves.toMatchObject({
+      status: "stopped",
+      access: {
+        required: true,
+        scope: boardReadScope
+      }
+    });
+  });
+
+  it("rejects a Board token whose stored scope is not read-only", () => {
+    const issued = issueBoardAccessToken({
+      now: new Date("2026-06-01T00:00:00.000Z"),
+      ttlSeconds: 60,
+      randomToken: () => "board-scope-token-abcdefghijklmnopqrstuvwxyz0123456789"
+    });
+
+    expect(
+      validateBoardAccessToken({
+        token: issued.token,
+        metadata: { ...issued.metadata, scope: "board.write" },
+        now: new Date("2026-06-01T00:00:30.000Z")
+      })
+    ).toEqual({ accepted: false, reason: "scope_mismatch" });
   });
 });
 
