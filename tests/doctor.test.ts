@@ -9,6 +9,7 @@ import {
 } from "../src/diagnostics/doctor.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { createDefaultSecretResolver } from "../src/core/secrets/secret-resolver.js";
+import { exportBoardProjection } from "../src/board/projection.js";
 import { createTempProject } from "./test-utils.js";
 
 const discordIds = {
@@ -35,6 +36,7 @@ describe("runDoctor", () => {
     expect(statusById(result, "cli.availability")).toBe("pass");
     expect(statusById(result, "env.api_keys")).toBe("pass");
     expect(statusById(result, "discord.config")).toBe("pass");
+    expect(statusById(result, "board.secret_scan")).toBe("pass");
     expect(statusById(result, "runtime.recovery")).toBe("pass");
     expect(checkById(result, "discord.config")?.details).toContain(
       "live_status=setup_required"
@@ -610,6 +612,51 @@ describe("runDoctor", () => {
     expect(checkById(result, "runtime.recovery")?.details).toContain("resolved_targets=0");
     expect(checkById(result, "runtime.recovery")?.nextAction).toBe(
       "Run kairon recovery run and review any generated approval requests."
+    );
+  });
+
+  it("warns for an exposed Board secret and passes after sanitized export", async () => {
+    const root = await createInitializedGitProject();
+    const projectionPath = path.join(root, ".kairon", "board", "projection.json");
+    await writeJsonFileAtomic(projectionPath, {
+      schema_version: "0.1",
+      kind: "board_projection",
+      generated_at: "2026-06-01T00:00:00.000Z",
+      meta: {
+        secret_scan: {
+          status: "passed",
+          scanned_fields: 1,
+          scanned_strings: 1,
+          redacted_fields: 0,
+          redacted_values: 0,
+          unresolved_findings: 0
+        }
+      },
+      unsafe_message: `Authorization: Bearer ${"A".repeat(32)}`
+    });
+
+    const unsafeResult = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+    expect(statusById(unsafeResult, "board.secret_scan")).toBe("warning");
+    expect(checkById(unsafeResult, "board.secret_scan")?.details).toContain(
+      "exposed_findings=1"
+    );
+    expect(formatDoctorResult(unsafeResult)).not.toContain("A".repeat(32));
+
+    await exportBoardProjection(root, {
+      now: () => new Date("2026-06-01T00:00:00.000Z")
+    });
+    const safeResult = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+    expect(statusById(safeResult, "board.secret_scan")).toBe("pass");
+    expect(checkById(safeResult, "board.secret_scan")?.details).toContain(
+      "exposed_findings=0"
     );
   });
 

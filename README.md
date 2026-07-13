@@ -239,6 +239,8 @@ approval、queue、run、review、recovery、cleanup、Discord decision auditを
 
 `--require-token`または`--access-token-ttl-seconds`を指定すると、起動時に短時間有効な`board.read` Bearer tokenを1回だけ表示します。requestには`Authorization: Bearer <token>`を付けます。`.kairon/runtime/board/server.json`にはtoken本体ではなくSHA-256 hash、`expires_at`、scopeだけを保存し、期限切れtokenやread-only以外のscopeは拒否します。認証を有効にしてもBoardはGET/HEAD専用で、approval、merge、deploy操作は実行できません。
 
+projectionは出力直前にsecret-like field、Bearer token、GitHub/OpenAI形式のcredentialを再検査し、redaction結果を`meta.secret_scan`へ記録します。BoardへのGET/HEADと拒否されたrequestは`.kairon/runtime/board/access.jsonl`へ記録しますが、raw token、IP、User-Agentは保存しません。`kairon doctor`の`board.secret_scan`で保存済みprojectionの再検査結果を確認できます。
+
 ### Cleanup proposal
 
 ```powershell

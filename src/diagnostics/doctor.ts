@@ -8,6 +8,7 @@ import {
 } from "../agents/session-host.js";
 import { agentIds } from "../agents/types.js";
 import { loadConfigFile, validateAllConfigs } from "../core/config/load-config.js";
+import { readJsonFile } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside } from "../core/fs/paths.js";
 import {
   resolveSecret,
@@ -17,6 +18,10 @@ import {
 } from "../core/secrets/secret-resolver.js";
 import { validateDiscordEnvValues } from "../discord/env-validation.js";
 import { inspectRuntimeRecoveryTargets } from "../recovery/runtime-recovery.js";
+import {
+  inspectBoardProjectionSecrets,
+  type BoardSecretScanSummary
+} from "../board/secret-scan.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -172,6 +177,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
       options.githubBranchProtectionClient ?? fetchGitHubBranchProtection
     )
   );
+  checks.push(await checkBoardSecretScan(options.projectRoot));
   checks.push(await checkConfigBackups(options.projectRoot));
   checks.push(await checkRuntimeRecovery(options.projectRoot));
 
@@ -684,6 +690,63 @@ async function checkConfigBackups(projectRoot: string): Promise<DoctorCheck> {
   );
 }
 
+async function checkBoardSecretScan(projectRoot: string): Promise<DoctorCheck> {
+  const projectionPath = resolveInside(
+    getKaironPaths(projectRoot).kaironDir,
+    "board",
+    "projection.json"
+  );
+
+  let projection: unknown;
+  try {
+    projection = await readJsonFile(projectionPath);
+  } catch (readError) {
+    if ((readError as NodeJS.ErrnoException).code === "ENOENT" || String(readError).includes("ENOENT")) {
+      return pass("board.secret_scan", "Board secret scan", [
+        "projection=missing",
+        "scan_status=not_run"
+      ]);
+    }
+
+    return warning(
+      "board.secret_scan",
+      "Board secret scan",
+      ["projection=unreadable", "scan_status=warning"],
+      "Run kairon board export to regenerate a valid sanitized projection."
+    );
+  }
+
+  const inspection = inspectBoardProjectionSecrets(projection);
+  const embedded = readBoardSecretScanSummary(projection);
+  const details = [
+    "projection=.kairon/board/projection.json",
+    `scan_status=${inspection.status}`,
+    `exposed_findings=${inspection.exposed_findings}`,
+    `embedded_status=${embedded?.status ?? "missing"}`,
+    `embedded_redactions=${
+      embedded === undefined
+        ? 0
+        : embedded.redacted_fields + embedded.redacted_values
+    }`
+  ];
+
+  if (
+    inspection.exposed_findings > 0 ||
+    embedded === undefined ||
+    embedded.status !== "passed" ||
+    embedded.unresolved_findings > 0
+  ) {
+    return warning(
+      "board.secret_scan",
+      "Board secret scan",
+      details,
+      "Run kairon board export, then review the secret scan summary before serving Board."
+    );
+  }
+
+  return pass("board.secret_scan", "Board secret scan", details);
+}
+
 async function checkRuntimeRecovery(projectRoot: string): Promise<DoctorCheck> {
   const recovery = await inspectRuntimeRecoveryTargets(projectRoot);
   const details = [
@@ -903,6 +966,47 @@ function githubCredentialReferences(
 
 function providerName(resolution: ResolvedSecret | undefined): string {
   return resolution?.status === "present" ? resolution.provider : "none";
+}
+
+function readBoardSecretScanSummary(
+  value: unknown
+): BoardSecretScanSummary | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  const meta = (value as Record<string, unknown>).meta;
+  if (meta === null || typeof meta !== "object" || Array.isArray(meta)) {
+    return undefined;
+  }
+  const scan = (meta as Record<string, unknown>).secret_scan;
+  if (scan === null || typeof scan !== "object" || Array.isArray(scan)) {
+    return undefined;
+  }
+
+  const record = scan as Record<string, unknown>;
+  if (
+    (record.status !== "passed" && record.status !== "warning") ||
+    !isFiniteNumber(record.scanned_fields) ||
+    !isFiniteNumber(record.scanned_strings) ||
+    !isFiniteNumber(record.redacted_fields) ||
+    !isFiniteNumber(record.redacted_values) ||
+    !isFiniteNumber(record.unresolved_findings)
+  ) {
+    return undefined;
+  }
+
+  return {
+    status: record.status,
+    scanned_fields: record.scanned_fields,
+    scanned_strings: record.scanned_strings,
+    redacted_fields: record.redacted_fields,
+    redacted_values: record.redacted_values,
+    unresolved_findings: record.unresolved_findings
+  };
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function formatGitHubApiDetails(
