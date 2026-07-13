@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -120,6 +121,19 @@ export async function resolveSecret(
     source: options.envName,
     reason: "secret is missing"
   };
+}
+
+export function hashSecretForArtifact(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+export function secretMatchesArtifactHash(
+  value: string,
+  expectedHash: string
+): boolean {
+  const actual = Buffer.from(hashSecretForArtifact(value), "hex");
+  const expected = Buffer.from(expectedHash, "hex");
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
 async function readWindowsCredentialSecret(

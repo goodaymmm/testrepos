@@ -22,12 +22,22 @@ export async function exportBoard(
 
 export async function serveBoard(
   projectRoot: string,
-  options: { host?: string; port?: string; recent?: string } = {}
+  options: {
+    host?: string;
+    port?: string;
+    recent?: string;
+    requireToken?: boolean;
+    accessTokenTtlSeconds?: string;
+  } = {}
 ): Promise<BoardServerHandle> {
   return startBoardServer(projectRoot, {
     host: options.host,
     port: parseOptionalInteger(options.port),
-    recentLimit: parseOptionalNumber(options.recent)
+    recentLimit: parseOptionalNumber(options.recent),
+    requireToken: options.requireToken,
+    accessTokenTtlSeconds: parseOptionalPositiveInteger(
+      options.accessTokenTtlSeconds
+    )
   });
 }
 
@@ -54,4 +64,15 @@ function parseOptionalInteger(value: string | undefined): number | undefined {
   }
 
   throw new Error(`Invalid numeric option: ${value}`);
+}
+
+function parseOptionalPositiveInteger(
+  value: string | undefined
+): number | undefined {
+  const parsed = parseOptionalInteger(value);
+  if (parsed === undefined || parsed > 0) {
+    return parsed;
+  }
+
+  throw new Error(`Invalid positive numeric option: ${value}`);
 }

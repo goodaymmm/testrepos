@@ -174,7 +174,16 @@ describe("createProgram", () => {
       board?.commands
         .find((command) => command.name() === "serve")
         ?.options.map((option) => option.long)
-    ).toEqual(expect.arrayContaining(["--host", "--port", "--recent", "--max-seconds"]));
+    ).toEqual(
+      expect.arrayContaining([
+        "--host",
+        "--port",
+        "--recent",
+        "--require-token",
+        "--access-token-ttl-seconds",
+        "--max-seconds"
+      ])
+    );
   });
 
   it("registers agent session commands", () => {
