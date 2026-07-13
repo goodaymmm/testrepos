@@ -2,6 +2,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ApprovalQueue } from "../src/approvals/approval-queue.js";
 import {
+  authorizeGitPrWithFollowUp,
   listApprovalFollowUps,
   recordApprovalFollowUp,
   runApprovalFollowUp,
@@ -231,6 +232,34 @@ describe("approval follow-up runner", () => {
     expect(repeated).toMatchObject({
       status: "skipped",
       idempotent: true
+    });
+  });
+
+  it("authorizes a matching GitHub PR follow-up and rejects candidate drift", async () => {
+    const root = await createInitializedProject();
+    const followUp = await recordApprovalFollowUp(root, {
+      approval: {
+        id: "APR-PR",
+        type: "git_pr_create",
+        candidate_id: "GTX-0001"
+      },
+      decision: "approve",
+      decidedAt: "2026-07-13T04:00:00.000Z"
+    });
+
+    expect(followUp).toMatchObject({
+      action_type: "github.pr_create",
+      status: "pending",
+      transaction_id: "GTX-0001"
+    });
+    expect(authorizeGitPrWithFollowUp(followUp, "GTX-0001")).toEqual({
+      ok: true,
+      approval_id: "APR-PR",
+      follow_up_id: followUp.id
+    });
+    expect(authorizeGitPrWithFollowUp(followUp, "GTX-MOVED")).toEqual({
+      ok: false,
+      reason: "follow_up_candidate_mismatch"
     });
   });
 });

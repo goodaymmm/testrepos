@@ -6,25 +6,42 @@ import {
   type ApprovalRecord
 } from "../../approvals/approval-queue.js";
 import {
+  ApprovalFollowUpNotFoundError,
+  authorizeGitPrWithFollowUp,
+  showApprovalFollowUp,
+  type ApprovalFollowUpArtifact
+} from "../../approvals/follow-up-runner.js";
+import {
   resolveSecret,
   type ResolvedSecret,
   type SecretResolver
 } from "../../core/secrets/secret-resolver.js";
 import {
+  withResourceLock,
+  writeJsonFileFenced
+} from "../../core/fs/resource-lock.js";
+import {
   GitPrCandidateNotFoundError,
   listPrCandidateArtifacts,
+  prCandidateArtifactPath,
   readPrCandidateArtifact,
-  type GitPrCandidateArtifact
+  type GitPrCandidateArtifact,
+  type GitPrCandidateLiveExecution
 } from "../../git/pr-artifact.js";
 import {
   createGitHubPullRequest,
-  type GitHubPullRequestClient
+  GitHubPullRequestClientError,
+  inspectGitHubPullRequestRefs,
+  type GitHubPullRequestClient,
+  type GitHubPullRequestRefClient
 } from "../../github/pull-request-client.js";
 
 export type GitPrCreateCommandOptions = {
   dryRun?: boolean;
   execute?: boolean;
   approvalId?: string;
+  followUpId?: string;
+  confirm?: string;
   repository?: string;
   draft?: boolean;
   tokenEnv?: string;
@@ -34,6 +51,8 @@ export type GitPrCreateCommandDeps = {
   env?: NodeJS.ProcessEnv;
   resolver?: SecretResolver;
   pullRequestClient?: GitHubPullRequestClient;
+  pullRequestRefClient?: GitHubPullRequestRefClient;
+  now?: () => Date;
 };
 
 type GitPrPayload = {
@@ -44,6 +63,23 @@ type GitPrPayload = {
   body: string;
   draft: boolean;
 };
+
+type GitPrAuthorization = {
+  approvalId: string;
+  followUpId?: string;
+  approval: ApprovalRecord;
+  followUp?: ApprovalFollowUpArtifact;
+};
+
+type GitPrAuthorizationResolution =
+  | { ok: true; value: GitPrAuthorization }
+  | {
+      ok: false;
+      reason: string;
+      message: string;
+      approvalId?: string;
+      followUpId?: string;
+    };
 
 const githubTokenEnvNames = ["GH_TOKEN", "GITHUB_TOKEN"];
 
@@ -114,6 +150,13 @@ export async function createGitPrCommand(
     return formatGitPrDryRun(candidate, payload, options);
   }
 
+  if (options.confirm !== candidate.transaction_id) {
+    return formatGitPrCreateBlocked(candidate, payload, {
+      reason: "confirmation_required",
+      message: `--confirm must exactly match ${candidate.transaction_id}.`
+    });
+  }
+
   if (candidate.status !== "ready_for_pr") {
     return formatGitPrCreateBlocked(candidate, payload, {
       reason: "candidate_status_not_ready",
@@ -121,69 +164,153 @@ export async function createGitPrCommand(
     });
   }
 
-  if (options.approvalId === undefined || options.approvalId.trim().length === 0) {
-    return formatGitPrCreateBlocked(candidate, payload, {
-      reason: "approval_required",
-      message: "--approval-id is required for --execute."
-    });
+  const authorization = await resolveGitPrAuthorization(
+    projectRoot,
+    candidate,
+    options
+  );
+  if (!authorization.ok) {
+    return formatGitPrCreateBlocked(candidate, payload, authorization);
   }
 
-  const approval = await readApprovalForGitPr(projectRoot, options.approvalId);
-  if (approval === null) {
-    return formatGitPrCreateBlocked(candidate, payload, {
-      reason: "approval_not_found",
-      approvalId: options.approvalId,
-      message: `Approval ${options.approvalId} was not found.`
-    });
-  }
+  const candidatePath = prCandidateArtifactPath(
+    projectRoot,
+    candidate.transaction_id
+  );
+  return withResourceLock(
+    projectRoot,
+    candidatePath,
+    { owner: "git-pr-live-execute", ttlMs: 120_000 },
+    async (lock) => {
+      const current = await readPrCandidateArtifact(
+        projectRoot,
+        candidate.transaction_id
+      );
+      const currentPayload = await buildGitPrPayload(projectRoot, current, options);
+      if (!sameCandidateRevision(candidate, current)) {
+        return formatGitPrCreateBlocked(current, currentPayload, {
+          reason: "candidate_artifact_drift",
+          approvalId: authorization.value.approvalId,
+          followUpId: authorization.value.followUpId,
+          message: "The PR candidate changed after authorization checks. Run dry-run again."
+        });
+      }
+      if (current.live_execution !== undefined) {
+        if (!sameLiveExecutionRequest(current.live_execution, currentPayload)) {
+          return formatGitPrCreateBlocked(current, currentPayload, {
+            reason: "live_execution_request_mismatch",
+            approvalId: authorization.value.approvalId,
+            followUpId: authorization.value.followUpId,
+            message: "This candidate was already executed with a different repository or draft setting."
+          });
+        }
+        return formatGitPrCreated(
+          current,
+          current.live_execution,
+          true
+        );
+      }
+      if (current.commit_sha === undefined) {
+        return formatGitPrCreateBlocked(current, currentPayload, {
+          reason: "missing_candidate_commit",
+          approvalId: authorization.value.approvalId,
+          followUpId: authorization.value.followUpId,
+          message: "The PR candidate does not contain the expected head commit SHA."
+        });
+      }
 
-  if (!isApproved(approval)) {
-    return formatGitPrCreateBlocked(candidate, payload, {
-      reason: "approval_not_approved",
-      approvalId: options.approvalId,
-      message: `Approval ${options.approvalId} is not decided with approve.`
-    });
-  }
+      const token = await resolveGitHubToken({
+        env: deps.env ?? process.env,
+        resolver: deps.resolver,
+        tokenEnv: options.tokenEnv
+      });
+      if (token.status !== "present") {
+        return formatGitPrSetupRequired(current, currentPayload, {
+          reason: "missing_github_token",
+          tokenEnv: options.tokenEnv ?? githubTokenEnvNames.join(",")
+        });
+      }
 
-  const token = await resolveGitHubToken({
-    env: deps.env ?? process.env,
-    resolver: deps.resolver,
-    tokenEnv: options.tokenEnv
-  });
-  if (token.status !== "present") {
-    return [
-      "Kairon git PR create setup required.",
-      `candidate_id=${candidate.transaction_id}`,
-      `repository=${payload.repository}`,
-      "reason=missing_github_token",
-      `token_env=${options.tokenEnv ?? githubTokenEnvNames.join(",")}`
-    ].join("\n");
-  }
+      const refClient =
+        deps.pullRequestRefClient ?? inspectGitHubPullRequestRefs;
+      let refs;
+      try {
+        refs = await refClient({
+          repository: currentPayload.repository,
+          base: currentPayload.base,
+          head: currentPayload.head,
+          token: token.value
+        });
+      } catch (error) {
+        return formatGitPrClientError(current, currentPayload, error);
+      }
 
-  const client = deps.pullRequestClient ?? createGitHubPullRequest;
-  const result = await client({
-    repository: payload.repository,
-    base: payload.base,
-    head: payload.head,
-    title: payload.title,
-    body: payload.body,
-    draft: payload.draft,
-    token: token.value
-  });
+      if (
+        current.base_sha !== undefined &&
+        refs.baseSha !== current.base_sha
+      ) {
+        return formatGitPrCreateBlocked(current, currentPayload, {
+          reason: "base_branch_drift",
+          approvalId: authorization.value.approvalId,
+          followUpId: authorization.value.followUpId,
+          message: `Expected base ${shortSha(current.base_sha)}, observed ${shortSha(refs.baseSha)}.`
+        });
+      }
+      if (refs.headSha !== current.commit_sha) {
+        return formatGitPrCreateBlocked(current, currentPayload, {
+          reason: "head_commit_drift",
+          approvalId: authorization.value.approvalId,
+          followUpId: authorization.value.followUpId,
+          message: `Expected head ${shortSha(current.commit_sha)}, observed ${shortSha(refs.headSha)}.`
+        });
+      }
 
-  return [
-    "Kairon git PR created.",
-    `candidate_id=${candidate.transaction_id}`,
-    `repository=${payload.repository}`,
-    `base=${payload.base}`,
-    `head=${payload.head}`,
-    `approval_id=${options.approvalId}`,
-    `url=${result.url}`,
-    `number=${result.number}`,
-    result.state === undefined ? null : `state=${result.state}`
-  ]
-    .filter((line): line is string => line !== null)
-    .join("\n");
+      const client = deps.pullRequestClient ?? createGitHubPullRequest;
+      let result;
+      try {
+        result = await client({
+          repository: currentPayload.repository,
+          base: currentPayload.base,
+          head: currentPayload.head,
+          title: currentPayload.title,
+          body: currentPayload.body,
+          draft: currentPayload.draft,
+          token: token.value
+        });
+      } catch (error) {
+        return formatGitPrClientError(current, currentPayload, error);
+      }
+
+      const createdAt = (deps.now?.() ?? new Date()).toISOString();
+      const liveExecution: GitPrCandidateLiveExecution = {
+        status: "created",
+        repository: currentPayload.repository,
+        base_branch: currentPayload.base,
+        head_branch: currentPayload.head,
+        expected_base_sha: current.base_sha,
+        observed_base_sha: refs.baseSha,
+        expected_head_sha: current.commit_sha,
+        observed_head_sha: refs.headSha,
+        approval_id: authorization.value.approvalId,
+        follow_up_id: authorization.value.followUpId,
+        draft: currentPayload.draft,
+        pull_request_number: result.number,
+        pull_request_url: result.url,
+        pull_request_state: result.state,
+        created_at: createdAt
+      };
+      await writeJsonFileFenced(lock, candidatePath, {
+        ...current,
+        live_execution: liveExecution,
+        updated_at: createdAt
+      });
+      return formatGitPrCreated(
+        current,
+        liveExecution,
+        false
+      );
+    }
+  );
 }
 
 function formatGitPrCandidateDetail(candidate: GitPrCandidateArtifact): string {
@@ -196,6 +323,7 @@ function formatGitPrCandidateDetail(candidate: GitPrCandidateArtifact): string {
     run_id: candidate.run_id,
     review_loop_id: candidate.review_loop_id,
     base_branch: candidate.base_branch,
+    base_sha: candidate.base_sha,
     head_branch: candidate.head_branch,
     remote: candidate.remote,
     remote_ref: candidate.remote_ref,
@@ -205,6 +333,7 @@ function formatGitPrCandidateDetail(candidate: GitPrCandidateArtifact): string {
     approvals: candidate.approvals,
     suggested_pr: candidate.suggested_pr,
     rollback: candidate.rollback,
+    live_execution: candidate.live_execution,
     source_transaction_path: candidate.source_transaction_path,
     artifact_path: candidate.artifact_path,
     created_at: candidate.created_at,
@@ -258,7 +387,10 @@ function formatGitPrDryRun(
     `base=${payload.base}`,
     `head=${payload.head}`,
     `draft=${payload.draft}`,
+    "confirmation_required=true",
+    `confirm=${options.confirm ?? "missing"}`,
     `approval_id=${options.approvalId ?? "missing"}`,
+    `follow_up_id=${options.followUpId ?? "missing"}`,
     `ready=${candidate.status === "ready_for_pr"}`,
     `title=${payload.title}`,
     "body=",
@@ -269,7 +401,12 @@ function formatGitPrDryRun(
 function formatGitPrCreateBlocked(
   candidate: GitPrCandidateArtifact,
   payload: GitPrPayload,
-  options: { reason: string; message: string; approvalId?: string }
+  options: {
+    reason: string;
+    message: string;
+    approvalId?: string;
+    followUpId?: string;
+  }
 ): string {
   return [
     "Kairon git PR create blocked.",
@@ -280,10 +417,250 @@ function formatGitPrCreateBlocked(
     `head=${payload.head}`,
     `reason=${options.reason}`,
     options.approvalId === undefined ? null : `approval_id=${options.approvalId}`,
+    options.followUpId === undefined ? null : `follow_up_id=${options.followUpId}`,
     `message=${sanitizeInline(options.message)}`
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
+}
+
+function formatGitPrSetupRequired(
+  candidate: GitPrCandidateArtifact,
+  payload: GitPrPayload,
+  options: { reason: string; tokenEnv?: string; httpStatus?: number }
+): string {
+  return [
+    "Kairon git PR create setup required.",
+    `candidate_id=${candidate.transaction_id}`,
+    `repository=${payload.repository}`,
+    `base=${payload.base}`,
+    `head=${payload.head}`,
+    `reason=${options.reason}`,
+    options.tokenEnv === undefined ? null : `token_env=${options.tokenEnv}`,
+    options.httpStatus === undefined
+      ? null
+      : `http_status=${options.httpStatus}`
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+}
+
+function formatGitPrCreateFailed(
+  candidate: GitPrCandidateArtifact,
+  payload: GitPrPayload,
+  options: { reason: string; httpStatus?: number }
+): string {
+  return [
+    "Kairon git PR create failed.",
+    `candidate_id=${candidate.transaction_id}`,
+    `repository=${payload.repository}`,
+    `base=${payload.base}`,
+    `head=${payload.head}`,
+    `reason=${options.reason}`,
+    options.httpStatus === undefined
+      ? null
+      : `http_status=${options.httpStatus}`
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+}
+
+function formatGitPrClientError(
+  candidate: GitPrCandidateArtifact,
+  payload: GitPrPayload,
+  error: unknown
+): string {
+  if (!(error instanceof GitHubPullRequestClientError)) {
+    return formatGitPrCreateFailed(candidate, payload, {
+      reason: "github_client_error"
+    });
+  }
+
+  if (
+    ["auth_error", "permission_error", "not_found"].includes(error.kind)
+  ) {
+    return formatGitPrSetupRequired(candidate, payload, {
+      reason: `github_${error.kind}`,
+      httpStatus: error.httpStatus
+    });
+  }
+  if (error.kind === "validation_error") {
+    return formatGitPrCreateBlocked(candidate, payload, {
+      reason: "github_validation_error",
+      message: "GitHub rejected the PR payload. Check for an existing PR and branch validity."
+    });
+  }
+  return formatGitPrCreateFailed(candidate, payload, {
+    reason: `github_${error.kind}`,
+    httpStatus: error.httpStatus
+  });
+}
+
+function formatGitPrCreated(
+  candidate: GitPrCandidateArtifact,
+  execution: GitPrCandidateLiveExecution,
+  idempotent: boolean
+): string {
+  return [
+    "Kairon git PR created.",
+    `candidate_id=${candidate.transaction_id}`,
+    `repository=${execution.repository}`,
+    `base=${execution.base_branch}`,
+    `head=${execution.head_branch}`,
+    `approval_id=${execution.approval_id}`,
+    execution.follow_up_id === undefined
+      ? null
+      : `follow_up_id=${execution.follow_up_id}`,
+    `url=${execution.pull_request_url}`,
+    `number=${execution.pull_request_number}`,
+    execution.pull_request_state === undefined
+      ? null
+      : `state=${execution.pull_request_state}`,
+    `idempotent=${idempotent}`,
+    `artifact=${candidate.artifact_path}`
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+}
+
+async function resolveGitPrAuthorization(
+  projectRoot: string,
+  candidate: GitPrCandidateArtifact,
+  options: GitPrCreateCommandOptions
+): Promise<GitPrAuthorizationResolution> {
+  let followUp: ApprovalFollowUpArtifact | undefined;
+  let approvalId = options.approvalId?.trim();
+
+  if (options.followUpId !== undefined) {
+    try {
+      followUp = await showApprovalFollowUp(projectRoot, options.followUpId);
+    } catch (error) {
+      if (error instanceof ApprovalFollowUpNotFoundError) {
+        return {
+          ok: false,
+          reason: "follow_up_not_found",
+          followUpId: options.followUpId,
+          message: `Approval follow-up ${options.followUpId} was not found.`
+        };
+      }
+      throw error;
+    }
+
+    const gate = authorizeGitPrWithFollowUp(
+      followUp,
+      candidate.transaction_id
+    );
+    if (!gate.ok) {
+      return {
+        ok: false,
+        reason: gate.reason,
+        followUpId: followUp.id,
+        message: "The approval follow-up is not ready to authorize this PR candidate."
+      };
+    }
+    if (approvalId !== undefined && approvalId !== gate.approval_id) {
+      return {
+        ok: false,
+        reason: "approval_follow_up_mismatch",
+        approvalId,
+        followUpId: followUp.id,
+        message: "--approval-id does not match the follow-up source approval."
+      };
+    }
+    approvalId = gate.approval_id;
+  }
+
+  if (approvalId === undefined || approvalId.length === 0) {
+    return {
+      ok: false,
+      reason: "approval_required",
+      message: "--approval-id or --follow-up-id is required for --execute."
+    };
+  }
+
+  const approval = await readApprovalForGitPr(projectRoot, approvalId);
+  if (approval === null) {
+    return {
+      ok: false,
+      reason: "approval_not_found",
+      approvalId,
+      followUpId: followUp?.id,
+      message: `Approval ${approvalId} was not found.`
+    };
+  }
+  if (!isApproved(approval)) {
+    return {
+      ok: false,
+      reason: "approval_not_approved",
+      approvalId,
+      followUpId: followUp?.id,
+      message: `Approval ${approvalId} is not decided with approve.`
+    };
+  }
+
+  const linkedCandidateId = readString(
+    approval.transaction_id ?? approval.candidate_id
+  );
+  const candidateApprovalIds = candidate.approvals.map(
+    (item) => item.approval_id
+  );
+  if (
+    (linkedCandidateId !== undefined &&
+      linkedCandidateId !== candidate.transaction_id) ||
+    (candidateApprovalIds.length > 0 &&
+      !candidateApprovalIds.includes(approvalId))
+  ) {
+    return {
+      ok: false,
+      reason: "approval_candidate_mismatch",
+      approvalId,
+      followUpId: followUp?.id,
+      message: "The approval is not linked to this PR candidate."
+    };
+  }
+
+  return {
+    ok: true,
+    value: {
+      approvalId,
+      followUpId: followUp?.id,
+      approval,
+      followUp
+    }
+  };
+}
+
+function sameCandidateRevision(
+  expected: GitPrCandidateArtifact,
+  actual: GitPrCandidateArtifact
+): boolean {
+  return (
+    expected.transaction_id === actual.transaction_id &&
+    expected.status === actual.status &&
+    expected.base_branch === actual.base_branch &&
+    expected.base_sha === actual.base_sha &&
+    expected.head_branch === actual.head_branch &&
+    expected.remote === actual.remote &&
+    expected.remote_ref === actual.remote_ref &&
+    expected.commit_sha === actual.commit_sha &&
+    expected.diff_sha256 === actual.diff_sha256
+  );
+}
+
+function sameLiveExecutionRequest(
+  execution: GitPrCandidateLiveExecution,
+  payload: GitPrPayload
+): boolean {
+  return (
+    execution.repository === payload.repository &&
+    execution.base_branch === payload.base &&
+    execution.head_branch === payload.head &&
+    execution.draft === payload.draft
+  );
+}
+
+function shortSha(value: string): string {
+  return value.length <= 12 ? value : value.slice(0, 12);
 }
 
 function buildJapanesePrBody(candidate: GitPrCandidateArtifact): string {
@@ -444,4 +821,10 @@ async function resolveGitHubToken(input: {
 function sanitizeInline(value: string): string {
   const collapsed = value.replace(/\s+/g, " ").trim();
   return collapsed.length <= 240 ? collapsed : `${collapsed.slice(0, 237)}...`;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0
+    ? value.trim()
+    : undefined;
 }

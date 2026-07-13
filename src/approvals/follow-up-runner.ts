@@ -108,6 +108,21 @@ export type ApprovalFollowUpRunResult = {
   event_id?: string;
 };
 
+export type GitPrFollowUpAuthorization =
+  | {
+      ok: true;
+      approval_id: string;
+      follow_up_id: string;
+    }
+  | {
+      ok: false;
+      reason:
+        | "follow_up_decision_not_approved"
+        | "follow_up_candidate_mismatch"
+        | "follow_up_action_not_supported"
+        | "follow_up_not_ready";
+    };
+
 type ApprovalFollowUpPlan = {
   action_type: string;
   status: ApprovalFollowUpStatus;
@@ -183,7 +198,9 @@ export async function recordApprovalFollowUp(
     risk_level: plan.risk_level,
     task_id: readString(input.approval.task_id),
     run_id: readString(input.approval.run_id),
-    transaction_id: readString(input.approval.transaction_id),
+    transaction_id: readString(
+      input.approval.transaction_id ?? input.approval.candidate_id
+    ),
     queue_item_type: plan.queue_item_type,
     queue_payload_preview: sanitizeMetadata(plan.queue_payload_preview),
     command_hint: sanitizeInline(plan.command_hint),
@@ -249,6 +266,37 @@ export async function showApprovalFollowUp(
   }
 }
 
+export function authorizeGitPrWithFollowUp(
+  artifact: ApprovalFollowUpArtifact,
+  candidateId: string
+): GitPrFollowUpAuthorization {
+  if (artifact.decision !== "approve") {
+    return { ok: false, reason: "follow_up_decision_not_approved" };
+  }
+  if (artifact.transaction_id !== candidateId) {
+    return { ok: false, reason: "follow_up_candidate_mismatch" };
+  }
+
+  const ready =
+    (artifact.action_type === "github.pr_create" &&
+      ["pending", "running", "completed"].includes(artifact.status)) ||
+    (artifact.action_type === "git.resume_push" && artifact.status === "completed");
+  if (ready) {
+    return {
+      ok: true,
+      approval_id: artifact.approval_id,
+      follow_up_id: artifact.id
+    };
+  }
+  if (
+    artifact.action_type !== "github.pr_create" &&
+    artifact.action_type !== "git.resume_push"
+  ) {
+    return { ok: false, reason: "follow_up_action_not_supported" };
+  }
+  return { ok: false, reason: "follow_up_not_ready" };
+}
+
 export async function runApprovalFollowUp(
   projectRoot: string,
   followUpId: string,
@@ -275,7 +323,7 @@ export async function runApprovalFollowUp(
   const execution = await withResourceLock(
     projectRoot,
     followUpPath,
-    { owner: "approval-follow-up-runner", now },
+    { owner: "approval-follow-up-runner" },
     async (lock) => {
       const current = await readJsonFile<ApprovalFollowUpArtifact>(followUpPath);
       if (current.status === "completed" || current.status === "skipped") {
@@ -745,6 +793,21 @@ function planApprovalFollowUp(
       status: "snoozed",
       risk_level: "low",
       command_hint: "Review the approval again after snooze_until."
+    };
+  }
+
+  if (decision === "approve" && approvalType === "git_pr_create") {
+    const candidateId = readString(
+      approval.transaction_id ?? approval.candidate_id
+    );
+    return {
+      action_type: "github.pr_create",
+      status: "pending",
+      risk_level: "high",
+      command_hint:
+        candidateId === undefined
+          ? "Inspect the GitHub PR approval before creating a pull request."
+          : `Create the GitHub pull request for candidate ${candidateId} with explicit confirmation.`
     };
   }
 
