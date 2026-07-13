@@ -473,7 +473,13 @@ describe("createProgram", () => {
     expect(http?.description()).toContain("HTTP Interactions");
     expect(start?.description()).toContain("loopback-only");
     expect(start?.options.map((option) => option.long)).toEqual(
-      expect.arrayContaining(["--host", "--port", "--max-seconds"])
+      expect.arrayContaining([
+        "--host",
+        "--port",
+        "--timestamp-tolerance-seconds",
+        "--replay-ttl-seconds",
+        "--max-seconds"
+      ])
     );
   });
 });

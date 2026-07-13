@@ -370,8 +370,22 @@ export function createProgram(): Command {
     .description("Start a loopback-only Discord HTTP Interactions endpoint.")
     .option("--host <host>", "Loopback host. Defaults to 127.0.0.1.")
     .option("--port <port>", "Loopback port. Defaults to 18777.")
+    .option(
+      "--timestamp-tolerance-seconds <seconds>",
+      "Maximum Discord signature timestamp drift. Defaults to 300 seconds."
+    )
+    .option(
+      "--replay-ttl-seconds <seconds>",
+      "Reject duplicate signed requests during this window. Defaults to 300 seconds."
+    )
     .option("--max-seconds <seconds>", "Stop the HTTP server automatically after this many seconds.")
-    .action(async (options: { host?: string; port?: string; maxSeconds?: string }) => {
+    .action(async (options: {
+      host?: string;
+      port?: string;
+      timestampToleranceSeconds?: string;
+      replayTtlSeconds?: string;
+      maxSeconds?: string;
+    }) => {
       const maxSeconds = parseOptionalPositiveInteger(options.maxSeconds, "--max-seconds");
       const server = await startDiscordHttpCommand(process.cwd(), options);
       let timer: ReturnType<typeof setTimeout> | undefined;

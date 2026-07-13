@@ -3,8 +3,10 @@ import path from "node:path";
 import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { writeJsonFileAtomic } from "../src/core/fs/json-file.js";
+import { readJsonLines } from "../src/core/fs/jsonl-file.js";
 import type { PreparedDiscordGateway } from "../src/discord/gateway.js";
 import {
+  DiscordHttpReplayGuard,
   handleDiscordHttpInteraction,
   verifyDiscordHttpInteractionSignature,
   type DiscordHttpInteractionRequest
@@ -30,6 +32,8 @@ const gateway: PreparedDiscordGateway = {
   }
 };
 
+const fixedNow = new Date("2026-06-01T00:00:00.000Z");
+
 describe("Discord HTTP interactions", () => {
   it("rejects invalid request signatures", async () => {
     const root = await createTempProject();
@@ -42,13 +46,14 @@ describe("Discord HTTP interactions", () => {
         {
           projectRoot: root,
           gateway,
-          publicKey: keys.publicKeyHex
+          publicKey: keys.publicKeyHex,
+          now: () => fixedNow
         },
         {
           method: "POST",
           headers: {
             "x-signature-ed25519": "00".repeat(64),
-            "x-signature-timestamp": "2026-06-01T00:00:00.000Z"
+            "x-signature-timestamp": discordTimestamp(fixedNow)
           },
           body
         }
@@ -69,7 +74,8 @@ describe("Discord HTTP interactions", () => {
       {
         projectRoot: root,
         gateway,
-        publicKey: keys.publicKeyHex
+        publicKey: keys.publicKeyHex,
+        now: () => fixedNow
       },
       request
     );
@@ -118,7 +124,7 @@ describe("Discord HTTP interactions", () => {
         projectRoot: root,
         gateway,
         publicKey: keys.publicKeyHex,
-        now: () => new Date("2026-06-01T00:00:00.000Z")
+        now: () => fixedNow
       },
       request
     );
@@ -166,6 +172,80 @@ describe("Discord HTTP interactions", () => {
       })
     ).toBe(true);
   });
+
+  it("rejects signatures outside the timestamp tolerance and audits a safe reason", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const keys = createDiscordSigningKeys();
+    const marker = "SHOULD_NOT_LEAK_HTTP_BODY";
+    const request = signDiscordRequest(
+      { type: 1, marker },
+      keys,
+      new Date(fixedNow.getTime() - 301_000)
+    );
+
+    const response = await handleDiscordHttpInteraction(
+      {
+        projectRoot: root,
+        gateway,
+        publicKey: keys.publicKeyHex,
+        now: () => fixedNow,
+        timestampToleranceSeconds: 300
+      },
+      request
+    );
+
+    expect(response).toMatchObject({
+      status: 401,
+      body: JSON.stringify({ error: "signature_timestamp_out_of_range" })
+    });
+
+    const audit = await readJsonLines(
+      path.join(root, ".kairon", "runtime", "discord", "http-security.jsonl")
+    );
+    expect(audit).toMatchObject([
+      {
+        status: "rejected",
+        reason: "signature_timestamp_out_of_range",
+        method: "POST"
+      }
+    ]);
+    const serialized = JSON.stringify(audit);
+    expect(serialized).not.toContain(marker);
+    expect(serialized).not.toContain(keys.publicKeyHex);
+    expect(serialized).not.toContain(
+      request.headers["x-signature-ed25519"] as string
+    );
+  });
+
+  it("rejects a replayed signed request within the configured cache TTL", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const keys = createDiscordSigningKeys();
+    const request = signDiscordRequest({ type: 1 }, keys);
+    const replayGuard = new DiscordHttpReplayGuard(300);
+    const options = {
+      projectRoot: root,
+      gateway,
+      publicKey: keys.publicKeyHex,
+      now: () => fixedNow,
+      replayGuard
+    };
+
+    await expect(handleDiscordHttpInteraction(options, request)).resolves.toMatchObject({
+      status: 200
+    });
+    await expect(handleDiscordHttpInteraction(options, request)).resolves.toMatchObject({
+      status: 409,
+      body: JSON.stringify({ error: "replayed_request" })
+    });
+
+    await expect(
+      readJsonLines(
+        path.join(root, ".kairon", "runtime", "discord", "http-security.jsonl")
+      )
+    ).resolves.toMatchObject([{ reason: "replayed_request" }]);
+  });
 });
 
 async function writeApproval(
@@ -198,10 +278,11 @@ function createDiscordSigningKeys(): {
 
 function signDiscordRequest(
   payload: Record<string, unknown>,
-  keys: ReturnType<typeof createDiscordSigningKeys>
+  keys: ReturnType<typeof createDiscordSigningKeys>,
+  timestampDate = fixedNow
 ): DiscordHttpInteractionRequest {
   const body = JSON.stringify(payload);
-  const timestamp = "2026-06-01T00:00:00.000Z";
+  const timestamp = discordTimestamp(timestampDate);
   const message = Buffer.concat([
     Buffer.from(timestamp, "utf8"),
     Buffer.from(body, "utf8")
@@ -214,4 +295,8 @@ function signDiscordRequest(
     },
     body
   };
+}
+
+function discordTimestamp(date: Date): string {
+  return Math.floor(date.getTime() / 1000).toString();
 }
