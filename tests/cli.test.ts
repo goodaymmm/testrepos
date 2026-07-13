@@ -453,6 +453,8 @@ describe("createProgram", () => {
         "--dry-run",
         "--execute",
         "--approval-id",
+        "--follow-up-id",
+        "--confirm",
         "--repository",
         "--draft",
         "--token-env"

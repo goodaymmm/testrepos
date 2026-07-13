@@ -15,6 +15,24 @@ export type GitPrCandidateApproval = {
   reason?: string;
 };
 
+export type GitPrCandidateLiveExecution = {
+  status: "created";
+  repository: string;
+  base_branch: string;
+  head_branch: string;
+  expected_base_sha?: string;
+  observed_base_sha: string;
+  expected_head_sha: string;
+  observed_head_sha: string;
+  approval_id: string;
+  follow_up_id?: string;
+  draft: boolean;
+  pull_request_number: number;
+  pull_request_url: string;
+  pull_request_state?: string;
+  created_at: string;
+};
+
 export type GitPrCandidateArtifact = {
   schema_version: string;
   artifact_kind: "git_pr_candidate";
@@ -24,6 +42,7 @@ export type GitPrCandidateArtifact = {
   run_id: string;
   review_loop_id: string;
   base_branch: string;
+  base_sha?: string;
   head_branch: string;
   remote: string;
   remote_ref: string | null;
@@ -46,6 +65,7 @@ export type GitPrCandidateArtifact = {
     strategy?: string;
     command_hint: string;
   };
+  live_execution?: GitPrCandidateLiveExecution;
   source_transaction_path: string;
   artifact_path: string;
   created_at: string;
@@ -58,6 +78,12 @@ export async function writePrCandidateArtifact(
   options: { now?: Date } = {}
 ): Promise<GitPrCandidateArtifact> {
   const artifact = buildPrCandidateArtifact(projectRoot, record, options);
+  const existing = await readExistingPrCandidateArtifact(
+    prCandidateArtifactPath(projectRoot, record.transaction_id)
+  );
+  if (canPreserveLiveExecution(existing, artifact)) {
+    artifact.live_execution = existing.live_execution;
+  }
   await writeJsonFileAtomic(
     prCandidateArtifactPath(projectRoot, record.transaction_id),
     artifact
@@ -177,6 +203,7 @@ function buildPrCandidateArtifact(
     run_id: record.run_id,
     review_loop_id: record.review_loop_id,
     base_branch: record.pr.base_branch,
+    base_sha: record.base_sha,
     head_branch: record.pr.head_branch,
     remote: record.pr.remote,
     remote_ref: record.pr.remote_ref,
@@ -199,6 +226,37 @@ function buildPrCandidateArtifact(
     created_at: record.created_at,
     updated_at: options.now?.toISOString() ?? record.updated_at
   };
+}
+
+async function readExistingPrCandidateArtifact(
+  artifactPath: string
+): Promise<GitPrCandidateArtifact | null> {
+  try {
+    return await readJsonFile<GitPrCandidateArtifact>(artifactPath);
+  } catch (error) {
+    if (String(error).includes("ENOENT")) {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function canPreserveLiveExecution(
+  existing: GitPrCandidateArtifact | null,
+  next: GitPrCandidateArtifact
+): existing is GitPrCandidateArtifact & {
+  live_execution: GitPrCandidateLiveExecution;
+} {
+  return (
+    existing?.live_execution !== undefined &&
+    existing.transaction_id === next.transaction_id &&
+    existing.base_branch === next.base_branch &&
+    existing.base_sha === next.base_sha &&
+    existing.head_branch === next.head_branch &&
+    existing.remote_ref === next.remote_ref &&
+    existing.commit_sha === next.commit_sha &&
+    existing.diff_sha256 === next.diff_sha256
+  );
 }
 
 function normalizeChangedFiles(changedFiles: ChangedFile[]): ChangedFile[] {
