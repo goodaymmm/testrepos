@@ -113,6 +113,7 @@ Kairon が稼働できるかを検査する。
 
 ```text
 kairon doctor
+kairon doctor --format json
 ```
 
 検査項目。
@@ -125,6 +126,9 @@ kairon doctor
 - Discord env
 - GitHub branch protection
 - runtime recovery targets
+- daemon health
+- Board secret scan
+- RAG index status
 - protected path policy
 - runtime lock
 
@@ -139,7 +143,7 @@ PASS git.repository Git repository
 ...
 ```
 
-`warning` は運用前に確認すべき注意、`error` は通常運用前に解消すべき問題を示す。
+`warning` は運用前に確認すべき注意、`error` は通常運用前に解消すべき問題を示す。外部設定が不足するcheckはdetailに`status=setup_required`を含み、`next_action`に再実行するCLI commandと関連guide pathを表示する。`--format json`でも同じ`next_action`をsnake_case fieldとして返す。secret値はtext/JSONのどちらにも含めない。
 
 GitHub branch protection診断は、remote repository、default branch、branch protection API、required pull request reviews、required status checksを確認する。API tokenは `GH_TOKEN` を優先し、未設定時に `GITHUB_TOKEN` を参照する。GitHub Freeのprivate repositoryなど、外部プラン制約でbranch protection APIが403になる場合は `api_status=plan_or_permission_error` として扱い、Kairon実装不具合ではなく外部条件としてpublic sandbox repositoryでlive API確認を代替する。
 

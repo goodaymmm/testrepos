@@ -145,9 +145,10 @@ kairon migrate
 
 ```powershell
 kairon doctor
+kairon doctor --format json
 ```
 
-Git、`.gitignore`、config、公式CLI、API key混入、Discord設定、GitHub branch protection、runtime recovery、safety policyを確認し、`pass` / `warning` / `error` と次の対応を表示します。
+Git、`.gitignore`、config、公式CLI、API key混入、Discord設定、GitHub branch protection、runtime recovery、daemon health、Board secret scan、RAG index、safety policyを確認し、`pass` / `warning` / `error` と具体的な`next_action`を表示します。`--format json`でも同じ`next_action`、関連CLI command、guide pathを機械可読形式で取得できます。外部設定不足はdetailの`status=setup_required`として示し、tokenなどのsecret値はtext/JSONのどちらにも出力しません。
 
 GitHub branch protectionのlive確認は、`GH_TOKEN` または `GITHUB_TOKEN` を使って GitHub REST API を確認します。両方ある場合は `GH_TOKEN` を優先します。Windowsでは `KAIRON_GH_TOKEN_CREDENTIAL_TARGET` / `KAIRON_GITHUB_TOKEN_CREDENTIAL_TARGET` でWindows Credential Manager targetを指定すると、envが未設定の場合だけfallbackとして読み取れます。fine-grained PATを使う場合は対象repositoryへのRepository accessと、AdministrationのRead-only権限が必要です。GitHub Freeのprivate repositoryではbranch protection APIが403になる場合があるため、live API疎通はpublic sandbox repositoryで確認する運用にしています。手順は [docs/github-branch-protection-sandbox-v0.md](docs/github-branch-protection-sandbox-v0.md) を参照してください。
 

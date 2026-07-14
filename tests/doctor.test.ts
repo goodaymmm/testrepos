@@ -39,7 +39,7 @@ describe("runDoctor", () => {
     expect(statusById(result, "board.secret_scan")).toBe("pass");
     expect(statusById(result, "runtime.recovery")).toBe("pass");
     expect(checkById(result, "discord.config")?.details).toContain(
-      "live_status=setup_required"
+      "live_status=not_configured"
     );
     expect(checkById(result, "config.agents")?.details).toContain(
       "antigravity(gemini): adapter=antigravity_cli, command=agy"
@@ -63,7 +63,7 @@ describe("runDoctor", () => {
     expect(statusById(result, "git.gitignore")).toBe("warning");
     expect(statusById(result, "config.agents")).toBe("warning");
     expect(statusById(result, "env.api_keys")).toBe("warning");
-    expect(checkById(result, "config.agents")?.nextAction).toBe("Run kairon migrate.");
+    expect(checkById(result, "config.agents")?.next_action).toBe("Run kairon migrate.");
   });
 
   it("errors when required CLIs or enabled Discord env vars are missing", async () => {
@@ -91,7 +91,7 @@ describe("runDoctor", () => {
     expect(checkById(result, "discord.config")?.details).toContain(
       "live_status=setup_required"
     );
-    expect(checkById(result, "cli.availability")?.nextAction).toContain(
+    expect(checkById(result, "cli.availability")?.next_action).toContain(
       "antigravity(gemini):agy"
     );
   });
@@ -238,8 +238,8 @@ describe("runDoctor", () => {
         "live_invalid_env=KAIRON_DISCORD_GUILD_ID,KAIRON_DISCORD_ALLOWED_USER_IDS"
       ])
     );
-    expect(checkById(result, "discord.config")?.nextAction).toBe(
-      "Fix invalid Discord gateway env vars: KAIRON_DISCORD_GUILD_ID."
+    expect(checkById(result, "discord.config")?.next_action).toBe(
+      "Fix invalid Discord gateway env vars: KAIRON_DISCORD_GUILD_ID. Then run kairon doctor. Guide: docs/discord-approval-v0.md."
     );
     expect(text).not.toContain("not-a-snowflake");
     expect(text).not.toContain("invalid-user");
@@ -397,7 +397,9 @@ describe("runDoctor", () => {
         "missing_expected_status_checks=ci/test"
       ])
     );
-    expect(check?.nextAction).toBe("Add expected required status checks: ci/test.");
+    expect(check?.next_action).toBe(
+      "Add expected required status checks: ci/test. Then run kairon doctor. Guide: docs/github-branch-protection-sandbox-v0.md."
+    );
   });
 
   it("extracts GitHub required status check contexts from the live API payload shape", async () => {
@@ -515,8 +517,8 @@ describe("runDoctor", () => {
         "required_status_checks=present"
       ])
     );
-    expect(check?.nextAction).toBe(
-      "Enable GitHub branch protection gates: required_pull_request_reviews."
+    expect(check?.next_action).toBe(
+      "Enable GitHub branch protection gates: required_pull_request_reviews. Then run kairon doctor. Guide: docs/github-branch-protection-sandbox-v0.md."
     );
   });
 
@@ -540,8 +542,8 @@ describe("runDoctor", () => {
     expect(authCheck?.details).toEqual(
       expect.arrayContaining(["api_status=auth_error", "http_status=401"])
     );
-    expect(authCheck?.nextAction).toBe(
-      "Check GH_TOKEN or GITHUB_TOKEN authentication, then retry GitHub branch protection verification."
+    expect(authCheck?.next_action).toBe(
+      "Check GH_TOKEN or GITHUB_TOKEN authentication, then run kairon doctor. Guide: docs/github-branch-protection-sandbox-v0.md."
     );
 
     const permissionError = await runDoctor({
@@ -560,11 +562,11 @@ describe("runDoctor", () => {
     expect(permissionCheck?.details).toEqual(
       expect.arrayContaining(["api_status=plan_or_permission_error", "http_status=403"])
     );
-    expect(permissionCheck?.nextAction).toContain(
+    expect(permissionCheck?.next_action).toContain(
       "Check token repository access and Administration read permission"
     );
-    expect(permissionCheck?.nextAction).toContain(
-      "public sandbox repository"
+    expect(permissionCheck?.next_action).toContain(
+      "public sandbox check"
     );
 
     const notFound = await runDoctor({
@@ -582,8 +584,8 @@ describe("runDoctor", () => {
     expect(checkById(notFound, "git.branch_protection")?.details).toEqual(
       expect.arrayContaining(["api_status=not_found_or_unprotected", "http_status=404"])
     );
-    expect(checkById(notFound, "git.branch_protection")?.nextAction).toContain(
-      "public sandbox branch protection check"
+    expect(checkById(notFound, "git.branch_protection")?.next_action).toContain(
+      "public sandbox check"
     );
   });
 
@@ -610,7 +612,7 @@ describe("runDoctor", () => {
     expect(checkById(result, "runtime.recovery")?.details).toContain("targets=1");
     expect(checkById(result, "runtime.recovery")?.details).toContain("stale_locks=1");
     expect(checkById(result, "runtime.recovery")?.details).toContain("resolved_targets=0");
-    expect(checkById(result, "runtime.recovery")?.nextAction).toBe(
+    expect(checkById(result, "runtime.recovery")?.next_action).toBe(
       "Run kairon recovery run and review any generated approval requests."
     );
   });
@@ -660,6 +662,107 @@ describe("runDoctor", () => {
     );
   });
 
+  it("warns with a Board remediation when Board is enabled without a projection", async () => {
+    const root = await createInitializedGitProject();
+    const notificationsPath = path.join(root, ".kairon", "config", "notifications.json");
+    const notifications = await readJsonFile<Record<string, any>>(notificationsPath);
+    notifications.board.enabled = true;
+    await writeJsonFileAtomic(notificationsPath, notifications);
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+    const check = checkById(result, "board.secret_scan");
+
+    expect(check?.status).toBe("warning");
+    expect(check?.details).toEqual(
+      expect.arrayContaining(["enabled=true", "status=setup_required"])
+    );
+    expect(check?.next_action).toContain("kairon board export");
+    expect(check?.next_action).toContain("docs/board-public-safety-v0.md");
+  });
+
+  it("warns with a RAG remediation when an enabled index is missing", async () => {
+    const root = await createInitializedGitProject();
+    const ragPath = path.join(root, ".kairon", "config", "rag.json");
+    const rag = await readJsonFile<Record<string, unknown>>(ragPath);
+    rag.enabled = true;
+    await writeJsonFileAtomic(ragPath, rag);
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+    const check = checkById(result, "rag.status");
+
+    expect(check?.status).toBe("warning");
+    expect(check?.details).toEqual(
+      expect.arrayContaining([
+        "enabled=true",
+        "status=setup_required",
+        "index_validation=missing"
+      ])
+    );
+    expect(check?.next_action).toContain("kairon rag refresh");
+    expect(check?.next_action).toContain("docs/rag-memory-v0.md");
+  });
+
+  it("warns with daemon report and recovery commands after a fatal daemon event", async () => {
+    const root = await createInitializedGitProject();
+    await writeFile(
+      path.join(root, ".kairon", "runtime", "daemon", "2026-07-14.jsonl"),
+      `${JSON.stringify({
+        event: "fatal_error",
+        created_at: "2026-07-14T00:00:00.000Z",
+        error: {
+          code: "DAEMON_FATAL",
+          message: "token=must-not-leak"
+        }
+      })}\n`,
+      "utf8"
+    );
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+    const check = checkById(result, "daemon.health");
+    const text = formatDoctorResult(result);
+
+    expect(check?.status).toBe("warning");
+    expect(check?.details).toEqual(
+      expect.arrayContaining([
+        "status=fatal_error",
+        "remediation_status=setup_required",
+        "last_error_code=DAEMON_FATAL"
+      ])
+    );
+    expect(check?.next_action).toContain("kairon daemon report");
+    expect(check?.next_action).toContain("kairon recovery run");
+    expect(text).not.toContain("must-not-leak");
+  });
+
+  it("formats JSON with snake-case remediation fields and no secret values", async () => {
+    const root = await createInitializedGitProject({ gitignore: false });
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: { OPENAI_API_KEY: "secret-api-key-value" }
+    });
+    const output = formatDoctorResult(result, { format: "json" });
+    const parsed = JSON.parse(output) as DoctorResult;
+    const check = checkById(parsed, "git.gitignore");
+
+    expect(check?.next_action).toBe("Create .gitignore and add .kairon/.");
+    expect(output).toContain('"next_action"');
+    expect(output).not.toContain('"nextAction"');
+    expect(output).not.toContain("secret-api-key-value");
+  });
+
   it("formats doctor output with summary, checks, and next actions", async () => {
     const root = await createInitializedGitProject({ gitignore: false });
     const result = await runDoctor({
@@ -671,7 +774,7 @@ describe("runDoctor", () => {
 
     expect(text).toContain("doctor.ok=true");
     expect(text).toContain("WARNING git.gitignore .gitignore");
-    expect(text).toContain("next=Create .gitignore and add .kairon/.");
+    expect(text).toContain("next_action=Create .gitignore and add .kairon/.");
   });
 });
 
