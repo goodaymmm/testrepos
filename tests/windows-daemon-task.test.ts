@@ -22,6 +22,9 @@ describe("kairon-daemon-task.ps1", () => {
     expect(script).toContain("Push-Location");
     expect(script).toContain("Pop-Location");
     expect(script).toContain("Require-KaironScheduledTask");
+    expect(script).toContain("[switch]$DryRun");
+    expect(script).toContain("task.mutation=skipped");
+    expect(script).toContain("secret_values=not_in_task_arguments");
     expect(script).toContain("Secrets are read from user environment variables.");
     expect(script).not.toContain("KAIRON_DISCORD_BOT_TOKEN");
     expect(script).not.toContain("GH_TOKEN");
@@ -41,6 +44,10 @@ describe("kairon-daemon-task.ps1", () => {
     expect(guide).toContain("kairon recovery run");
     expect(guide).toContain("secret");
     expect(guide).toContain("scripts/kairon-daemon-task.ps1");
+    expect(guide).toContain("kairon daemon task status");
+    expect(guide).toContain("kairon daemon task install");
+    expect(guide).toContain("kairon daemon task uninstall");
+    expect(guide).toContain("kairon daemon task restart");
   });
 
   runIfPowerShell("parses as a PowerShell script", async () => {

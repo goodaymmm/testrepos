@@ -7,7 +7,8 @@ param(
   [string]$KaironCommand = "kairon",
   [int]$IntervalMs = 60000,
   [string]$LogRoot = "",
-  [switch]$AtStartup
+  [switch]$AtStartup,
+  [switch]$DryRun
 )
 
 Set-StrictMode -Version Latest
@@ -149,6 +150,33 @@ function Invoke-KaironDaemon {
   exit $exitCode
 }
 
+function Show-KaironTaskPlan {
+  param(
+    [string]$PlannedAction,
+    [string]$Name,
+    [string]$Root,
+    [string]$Command,
+    [int]$TickIntervalMs,
+    [string]$DaemonLogRoot,
+    [bool]$UseStartupTrigger
+  )
+
+  Write-Host "dry_run=true"
+  Write-Host "task.action=$($PlannedAction.ToLowerInvariant())"
+  Write-Host "task.name=$Name"
+  Write-Host "project_root=$Root"
+  Write-Host "task.mutation=skipped"
+
+  if ($PlannedAction -eq "Register") {
+    $trigger = if ($UseStartupTrigger) { "startup" } else { "logon" }
+    Write-Host "task.trigger=$trigger"
+    Write-Host "kairon_command=$Command"
+    Write-Host "interval_ms=$TickIntervalMs"
+    Write-Host "log_root=$DaemonLogRoot"
+    Write-Host "secret_values=not_in_task_arguments"
+  }
+}
+
 function Register-KaironTask {
   param(
     [string]$Name,
@@ -248,6 +276,18 @@ $resolvedLogRoot = Get-LogRoot -Root $resolvedProjectRoot -ConfiguredLogRoot $Lo
 
 switch ($Action) {
   "Register" {
+    if ($DryRun) {
+      Show-KaironTaskPlan `
+        -PlannedAction "Register" `
+        -Name $TaskName `
+        -Root $resolvedProjectRoot `
+        -Command $KaironCommand `
+        -TickIntervalMs $IntervalMs `
+        -DaemonLogRoot $resolvedLogRoot `
+        -UseStartupTrigger ([bool]$AtStartup)
+      break
+    }
+
     Register-KaironTask `
       -Name $TaskName `
       -Root $resolvedProjectRoot `
@@ -283,6 +323,18 @@ switch ($Action) {
     Show-KaironTaskStatus -Name $TaskName
   }
   "Unregister" {
+    if ($DryRun) {
+      Show-KaironTaskPlan `
+        -PlannedAction "Unregister" `
+        -Name $TaskName `
+        -Root $resolvedProjectRoot `
+        -Command $KaironCommand `
+        -TickIntervalMs $IntervalMs `
+        -DaemonLogRoot $resolvedLogRoot `
+        -UseStartupTrigger ([bool]$AtStartup)
+      break
+    }
+
     $task = Get-KaironScheduledTask -Name $TaskName
     if ($null -eq $task) {
       Write-Host "task.exists=false"

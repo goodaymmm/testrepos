@@ -2,7 +2,8 @@
 
 この文書は、Windows環境で `kairon start --daemon` を日常運用するための手順です。
 Task Schedulerにはsecret値を渡さず、ユーザー環境変数からKaironが読み取る前提にします。
-登録・起動・停止には `scripts/kairon-daemon-task.ps1` を使います。
+通常の状態確認・登録・登録解除・再起動は `kairon daemon task` を使います。
+CLIは内部で `scripts/kairon-daemon-task.ps1` へ固定引数を渡します。helperの直接実行手順も障害調査用として残します。
 
 ## 前提
 
@@ -60,9 +61,43 @@ $env:KAIRON_GITHUB_TOKEN_CREDENTIAL_TARGET = "Kairon/GITHUB_TOKEN"
 
 `kairon doctor` はsecret値ではなく `provider=env` / `provider=windows_credential` と `present` / `missing` だけを表示します。
 
+## CLIからのTask Scheduler操作
+
+まずdry-runで登録内容を確認します。`--dry-run`ではTask Schedulerを変更しません。
+
+```powershell
+cd M:\EnglishApp
+
+kairon daemon task install `
+  --dry-run `
+  --task-name "Kairon Runtime EnglishApp" `
+  --project-root "M:\EnglishApp" `
+  --interval-ms 60000
+```
+
+出力の `task.mutation=skipped` と `secret_values=not_in_task_arguments` を確認してから、`--dry-run`を外して登録します。
+
+```powershell
+kairon daemon task install `
+  --task-name "Kairon Runtime EnglishApp" `
+  --project-root "M:\EnglishApp" `
+  --interval-ms 60000
+```
+
+状態確認、再起動、登録解除もCLIから実行できます。Task未登録時の`status`は`task.exists=false`を返し、コマンド自体は成功扱いです。
+
+```powershell
+kairon daemon task status --task-name "Kairon Runtime EnglishApp" --project-root "M:\EnglishApp"
+kairon daemon task restart --task-name "Kairon Runtime EnglishApp" --project-root "M:\EnglishApp"
+kairon daemon task uninstall --dry-run --task-name "Kairon Runtime EnglishApp" --project-root "M:\EnglishApp"
+kairon daemon task uninstall --task-name "Kairon Runtime EnglishApp" --project-root "M:\EnglishApp"
+```
+
+Windows以外ではTask Schedulerを操作せず、`status=setup_required`とWindows上で再実行するためのguidanceを返します。
+
 ## Task Scheduler登録
 
-Kairon repository側でhelperを実行します。
+helperを直接使う場合はKairon repository側で実行します。
 
 ```powershell
 cd C:\Users\hikar\Documents\AutoRunner

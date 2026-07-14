@@ -84,6 +84,19 @@ describe("PR and release documentation", () => {
     expect(approval).toContain("TLS");
   });
 
+  it("documents the Windows daemon task CLI and dry-run safety", async () => {
+    const guide = await readUtf8("docs/windows-daemon-ops-v0.md");
+    const commands = await readUtf8("docs/cli-commands-v0.md");
+
+    for (const command of ["status", "install", "uninstall", "restart"]) {
+      expect(guide).toContain(`kairon daemon task ${command}`);
+      expect(commands).toContain(`kairon daemon task ${command}`);
+    }
+    expect(guide).toContain("--dry-run");
+    expect(guide).toContain("secret_values=not_in_task_arguments");
+    expect(commands).toContain("status=setup_required");
+  });
+
   it("keeps package and CLI versions synchronized", async () => {
     const packageJson = JSON.parse(await readUtf8("package.json")) as {
       version: string;
