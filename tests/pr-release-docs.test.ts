@@ -69,8 +69,10 @@ describe("PR and release documentation", () => {
     expect(checklist).toContain("<!-- kairon:release-evidence -->");
     expect(checklist).toContain("npm run build");
     expect(checklist).toContain("npm test");
+    expect(checklist).toContain("kairon release validate");
     expect(notes).toContain("<!-- kairon:release-notes-unreleased -->");
     expect(notes).toContain("<!-- kairon:versioning-policy -->");
+    expect(notes).toContain("kairon release validate");
     expect(prChecklist).toContain("docs/release-checklist-v0.md");
     expect(prChecklist).toContain("docs/release-notes-v0.md");
   });

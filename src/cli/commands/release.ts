@@ -19,6 +19,27 @@ export type ReleaseCheckResult = {
   manual_checks: string[];
 };
 
+export type ReleaseValidationCheck = {
+  id:
+    | "package_version_semver"
+    | "cli_version_semver"
+    | "version_sync"
+    | "release_checklist"
+    | "release_notes_unreleased"
+    | "release_notes_target_version";
+  status: "pass" | "fail";
+  details: string;
+};
+
+export type ReleaseValidationResult = {
+  schema_version: string;
+  ok: boolean;
+  target_version: string;
+  package_version: string;
+  cli_version: string;
+  checks: ReleaseValidationCheck[];
+};
+
 export type ReleaseNotesResult = {
   schema_version: string;
   since: string;
@@ -108,6 +129,7 @@ export async function collectReleaseCheck(
     },
     recommended_commands: [
       "git status --short",
+      "kairon release validate",
       "npm run build",
       "npm test",
       "npx vitest run tests\\pr-release-docs.test.ts"
@@ -117,6 +139,87 @@ export async function collectReleaseCheck(
       "Confirm operation-test evidence is recorded when the release scope requires it.",
       "Confirm generated artifacts, local state, and secret values are not committed."
     ]
+  };
+}
+
+export async function validateRelease(
+  projectRoot: string
+): Promise<ReleaseValidationResult> {
+  const packageVersion = await readPackageVersion(projectRoot);
+  const cliVersion = await readCliVersion(projectRoot);
+  const checklist = await readOptionalText(projectRoot, "docs/release-checklist-v0.md");
+  const notes = await readOptionalText(projectRoot, "docs/release-notes-v0.md");
+  const packageVersionValid = isCoreSemanticVersion(packageVersion);
+  const cliVersionValid = isCoreSemanticVersion(cliVersion);
+  const checklistValid = hasAllMarkers(checklist, [
+    "<!-- kairon:release-readiness -->",
+    "<!-- kairon:release-evidence -->",
+    "<!-- kairon:versioning-policy -->"
+  ]);
+  const unreleasedValid = notes !== undefined &&
+    /^##\s+Unreleased\s*$/mu.test(notes) &&
+    notes.includes("<!-- kairon:release-notes-unreleased -->");
+  const targetVersionValid = packageVersionValid &&
+    notes !== undefined &&
+    releaseNotesContainVersion(notes, packageVersion);
+  const checks: ReleaseValidationCheck[] = [
+    validationCheck(
+      "package_version_semver",
+      packageVersionValid,
+      packageVersionValid
+        ? `package.json version ${packageVersion} is valid.`
+        : `package.json version ${packageVersion} must use x.y.z core SemVer.`
+    ),
+    validationCheck(
+      "cli_version_semver",
+      cliVersionValid,
+      cliVersionValid
+        ? `KAIRON_VERSION ${cliVersion} is valid.`
+        : `KAIRON_VERSION ${cliVersion} must use x.y.z core SemVer.`
+    ),
+    validationCheck(
+      "version_sync",
+      packageVersion === cliVersion,
+      packageVersion === cliVersion
+        ? `package.json and KAIRON_VERSION both use ${packageVersion}.`
+        : `Version mismatch: package.json=${packageVersion}, KAIRON_VERSION=${cliVersion}.`
+    ),
+    validationCheck(
+      "release_checklist",
+      checklistValid,
+      checklistValid
+        ? "Release checklist contains all required markers."
+        : checklist === undefined
+          ? "docs/release-checklist-v0.md is missing."
+          : "Release checklist must contain readiness, evidence, and versioning markers."
+    ),
+    validationCheck(
+      "release_notes_unreleased",
+      unreleasedValid,
+      unreleasedValid
+        ? "Release notes contain the Unreleased heading and marker."
+        : notes === undefined
+          ? "docs/release-notes-v0.md is missing."
+          : "Release notes must contain the Unreleased heading and marker."
+    ),
+    validationCheck(
+      "release_notes_target_version",
+      targetVersionValid,
+      targetVersionValid
+        ? `Release notes contain target version ${packageVersion}.`
+        : packageVersionValid
+          ? `Release notes must contain a heading for target version ${packageVersion}.`
+          : "Target version entry cannot be checked until package.json uses valid SemVer."
+    )
+  ];
+
+  return {
+    schema_version: "0.1",
+    ok: checks.every((check) => check.status === "pass"),
+    target_version: packageVersion,
+    package_version: packageVersion,
+    cli_version: cliVersion,
+    checks
   };
 }
 
@@ -199,9 +302,15 @@ export async function planReleaseBump(
   const packagePath = resolveInside(projectRoot, "package.json");
   const indexPath = resolveInside(projectRoot, "src", "index.ts");
   const packageJson = await readJsonFile<PackageJson>(packagePath);
-  const currentVersion = assertVersion(packageJson.version, "package.json");
+  const currentVersion = assertSemanticVersion(
+    assertVersion(packageJson.version, "package.json"),
+    "package.json"
+  );
   const cliSource = await readFile(indexPath, "utf8");
-  const cliVersion = extractCliVersion(cliSource);
+  const cliVersion = assertSemanticVersion(
+    extractCliVersion(cliSource),
+    "src/index.ts"
+  );
 
   if (currentVersion !== cliVersion) {
     throw new Error(
@@ -283,6 +392,24 @@ export function formatReleaseCheck(result: ReleaseCheckResult): string {
     ...result.recommended_commands.map((command) => `- ${command}`),
     "manual.checks:",
     ...result.manual_checks.map((check) => `- ${check}`)
+  ].join("\n");
+}
+
+export function formatReleaseValidation(result: ReleaseValidationResult): string {
+  const passed = result.checks.filter((check) => check.status === "pass").length;
+  const failed = result.checks.length - passed;
+
+  return [
+    "Kairon release validation:",
+    `validation.ok=${result.ok}`,
+    `version.target=${result.target_version}`,
+    `version.package=${result.package_version}`,
+    `version.cli=${result.cli_version}`,
+    `summary.pass=${passed}`,
+    `summary.fail=${failed}`,
+    ...result.checks.map(
+      (check) => `${check.status.toUpperCase()} ${check.id} ${check.details}`
+    )
   ].join("\n");
 }
 
@@ -369,10 +496,7 @@ function bumpVersion(version: string, type: ReleaseBumpType): string {
   if (type === "explicit") {
     throw new Error("Explicit release bump requires --version.");
   }
-  const parsed = /^(\d+)\.(\d+)\.(\d+)$/.exec(version);
-  if (parsed === null) {
-    throw new Error(`Unsupported version format: ${version}`);
-  }
+  const parsed = parseCoreSemanticVersion(version);
 
   const major = Number(parsed[1]);
   const minor = Number(parsed[2]);
@@ -391,10 +515,7 @@ function bumpVersion(version: string, type: ReleaseBumpType): string {
 
 function normalizeExplicitVersion(value: string): string {
   const version = value.trim();
-  if (!/^\d+\.\d+\.\d+$/.test(version)) {
-    throw new Error(`Unsupported version format: ${value}`);
-  }
-  return version;
+  return assertSemanticVersion(version, "--version");
 }
 
 async function readPackageVersion(projectRoot: string): Promise<string> {
@@ -416,6 +537,25 @@ function assertVersion(value: unknown, source: string): string {
   }
 
   return value;
+}
+
+function assertSemanticVersion(value: string, source: string): string {
+  if (!isCoreSemanticVersion(value)) {
+    throw new Error(`${source} contains unsupported version format: ${value}`);
+  }
+  return value;
+}
+
+function isCoreSemanticVersion(value: string): boolean {
+  return /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(value);
+}
+
+function parseCoreSemanticVersion(value: string): RegExpExecArray {
+  const parsed = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.exec(value);
+  if (parsed === null) {
+    throw new Error(`Unsupported version format: ${value}`);
+  }
+  return parsed;
 }
 
 function extractCliVersion(source: string): string {
@@ -554,6 +694,41 @@ async function fileExists(
   } catch {
     return false;
   }
+}
+
+async function readOptionalText(
+  projectRoot: string,
+  relativePath: string
+): Promise<string | undefined> {
+  try {
+    return await readFile(resolveInside(projectRoot, relativePath), "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+function validationCheck(
+  id: ReleaseValidationCheck["id"],
+  passed: boolean,
+  details: string
+): ReleaseValidationCheck {
+  return {
+    id,
+    status: passed ? "pass" : "fail",
+    details
+  };
+}
+
+function hasAllMarkers(
+  content: string | undefined,
+  markers: string[]
+): boolean {
+  return content !== undefined && markers.every((marker) => content.includes(marker));
+}
+
+function releaseNotesContainVersion(notes: string, version: string): boolean {
+  const escaped = version.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^##\\s+${escaped}(?:\\s|$)`, "mu").test(notes);
 }
 
 function formatPresence(value: boolean): "present" | "missing" {

@@ -14,6 +14,8 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 <!-- kairon:versioning-policy -->
 現在のbaseline versionは `0.1.0` です。version変更時は `package.json` と
 `src/index.ts` の `KAIRON_VERSION` を同時に更新します。
+`kairon release validate` は、この同期とcore SemVer形式に加えて、`Unreleased` marker、
+現在versionのrelease entry、release checklistの必須markerを一括確認します。
 
 0.x期間の目安:
 

@@ -12,7 +12,9 @@ import {
   formatReleaseBump,
   formatReleaseCheck,
   formatReleaseNotes,
-  planReleaseBump
+  formatReleaseValidation,
+  planReleaseBump,
+  validateRelease
 } from "../src/cli/commands/release.js";
 import { createTempProject } from "./test-utils.js";
 
@@ -32,7 +34,45 @@ describe("release commands", () => {
       }
     });
     expect(result.recommended_commands).toContain("npm run build");
+    expect(result.recommended_commands).toContain("kairon release validate");
     expect(formatReleaseCheck(result)).toContain("version.sync=true");
+  });
+
+  it("validates synchronized semantic versions and release documentation", async () => {
+    const root = await createReleaseProject("0.1.0");
+
+    const result = await validateRelease(root);
+
+    expect(result).toMatchObject({
+      ok: true,
+      target_version: "0.1.0",
+      package_version: "0.1.0",
+      cli_version: "0.1.0"
+    });
+    expect(result.checks).toHaveLength(6);
+    expect(result.checks.every((check) => check.status === "pass")).toBe(true);
+    expect(formatReleaseValidation(result)).toContain("validation.ok=true");
+    expect(formatReleaseValidation(result)).toContain("summary.fail=0");
+  });
+
+  it("reports version and release documentation validation failures together", async () => {
+    const root = await createReleaseProject("01.0.0", "0.2.0");
+    await writeFile(path.join(root, "docs", "release-checklist-v0.md"), "# Checklist\n", "utf8");
+    await writeFile(path.join(root, "docs", "release-notes-v0.md"), "# Notes\n", "utf8");
+
+    const result = await validateRelease(root);
+
+    expect(result.ok).toBe(false);
+    expect(result.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "package_version_semver", status: "fail" }),
+        expect.objectContaining({ id: "version_sync", status: "fail" }),
+        expect.objectContaining({ id: "release_checklist", status: "fail" }),
+        expect.objectContaining({ id: "release_notes_unreleased", status: "fail" }),
+        expect.objectContaining({ id: "release_notes_target_version", status: "fail" })
+      ])
+    );
+    expect(formatReleaseValidation(result)).toContain("validation.ok=false");
   });
 
   it("plans a dry-run patch version bump by default", async () => {
@@ -228,6 +268,14 @@ describe("release commands", () => {
       "Version mismatch"
     );
   });
+
+  it("rejects non-core semantic versions before planning a bump", async () => {
+    const root = await createReleaseProject("0.1.0");
+
+    await expect(planReleaseBump(root, { version: "01.2.3" })).rejects.toThrow(
+      "unsupported version format"
+    );
+  });
 });
 
 async function createReleaseProject(
@@ -247,10 +295,31 @@ async function createReleaseProject(
     `export const KAIRON_VERSION = "${cliVersion}";\n`,
     "utf8"
   );
-  await writeFile(path.join(root, "docs", "release-checklist-v0.md"), "# Checklist\n", "utf8");
+  await writeFile(
+    path.join(root, "docs", "release-checklist-v0.md"),
+    [
+      "# Checklist",
+      "",
+      "<!-- kairon:release-readiness -->",
+      "<!-- kairon:release-evidence -->",
+      "<!-- kairon:versioning-policy -->",
+      ""
+    ].join("\n"),
+    "utf8"
+  );
   await writeFile(
     path.join(root, "docs", "release-notes-v0.md"),
-    "# Notes\n\n## Unreleased\n\n<!-- kairon:release-notes-unreleased -->\nExisting notes.\n",
+    [
+      "# Notes",
+      "",
+      "## Unreleased",
+      "",
+      "<!-- kairon:release-notes-unreleased -->",
+      "Existing notes.",
+      "",
+      `## ${packageVersion} - baseline`,
+      ""
+    ].join("\n"),
     "utf8"
   );
   return root;

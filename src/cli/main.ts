@@ -71,9 +71,11 @@ import {
   showRecoveryTarget
 } from "./commands/recovery.js";
 import {
+  formatReleaseValidation,
   releaseBumpCommand,
   releaseCheckCommand,
-  releaseNotesCommand
+  releaseNotesCommand,
+  validateRelease
 } from "./commands/release.js";
 import { runReviewLoopCommand } from "./commands/review.js";
 import { startRuntime } from "./commands/start.js";
@@ -909,6 +911,17 @@ export function createProgram(): Command {
     .description("Show release readiness checks and recommended commands.")
     .action(async () => {
       console.log(await releaseCheckCommand(process.cwd()));
+    });
+
+  release
+    .command("validate")
+    .description("Validate synchronized versions and required release documentation.")
+    .action(async () => {
+      const result = await validateRelease(process.cwd());
+      console.log(formatReleaseValidation(result));
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
     });
 
   release

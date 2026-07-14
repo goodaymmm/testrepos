@@ -55,6 +55,7 @@ kairon rag refresh
 kairon rag status
 kairon rag query <query>
 kairon release check
+kairon release validate
 kairon release notes --since <ref> [--write]
 kairon release bump --version <version> [--write]
 kairon workflow run --candidate --dry-run
@@ -763,12 +764,17 @@ release readiness、release notes、version bumpを補助する。
 
 ```text
 kairon release check
+kairon release validate
 kairon release notes --since v0.1.0
 kairon release notes --since v0.1.0 --write
 kairon release bump --version 0.2.0
 kairon release bump --version 0.2.0 --write
 kairon release bump --type patch
 ```
+
+`release validate` は `package.json.version` と `KAIRON_VERSION` のcore SemVer形式と同期、
+release checklistの必須marker、release notesの`Unreleased` markerと現在version entryを
+まとめて検査する。検査失敗時は `validation.ok=false` を出力し、exit codeを1にする。
 
 `release notes` は既定ではdry-runで、`--write` を付けた場合のみ
 `docs/release-notes-v0.md` の `<!-- kairon:release-notes-unreleased -->` 直下へappendする。

@@ -382,8 +382,12 @@ describe("createProgram", () => {
     expect(release?.commands.map((command) => command.name()).sort()).toEqual([
       "bump",
       "check",
-      "notes"
+      "notes",
+      "validate"
     ]);
+    expect(
+      release?.commands.find((command) => command.name() === "validate")?.description()
+    ).toContain("Validate synchronized versions");
     expect(
       release?.commands
         .find((command) => command.name() === "notes")
