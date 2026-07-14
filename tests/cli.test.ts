@@ -117,11 +117,13 @@ describe("createProgram", () => {
     expect(recovery?.description()).toContain("Inspect and resolve");
   });
 
-  it("registers daemon evidence report command", () => {
+  it("registers daemon evidence report and Windows task commands", () => {
     const daemon = createProgram().commands.find(
       (command) => command.name() === "daemon"
     );
     const report = daemon?.commands.find((command) => command.name() === "report");
+    const task = daemon?.commands.find((command) => command.name() === "task");
+    const taskCommands = task?.commands.map((command) => command.name());
 
     expect(daemon?.description()).toContain("daemon evidence");
     expect(report?.description()).toContain("long-run evidence report");
@@ -133,6 +135,20 @@ describe("createProgram", () => {
         "--heartbeat-gap-ms"
       ])
     );
+    expect(task?.description()).toContain("Windows Task Scheduler");
+    expect(taskCommands).toEqual(
+      expect.arrayContaining(["status", "install", "uninstall", "restart"])
+    );
+    expect(
+      task?.commands
+        .find((command) => command.name() === "install")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--dry-run", "--interval-ms", "--at-startup"]));
+    expect(
+      task?.commands
+        .find((command) => command.name() === "uninstall")
+        ?.options.map((option) => option.long)
+    ).toContain("--dry-run");
   });
 
   it("registers state integrity and snapshot commands", () => {

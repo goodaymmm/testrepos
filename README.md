@@ -323,7 +323,7 @@ runtime lock を解放します。
 ### Windows 常駐運用
 
 Windows Task Schedulerで `kairon start --daemon` を日常運用する場合は、[docs/windows-daemon-ops-v0.md](docs/windows-daemon-ops-v0.md) を参照してください。
-`scripts/kairon-daemon-task.ps1` でTask登録、開始、停止、再起動、状態確認、登録解除を補助します。Discord / GitHub tokenなどのsecretはTask引数に書かず、ユーザー環境変数または明示設定したWindows Credential Manager targetから読み取ります。
+`kairon daemon task status|install|uninstall|restart` からTask Schedulerを操作でき、`install`と`uninstall`は`--dry-run`で変更内容を事前確認できます。CLIは内部で`scripts/kairon-daemon-task.ps1`へ固定引数を渡します。Discord / GitHub tokenなどのsecretはTask引数に書かず、ユーザー環境変数または明示設定したWindows Credential Manager targetから読み取ります。
 
 ## 実 CLI の確認
 

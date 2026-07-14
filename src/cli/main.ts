@@ -37,7 +37,10 @@ import {
   formatDiscordHttpServerResult,
   startDiscordHttpCommand
 } from "./commands/discord.js";
-import { daemonReportCommand } from "./commands/daemon.js";
+import {
+  daemonReportCommand,
+  daemonTaskCommand
+} from "./commands/daemon.js";
 import {
   deployExecuteCommand,
   deployDryRunCommand,
@@ -485,6 +488,69 @@ export function createProgram(): Command {
       heartbeatGapMs?: string;
     }) => {
       console.log(await daemonReportCommand(process.cwd(), options));
+    });
+
+  const daemonTask = daemon
+    .command("task")
+    .description("Manage the Windows Task Scheduler daemon registration.");
+
+  daemonTask
+    .command("status")
+    .description("Show the Windows daemon task status; a missing task is successful.")
+    .option("--task-name <name>", "Task Scheduler task name.", "Kairon Runtime")
+    .option("--project-root <path>", "Target Kairon project root.")
+    .action(async (options: { taskName?: string; projectRoot?: string }) => {
+      console.log(await daemonTaskCommand(process.cwd(), "status", options));
+    });
+
+  daemonTask
+    .command("install")
+    .description("Install the Windows daemon task or preview it with --dry-run.")
+    .option("--task-name <name>", "Task Scheduler task name.", "Kairon Runtime")
+    .option("--project-root <path>", "Target Kairon project root.")
+    .option("--kairon-command <command>", "Kairon executable name or path.", "kairon")
+    .option("--interval-ms <ms>", "Daemon tick interval in milliseconds.", "60000")
+    .option("--log-root <path>", "Daemon log directory.")
+    .option("--at-startup", "Use an OS startup trigger instead of a logon trigger.")
+    .option("--dry-run", "Show the registration plan without changing Task Scheduler.")
+    .action(async (options: {
+      taskName?: string;
+      projectRoot?: string;
+      kaironCommand?: string;
+      intervalMs?: string;
+      logRoot?: string;
+      atStartup?: boolean;
+      dryRun?: boolean;
+    }) => {
+      console.log(await daemonTaskCommand(process.cwd(), "install", options));
+    });
+
+  daemonTask
+    .command("uninstall")
+    .description("Uninstall the Windows daemon task or preview it with --dry-run.")
+    .option("--task-name <name>", "Task Scheduler task name.", "Kairon Runtime")
+    .option("--project-root <path>", "Target Kairon project root.")
+    .option("--dry-run", "Show the removal plan without changing Task Scheduler.")
+    .action(async (options: {
+      taskName?: string;
+      projectRoot?: string;
+      dryRun?: boolean;
+    }) => {
+      console.log(await daemonTaskCommand(process.cwd(), "uninstall", options));
+    });
+
+  daemonTask
+    .command("restart")
+    .description("Stop Kairon and restart the registered Windows daemon task.")
+    .option("--task-name <name>", "Task Scheduler task name.", "Kairon Runtime")
+    .option("--project-root <path>", "Target Kairon project root.")
+    .option("--kairon-command <command>", "Kairon executable name or path.", "kairon")
+    .action(async (options: {
+      taskName?: string;
+      projectRoot?: string;
+      kaironCommand?: string;
+    }) => {
+      console.log(await daemonTaskCommand(process.cwd(), "restart", options));
     });
 
   const state = program

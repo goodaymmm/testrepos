@@ -34,6 +34,10 @@ kairon deploy dry-run --target <branch> [--environment <name>]
 kairon deploy execute --dry-run-artifact <id> [--preflight]
 kairon start
 kairon start --daemon [--interval-ms <ms>] [--max-ticks <count>] [--max-idle-ticks <count>]
+kairon daemon task status [--task-name <name>] [--project-root <path>]
+kairon daemon task install [--dry-run] [--task-name <name>] [--project-root <path>]
+kairon daemon task uninstall [--dry-run] [--task-name <name>] [--project-root <path>]
+kairon daemon task restart [--task-name <name>] [--project-root <path>]
 kairon stop
 kairon status
 kairon task create
@@ -492,6 +496,21 @@ daemon option。
 ```
 
 `--daemon` は長時間運用の入口であり、heartbeat、last error、stop reasonをruntime lockとdaemon logに記録する。24時間以上の連続運用エビデンス取得は運用テスト側で行う。
+
+## kairon daemon task
+
+Windows Task Scheduler上のKairon daemon登録を管理する。
+
+```text
+kairon daemon task status
+kairon daemon task install --dry-run
+kairon daemon task install
+kairon daemon task uninstall --dry-run
+kairon daemon task uninstall
+kairon daemon task restart
+```
+
+`install`と`uninstall`の`--dry-run`はTask Schedulerを変更せず、helperへ渡す登録・解除planを表示する。CLIは`scripts/kairon-daemon-task.ps1`へ固定引数だけを渡し、secret値をコマンドライン引数へ展開しない。Task未登録時の`status`は`task.exists=false`を返して成功扱いとする。Windows以外では`status=setup_required`を返し、Task Scheduler操作は実行しない。
 
 ## kairon stop
 
