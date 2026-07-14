@@ -31,15 +31,29 @@ describe("RAG CLI commands", () => {
     expect(refreshOutput).toContain("mode=full");
     expect(refreshOutput).toMatch(/sources=\d+/);
     expect(refreshOutput).toMatch(/chunks=\d+/);
+    expect(refreshOutput).toMatch(/scanned_sources=\d+/);
+    expect(refreshOutput).toMatch(/added_sources=\d+/);
+    expect(refreshOutput).toContain("updated_sources=0");
+    expect(refreshOutput).toContain("unchanged_sources=0");
     expect(refreshOutput).toMatch(/skipped_protected=\d+/);
+    expect(refreshOutput).toMatch(/skipped_generated=\d+/);
+    expect(refreshOutput).toContain("skipped_reason.protected=");
     expect(refreshOutput).toMatch(/pruned_sources=\d+/);
+    expect(refreshOutput).toContain("pruned_reason.missing=");
     expect(refreshOutput).toMatch(/pruned_ephemeral_sources=\d+/);
 
     const statusOutput = await statusRagIndexCommand(root);
     expect(statusOutput).toContain("exists=true");
     expect(statusOutput).toContain("index=.kairon/rag/index.json");
+    expect(statusOutput).toContain("freshness=fresh");
+    expect(statusOutput).toContain("pending_added_sources=0");
+    expect(statusOutput).toContain("pending_changed_sources=0");
+    expect(statusOutput).toContain("pending_missing_sources=0");
     expect(statusOutput).toMatch(/index_size_bytes=\d+/);
     expect(statusOutput).toContain("last_refresh_at=");
+    expect(statusOutput).toContain("last_refresh_mode=full");
+    expect(statusOutput).toContain("last_refresh_added_sources=");
+    expect(statusOutput).toContain("last_refresh_skipped_reason.protected=");
     expect(statusOutput).toContain("updated_at=");
   });
 

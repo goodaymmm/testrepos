@@ -23,15 +23,33 @@ export async function runMaintenance(
       : [
           "rag_status=updated",
           `rag_index=${result.rag_index.index_path}`,
+          `rag_refresh_mode=${result.rag_index.refresh_mode}`,
           `rag_sources=${result.rag_index.source_count}`,
           `rag_chunks=${result.rag_index.chunk_count}`,
+          `rag_scanned_sources=${result.rag_index.scanned_source_count}`,
+          `rag_added_sources=${result.rag_index.added_source_count}`,
+          `rag_updated_sources=${result.rag_index.updated_source_count}`,
+          `rag_unchanged_sources=${result.rag_index.unchanged_source_count}`,
           `rag_skipped_sources=${result.rag_index.skipped_source_count}`,
           `rag_skipped_protected=${result.rag_index.skipped_protected_count}`,
+          `rag_skipped_generated=${result.rag_index.skipped_generated_count}`,
+          `rag_skipped_missing=${result.rag_index.skipped_missing_count}`,
+          `rag_skipped_archived=${result.rag_index.skipped_archived_count}`,
+          ...formatReasonCounts(
+            "rag_skipped_reason",
+            result.rag_index.skipped_reason_counts
+          ),
           `rag_pruned_sources=${result.rag_index.pruned_source_count}`,
           `rag_pruned_missing_sources=${result.rag_index.pruned_missing_source_count}`,
           `rag_pruned_excluded_sources=${result.rag_index.pruned_excluded_source_count}`,
+          `rag_pruned_protected_sources=${result.rag_index.pruned_protected_source_count}`,
+          `rag_pruned_generated_sources=${result.rag_index.pruned_generated_source_count}`,
           `rag_pruned_archived_sources=${result.rag_index.pruned_archived_source_count}`,
-          `rag_pruned_ephemeral_sources=${result.rag_index.pruned_ephemeral_source_count}`
+          `rag_pruned_ephemeral_sources=${result.rag_index.pruned_ephemeral_source_count}`,
+          ...formatReasonCounts(
+            "rag_pruned_reason",
+            result.rag_index.pruned_reason_counts
+          )
         ];
 
   return [
@@ -65,4 +83,13 @@ export async function runMaintenance(
     "next_board_command=kairon board export"
   ]
     .join("\n");
+}
+
+function formatReasonCounts(
+  prefix: string,
+  values: Record<string, number>
+): string[] {
+  return Object.entries(values)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([reason, count]) => `${prefix}.${reason}=${count}`);
 }

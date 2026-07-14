@@ -92,6 +92,15 @@ persona ごとに context budget を分ける。
 - approval decision 発生時に decisions を更新する。
 - maintenance time に stale chunk と orphan index を掃除する。
 
+## Incremental Refresh
+
+- 初回refreshはfull indexを作成する。
+- 2回目以降はsource manifestの`file_mtime_ms`と`file_size_bytes`を比較し、未変更sourceとchunkを再利用する。
+- file metadataが変わった場合だけsanitized content hashを再計算し、hashが同じなら既存chunkを維持する。
+- indexの`refresh` summaryへscanned / added / updated / unchanged、理由別skip / prune件数を保存する。
+- protected / generated / missing / archivedは別理由として記録し、secret値や本文はsummaryへ保存しない。
+- `kairon rag status`はindex作成後に追加・変更・削除されたsource件数をread-onlyで検査し、`fresh`または`stale`を表示する。
+
 ## Safety
 
 - secret path は index しない。

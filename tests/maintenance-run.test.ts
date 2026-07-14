@@ -161,9 +161,23 @@ describe("runDailyMaintenance", () => {
 
     expect(result.rag_index).toMatchObject({
       index_path: ".kairon/rag/index.json",
+      refresh_mode: "full",
       chunk_count: expect.any(Number),
+      scanned_source_count: expect.any(Number),
+      added_source_count: expect.any(Number),
+      updated_source_count: 0,
+      unchanged_source_count: 0,
       skipped_protected_count: expect.any(Number),
+      skipped_generated_count: expect.any(Number),
+      skipped_reason_counts: expect.objectContaining({
+        protected: expect.any(Number),
+        generated: expect.any(Number)
+      }),
       pruned_source_count: expect.any(Number),
+      pruned_reason_counts: expect.objectContaining({
+        missing: expect.any(Number),
+        archived: expect.any(Number)
+      }),
       pruned_ephemeral_source_count: expect.any(Number)
     });
     expect(result.rag_index_skipped).toBeUndefined();
@@ -179,11 +193,19 @@ describe("runDailyMaintenance", () => {
     const output = await runMaintenance(root, { buildRag: true });
     expect(output).toContain("rag_status=updated");
     expect(output).toContain("rag_index=.kairon/rag/index.json");
+    expect(output).toContain("rag_refresh_mode=incremental");
     expect(output).toContain("rag_sources=");
     expect(output).toContain("rag_chunks=");
+    expect(output).toContain("rag_scanned_sources=");
+    expect(output).toContain("rag_added_sources=");
+    expect(output).toContain("rag_updated_sources=");
+    expect(output).toContain("rag_unchanged_sources=");
     expect(output).toContain("rag_skipped_sources=");
     expect(output).toContain("rag_skipped_protected=");
+    expect(output).toContain("rag_skipped_generated=");
+    expect(output).toContain("rag_skipped_reason.protected=");
     expect(output).toContain("rag_pruned_sources=");
+    expect(output).toContain("rag_pruned_reason.missing=");
     expect(output).toContain("rag_pruned_ephemeral_sources=");
   });
 

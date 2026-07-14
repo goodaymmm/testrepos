@@ -84,13 +84,24 @@ export async function refreshRagIndexCommand(
     `mode=${result.refresh_mode}`,
     `sources=${result.source_count}`,
     `chunks=${result.chunk_count}`,
+    `scanned_sources=${result.scanned_source_count}`,
+    `added_sources=${result.added_source_count}`,
+    `updated_sources=${result.updated_source_count}`,
+    `unchanged_sources=${result.unchanged_source_count}`,
     `skipped_sources=${result.skipped_source_count}`,
     `skipped_protected=${result.skipped_protected_count}`,
+    `skipped_generated=${result.skipped_generated_count}`,
+    `skipped_missing=${result.skipped_missing_count}`,
+    `skipped_archived=${result.skipped_archived_count}`,
+    ...formatReasonCounts("skipped_reason", result.skipped_reason_counts),
     `pruned_sources=${result.pruned_source_count}`,
     `pruned_missing_sources=${result.pruned_missing_source_count}`,
     `pruned_excluded_sources=${result.pruned_excluded_source_count}`,
+    `pruned_protected_sources=${result.pruned_protected_source_count}`,
+    `pruned_generated_sources=${result.pruned_generated_source_count}`,
     `pruned_archived_sources=${result.pruned_archived_source_count}`,
     `pruned_ephemeral_sources=${result.pruned_ephemeral_source_count}`,
+    ...formatReasonCounts("pruned_reason", result.pruned_reason_counts),
     `updated_at=${result.index.updated_at}`
   ].join("\n");
 }
@@ -114,6 +125,8 @@ export async function compactRagIndexCommand(
     `removed_sources=${result.removed_source_count}`,
     `removed_missing_sources=${result.removed_missing_source_count}`,
     `removed_excluded_sources=${result.removed_excluded_source_count}`,
+    `removed_protected_sources=${result.removed_protected_source_count}`,
+    `removed_generated_sources=${result.removed_generated_source_count}`,
     `removed_archived_sources=${result.removed_archived_source_count}`,
     `removed_ephemeral_sources=${result.removed_ephemeral_source_count}`,
     `compacted_at=${result.compacted_at}`
@@ -129,14 +142,45 @@ export async function statusRagIndexCommand(projectRoot: string): Promise<string
     `exists=${status.exists}`,
     `sources=${status.source_count}`,
     `chunks=${status.chunk_count}`,
+    `freshness=${status.freshness_status}`,
+    `pending_added_sources=${status.pending_added_source_count}`,
+    `pending_changed_sources=${status.pending_changed_source_count}`,
+    `pending_missing_sources=${status.pending_missing_source_count}`,
     `skipped_sources=${status.skipped_source_count}`,
     `skipped_protected=${status.skipped_protected_count}`,
+    `skipped_generated=${status.skipped_generated_count}`,
+    `skipped_missing=${status.skipped_missing_count}`,
+    `skipped_archived=${status.skipped_archived_count}`,
     ...(status.index_size_bytes === undefined
       ? []
       : [`index_size_bytes=${status.index_size_bytes}`]),
     ...(status.last_refresh_at === undefined
       ? []
       : [`last_refresh_at=${status.last_refresh_at}`]),
+    ...(status.last_refresh_mode === undefined
+      ? []
+      : [`last_refresh_mode=${status.last_refresh_mode}`]),
+    ...(status.last_refresh_added_sources === undefined
+      ? []
+      : [`last_refresh_added_sources=${status.last_refresh_added_sources}`]),
+    ...(status.last_refresh_updated_sources === undefined
+      ? []
+      : [`last_refresh_updated_sources=${status.last_refresh_updated_sources}`]),
+    ...(status.last_refresh_unchanged_sources === undefined
+      ? []
+      : [`last_refresh_unchanged_sources=${status.last_refresh_unchanged_sources}`]),
+    ...(status.last_refresh_skipped_reasons === undefined
+      ? []
+      : formatReasonCounts(
+          "last_refresh_skipped_reason",
+          status.last_refresh_skipped_reasons
+        )),
+    ...(status.last_refresh_pruned_reasons === undefined
+      ? []
+      : formatReasonCounts(
+          "last_refresh_pruned_reason",
+          status.last_refresh_pruned_reasons
+        )),
     ...(status.last_compacted_at === undefined
       ? []
       : [`last_compacted_at=${status.last_compacted_at}`]),
@@ -291,6 +335,15 @@ function parseEnumList<T extends string>(
 
 function formatScore(value: number): string {
   return Number.isInteger(value) ? String(value) : value.toFixed(2);
+}
+
+function formatReasonCounts(
+  prefix: string,
+  values: Record<string, number>
+): string[] {
+  return Object.entries(values)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([reason, count]) => `${prefix}.${reason}=${count}`);
 }
 
 function formatMetadata(metadata: Record<string, unknown>): string[] {
