@@ -18,6 +18,7 @@ import {
 } from "../core/secrets/secret-resolver.js";
 import { validateDiscordEnvValues } from "../discord/env-validation.js";
 import { inspectRuntimeRecoveryTargets } from "../recovery/runtime-recovery.js";
+import { getRuntimeStatus } from "../runtime/status.js";
 import {
   inspectBoardProjectionSecrets,
   type BoardSecretScanSummary
@@ -30,7 +31,7 @@ export type DoctorCheck = {
   title: string;
   status: DoctorStatus;
   details: string[];
-  nextAction?: string;
+  next_action?: string;
 };
 
 export type DoctorResult = {
@@ -60,6 +61,9 @@ type AgentsConfig = {
 
 type NotificationsConfig = {
   primary_provider?: string;
+  board?: {
+    enabled?: boolean;
+  };
   providers?: {
     discord?: {
       enabled?: boolean;
@@ -73,6 +77,19 @@ type NotificationsConfig = {
       secrets?: Partial<Record<DiscordSecretKey, SecretReferenceConfig>>;
     };
   };
+};
+
+type RagConfig = {
+  enabled?: boolean;
+  storage?: {
+    base_dir?: string;
+  };
+};
+
+type RagIndexSummary = {
+  source_count?: unknown;
+  chunk_count?: unknown;
+  updated_at?: unknown;
 };
 
 type DiscordSecretKey =
@@ -180,31 +197,45 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkBoardSecretScan(options.projectRoot));
   checks.push(await checkConfigBackups(options.projectRoot));
   checks.push(await checkRuntimeRecovery(options.projectRoot));
+  checks.push(await checkDaemonHealth(options.projectRoot));
+  checks.push(await checkRagStatus(options.projectRoot));
 
-  const summary = countStatuses(checks);
+  const sanitizedChecks = checks.map(sanitizeDoctorCheck);
+  const summary = countStatuses(sanitizedChecks);
 
   return {
     ok: summary.error === 0,
-    checks,
+    checks: sanitizedChecks,
     summary
   };
 }
 
-export function formatDoctorResult(result: DoctorResult): string {
+export function formatDoctorResult(
+  result: DoctorResult,
+  options: { format?: "text" | "json" } = {}
+): string {
+  const safeResult = {
+    ...result,
+    checks: result.checks.map(sanitizeDoctorCheck)
+  };
+  if (options.format === "json") {
+    return `${JSON.stringify(safeResult, null, 2)}\n`;
+  }
+
   const lines = [
-    `doctor.ok=${result.ok}`,
-    `summary.pass=${result.summary.pass}`,
-    `summary.warning=${result.summary.warning}`,
-    `summary.error=${result.summary.error}`
+    `doctor.ok=${safeResult.ok}`,
+    `summary.pass=${safeResult.summary.pass}`,
+    `summary.warning=${safeResult.summary.warning}`,
+    `summary.error=${safeResult.summary.error}`
   ];
 
-  for (const check of result.checks) {
+  for (const check of safeResult.checks) {
     lines.push(`${check.status.toUpperCase()} ${check.id} ${check.title}`);
     for (const detail of check.details) {
       lines.push(`  - ${detail}`);
     }
-    if (check.nextAction !== undefined) {
-      lines.push(`  next=${check.nextAction}`);
+    if (check.next_action !== undefined) {
+      lines.push(`  next_action=${check.next_action}`);
     }
   }
 
@@ -392,7 +423,7 @@ async function checkDiscordConfig(
       "discord.config",
       "Discord notification config",
       ["Discord provider is not configured"],
-      "Review .kairon/config/notifications.json."
+      "Review .kairon/config/notifications.json, then run kairon doctor. Guide: docs/discord-approval-v0.md."
     );
   }
 
@@ -436,11 +467,23 @@ async function checkDiscordConfig(
   const gatewayReady = gatewayMissing.length === 0 && gatewayInvalid.length === 0;
   const liveReady =
     discord.enabled === true && missing.length === 0 && liveInvalid.length === 0;
+  const gatewayStatus =
+    discord.enabled !== true
+      ? "not_configured"
+      : gatewayReady
+        ? "ready"
+        : "setup_required";
+  const liveStatus =
+    discord.enabled !== true
+      ? "not_configured"
+      : liveReady
+        ? "ready"
+        : "setup_required";
   const details = [
     `enabled=${discord.enabled === true}`,
     `mode=${discord.mode ?? "unknown"}`,
-    `gateway_status=${gatewayReady ? "ready" : "setup_required"}`,
-    `live_status=${liveReady ? "ready" : "setup_required"}`,
+    `gateway_status=${gatewayStatus}`,
+    `live_status=${liveStatus}`,
     `live_missing_env=${missing.length === 0 ? "none" : missing.join(",")}`,
     `gateway_invalid_env=${gatewayInvalid.length === 0 ? "none" : gatewayInvalid.join(",")}`,
     `live_invalid_env=${liveInvalid.length === 0 ? "none" : liveInvalid.join(",")}`,
@@ -453,7 +496,7 @@ async function checkDiscordConfig(
       "discord.config",
       "Discord notification config",
       details,
-      `Set missing Discord gateway env vars: ${gatewayMissing.join(", ")}.`
+      `Set missing Discord gateway env vars: ${gatewayMissing.join(", ")}. Then run kairon doctor. Guide: docs/discord-approval-v0.md.`
     );
   }
 
@@ -462,7 +505,7 @@ async function checkDiscordConfig(
       "discord.config",
       "Discord notification config",
       details,
-      `Fix invalid Discord gateway env vars: ${gatewayInvalid.join(", ")}.`
+      `Fix invalid Discord gateway env vars: ${gatewayInvalid.join(", ")}. Then run kairon doctor. Guide: docs/discord-approval-v0.md.`
     );
   }
 
@@ -471,7 +514,7 @@ async function checkDiscordConfig(
       "discord.config",
       "Discord notification config",
       details,
-      `Set missing Discord live env vars: ${missing.join(", ")}.`
+      `Set missing Discord live env vars: ${missing.join(", ")}. Then run kairon doctor. Guide: docs/discord-approval-v0.md.`
     );
   }
 
@@ -480,7 +523,7 @@ async function checkDiscordConfig(
       "discord.config",
       "Discord notification config",
       details,
-      `Fix invalid Discord live env vars: ${liveInvalid.join(", ")}.`
+      `Fix invalid Discord live env vars: ${liveInvalid.join(", ")}. Then run kairon doctor. Guide: docs/discord-approval-v0.md.`
     );
   }
 
@@ -489,7 +532,7 @@ async function checkDiscordConfig(
       "discord.config",
       "Discord notification config",
       details,
-      "Discord env vars are present but provider is disabled."
+      "Enable the Discord provider or unset the unused env vars, then run kairon doctor. Guide: docs/discord-approval-v0.md."
     );
   }
 
@@ -562,9 +605,10 @@ async function checkGitHubBranchProtection(
         `remote=${remote.name}`,
         `branch=${branch}`,
         "repository=unresolved",
+        "verification_status=setup_required",
         "network_check=skipped"
       ],
-      "Use a supported GitHub remote URL format before relying on branch protection diagnostics."
+      "Use a supported GitHub remote URL format, then run kairon doctor. Guide: docs/github-branch-protection-sandbox-v0.md."
     );
   }
 
@@ -582,8 +626,8 @@ async function checkGitHubBranchProtection(
     return warning(
       "git.branch_protection",
       "GitHub branch protection",
-      [...details, "network_check=skipped"],
-      "Set GH_TOKEN or GITHUB_TOKEN, or configure KAIRON_GH_TOKEN_CREDENTIAL_TARGET / KAIRON_GITHUB_TOKEN_CREDENTIAL_TARGET, then verify branch protection with GitHub before unattended protected branch operations."
+      [...details, "verification_status=setup_required", "network_check=skipped"],
+      "Set GH_TOKEN or GITHUB_TOKEN, or configure KAIRON_GH_TOKEN_CREDENTIAL_TARGET / KAIRON_GITHUB_TOKEN_CREDENTIAL_TARGET, then run kairon doctor. Guide: docs/github-branch-protection-sandbox-v0.md."
     );
   }
 
@@ -631,6 +675,9 @@ async function checkGitHubBranchProtection(
         `Add expected required status checks: ${missingExpectedStatusChecks.join(", ")}.`
       );
     }
+    nextActions.push(
+      "Then run kairon doctor. Guide: docs/github-branch-protection-sandbox-v0.md."
+    );
 
     return warning(
       "git.branch_protection",
@@ -645,7 +692,7 @@ async function checkGitHubBranchProtection(
       "git.branch_protection",
       "GitHub branch protection",
       apiDetails,
-      "Check GH_TOKEN or GITHUB_TOKEN authentication, then retry GitHub branch protection verification."
+      "Check GH_TOKEN or GITHUB_TOKEN authentication, then run kairon doctor. Guide: docs/github-branch-protection-sandbox-v0.md."
     );
   }
 
@@ -654,7 +701,7 @@ async function checkGitHubBranchProtection(
       "git.branch_protection",
       "GitHub branch protection",
       apiDetails,
-      "GitHub returned 403. Check token repository access and Administration read permission; for private repositories on plans that do not expose branch protection enforcement, verify live access with a public sandbox repository."
+      "GitHub returned 403. Check token repository access and Administration read permission; for private repositories on plans that do not expose branch protection enforcement, run the public sandbox check in docs/github-branch-protection-sandbox-v0.md."
     );
   }
 
@@ -663,7 +710,7 @@ async function checkGitHubBranchProtection(
       "git.branch_protection",
       "GitHub branch protection",
       apiDetails,
-      "Enable branch protection for the default branch, verify repository/branch access, or run the public sandbox branch protection check."
+      "Enable branch protection for the default branch, verify repository/branch access, or run the public sandbox check in docs/github-branch-protection-sandbox-v0.md."
     );
   }
 
@@ -671,7 +718,7 @@ async function checkGitHubBranchProtection(
     "git.branch_protection",
     "GitHub branch protection",
     apiDetails,
-    "Retry GitHub branch protection verification after network or GitHub API access is healthy."
+    "Retry kairon doctor after network or GitHub API access is healthy. Guide: docs/github-branch-protection-sandbox-v0.md."
   );
 }
 
@@ -691,6 +738,11 @@ async function checkConfigBackups(projectRoot: string): Promise<DoctorCheck> {
 }
 
 async function checkBoardSecretScan(projectRoot: string): Promise<DoctorCheck> {
+  const notifications = await loadConfigFile<NotificationsConfig>(
+    projectRoot,
+    "notifications.json"
+  );
+  const boardEnabled = notifications.board?.enabled === true;
   const projectionPath = resolveInside(
     getKaironPaths(projectRoot).kaironDir,
     "board",
@@ -702,23 +754,39 @@ async function checkBoardSecretScan(projectRoot: string): Promise<DoctorCheck> {
     projection = await readJsonFile(projectionPath);
   } catch (readError) {
     if ((readError as NodeJS.ErrnoException).code === "ENOENT" || String(readError).includes("ENOENT")) {
-      return pass("board.secret_scan", "Board secret scan", [
+      const details = [
+        `enabled=${boardEnabled}`,
         "projection=missing",
+        `status=${boardEnabled ? "setup_required" : "not_configured"}`,
         "scan_status=not_run"
-      ]);
+      ];
+      return boardEnabled
+        ? warning(
+            "board.secret_scan",
+            "Board secret scan",
+            details,
+            "Run kairon board export, then run kairon doctor. Guide: docs/board-public-safety-v0.md."
+          )
+        : pass("board.secret_scan", "Board secret scan", details);
     }
 
     return warning(
       "board.secret_scan",
       "Board secret scan",
-      ["projection=unreadable", "scan_status=warning"],
-      "Run kairon board export to regenerate a valid sanitized projection."
+      [
+        `enabled=${boardEnabled}`,
+        "projection=unreadable",
+        "status=setup_required",
+        "scan_status=warning"
+      ],
+      "Run kairon board export to regenerate a valid sanitized projection, then run kairon doctor. Guide: docs/board-public-safety-v0.md."
     );
   }
 
   const inspection = inspectBoardProjectionSecrets(projection);
   const embedded = readBoardSecretScanSummary(projection);
   const details = [
+    `enabled=${boardEnabled}`,
     "projection=.kairon/board/projection.json",
     `scan_status=${inspection.status}`,
     `exposed_findings=${inspection.exposed_findings}`,
@@ -739,8 +807,8 @@ async function checkBoardSecretScan(projectRoot: string): Promise<DoctorCheck> {
     return warning(
       "board.secret_scan",
       "Board secret scan",
-      details,
-      "Run kairon board export, then review the secret scan summary before serving Board."
+      [...details, "status=setup_required"],
+      "Run kairon board export, then review the secret scan summary and run kairon doctor before serving Board. Guide: docs/board-public-safety-v0.md."
     );
   }
 
@@ -769,6 +837,139 @@ async function checkRuntimeRecovery(projectRoot: string): Promise<DoctorCheck> {
     details,
     "Run kairon recovery run and review any generated approval requests."
   );
+}
+
+async function checkDaemonHealth(projectRoot: string): Promise<DoctorCheck> {
+  try {
+    const status = await getRuntimeStatus(projectRoot);
+    const daemon = status.daemonHealth;
+
+    if (daemon === undefined) {
+      return pass("daemon.health", "Daemon health", [
+        "status=not_observed",
+        "daemon_log=missing"
+      ]);
+    }
+
+    const details = [
+      `status=${daemon.status}`,
+      `daemon_log=${daemon.latest_log ?? "missing"}`,
+      `fatal_errors=${daemon.fatal_errors ?? 0}`,
+      `stale_lock_suspected=${daemon.stale_lock_suspected === true}`,
+      `last_error_code=${daemon.last_error?.code ?? "none"}`
+    ];
+
+    if (daemon.status === "running" || daemon.status === "stopped") {
+      return pass("daemon.health", "Daemon health", details);
+    }
+
+    if (daemon.status === "stale_lock") {
+      return warning(
+        "daemon.health",
+        "Daemon health",
+        [...details, "remediation_status=setup_required"],
+        "Run kairon recovery run, then kairon daemon report and kairon doctor. Guide: docs/windows-daemon-ops-v0.md."
+      );
+    }
+
+    return warning(
+      "daemon.health",
+      "Daemon health",
+      [...details, "remediation_status=setup_required"],
+      "Run kairon daemon report, review the last error, then run kairon recovery run and kairon doctor. Guide: docs/windows-daemon-ops-v0.md."
+    );
+  } catch {
+    return warning(
+      "daemon.health",
+      "Daemon health",
+      ["status=unavailable", "remediation_status=setup_required"],
+      "Run kairon status and kairon recovery run, then retry kairon doctor. Guide: docs/windows-daemon-ops-v0.md."
+    );
+  }
+}
+
+async function checkRagStatus(projectRoot: string): Promise<DoctorCheck> {
+  const config = await loadConfigFile<RagConfig>(projectRoot, "rag.json");
+  const baseDir = config.storage?.base_dir ?? ".kairon/rag";
+  const relativeIndexPath = `${baseDir.replaceAll("\\", "/").replace(/\/$/, "")}/index.json`;
+  const indexPath = resolveInside(projectRoot, baseDir, "index.json");
+  const enabled = config.enabled === true;
+
+  if (!enabled) {
+    return pass("rag.status", "RAG index", [
+      "enabled=false",
+      "status=not_configured",
+      `index=${relativeIndexPath}`
+    ]);
+  }
+
+  try {
+    const index = await readJsonFile<RagIndexSummary>(indexPath);
+    if (
+      !isFiniteNumber(index.source_count) ||
+      !isFiniteNumber(index.chunk_count)
+    ) {
+      return warning(
+        "rag.status",
+        "RAG index",
+        [
+          "enabled=true",
+          "status=setup_required",
+          `index=${relativeIndexPath}`,
+          "index_validation=invalid"
+        ],
+        "Run kairon rag refresh to rebuild the index, then run kairon doctor. Guide: docs/rag-memory-v0.md."
+      );
+    }
+
+    return pass("rag.status", "RAG index", [
+      "enabled=true",
+      "status=ready",
+      `index=${relativeIndexPath}`,
+      `source_count=${index.source_count}`,
+      `chunk_count=${index.chunk_count}`,
+      `updated_at=${typeof index.updated_at === "string" ? index.updated_at : "unknown"}`
+    ]);
+  } catch (readError) {
+    const missing =
+      (readError as NodeJS.ErrnoException).code === "ENOENT" ||
+      String(readError).includes("ENOENT");
+    return warning(
+      "rag.status",
+      "RAG index",
+      [
+        "enabled=true",
+        "status=setup_required",
+        `index=${relativeIndexPath}`,
+        `index_validation=${missing ? "missing" : "unreadable"}`
+      ],
+      "Run kairon rag refresh, then run kairon doctor. Guide: docs/rag-memory-v0.md."
+    );
+  }
+}
+
+function sanitizeDoctorCheck(check: DoctorCheck): DoctorCheck {
+  return {
+    ...check,
+    details: check.details.map(sanitizeDoctorText),
+    next_action:
+      check.next_action === undefined
+        ? undefined
+        : sanitizeDoctorText(check.next_action)
+  };
+}
+
+function sanitizeDoctorText(value: string): string {
+  return value
+    .replace(/\bBearer\s+[A-Za-z0-9._~+\/-]+/giu, "Bearer [redacted]")
+    .replace(
+      /\b(?:github_pat_[A-Za-z0-9_]{16,}|gh[pousr]_[A-Za-z0-9_]{16,}|sk-[A-Za-z0-9_-]{16,})\b/gu,
+      "[redacted]"
+    )
+    .replace(
+      /\b(api[_-]?key|token|secret|password|authorization)\b\s*[:=]\s*[^\s,;]+/giu,
+      "$1=[redacted]"
+    );
 }
 
 async function readGitHubRemote(
@@ -1016,7 +1217,12 @@ function formatGitHubApiDetails(
 ): string[] {
   if (result.kind === "protected") {
     const actualContexts = result.requiredStatusCheckContexts ?? [];
+    const verificationReady =
+      result.requiredPullRequestReviews &&
+      result.requiredStatusChecks &&
+      missingExpectedStatusChecks.length === 0;
     const details = [
+      `verification_status=${verificationReady ? "ready" : "setup_required"}`,
       "api_status=ok",
       "branch_protection=enabled",
       `required_pull_request_reviews=${result.requiredPullRequestReviews ? "present" : "missing"}`,
@@ -1037,24 +1243,37 @@ function formatGitHubApiDetails(
 
   if (result.kind === "not_found") {
     return [
+      "verification_status=setup_required",
       "api_status=not_found_or_unprotected",
       `http_status=${result.httpStatus}`
     ];
   }
 
   if (result.kind === "auth_error") {
-    return ["api_status=auth_error", `http_status=${result.httpStatus}`];
+    return [
+      "verification_status=setup_required",
+      "api_status=auth_error",
+      `http_status=${result.httpStatus}`
+    ];
   }
 
   if (result.kind === "plan_or_permission_error") {
-    return ["api_status=plan_or_permission_error", `http_status=${result.httpStatus}`];
+    return [
+      "verification_status=setup_required",
+      "api_status=plan_or_permission_error",
+      `http_status=${result.httpStatus}`
+    ];
   }
 
   if (result.kind === "api_error") {
-    return ["api_status=api_error", `http_status=${result.httpStatus}`];
+    return [
+      "verification_status=setup_required",
+      "api_status=api_error",
+      `http_status=${result.httpStatus}`
+    ];
   }
 
-  return ["api_status=network_error"];
+  return ["verification_status=setup_required", "api_status=network_error"];
 }
 
 async function fetchGitHubBranchProtection(
@@ -1249,7 +1468,7 @@ function warning(
   details: string[],
   nextAction: string
 ): DoctorCheck {
-  return { id, title, status: "warning", details, nextAction };
+  return { id, title, status: "warning", details, next_action: nextAction };
 }
 
 function error(
@@ -1258,5 +1477,5 @@ function error(
   details: string[],
   nextAction: string
 ): DoctorCheck {
-  return { id, title, status: "error", details, nextAction };
+  return { id, title, status: "error", details, next_action: nextAction };
 }

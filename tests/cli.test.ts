@@ -117,6 +117,17 @@ describe("createProgram", () => {
     expect(recovery?.description()).toContain("Inspect and resolve");
   });
 
+  it("registers doctor text and JSON output formats", () => {
+    const doctor = createProgram().commands.find(
+      (command) => command.name() === "doctor"
+    );
+
+    expect(doctor?.options.map((option) => option.long)).toContain("--format");
+    expect(doctor?.options.find((option) => option.long === "--format")?.defaultValue).toBe(
+      "text"
+    );
+  });
+
   it("registers daemon evidence report and Windows task commands", () => {
     const daemon = createProgram().commands.find(
       (command) => command.name() === "daemon"

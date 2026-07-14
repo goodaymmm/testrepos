@@ -129,8 +129,9 @@ export function createProgram(): Command {
   program
     .command("doctor")
     .description("Check whether Kairon can run in this project.")
-    .action(async () => {
-      console.log(await runDoctorCommand(process.cwd()));
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: { format?: string }) => {
+      console.log(await runDoctorCommand(process.cwd(), options));
     });
 
   const agent = program
