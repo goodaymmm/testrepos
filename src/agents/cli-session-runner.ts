@@ -26,6 +26,7 @@ import {
   type SessionMetadata
 } from "./session-host.js";
 import type { AgentId } from "./types.js";
+import { extractOutboxFromStdout } from "./stdout-outbox.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import {
@@ -270,6 +271,7 @@ export class CliSessionRunner {
       outboxPath
     };
     const prompt = buildJobPrompt({
+      agent: request.agent,
       runId: request.runId,
       taskId: request.taskId,
       persona: request.persona,
@@ -344,7 +346,11 @@ export class CliSessionRunner {
             contextPath: bundle.context_path,
             session
           });
-          const classification = classifyCliRunResult(request.agent, result);
+          const classification = classifyAgentJobResult(
+            request.agent,
+            result,
+            request.runId
+          );
           if (shouldWriteClassifiedOutbox(classification.status)) {
             await this.writeClassifiedOutbox({
               request,
@@ -431,7 +437,11 @@ export class CliSessionRunner {
         timeoutMs: request.timeoutMs
       });
       const result = await this.commandRunner(invocation);
-      const classification = classifyCliRunResult(request.agent, result);
+      const classification = classifyAgentJobResult(
+        request.agent,
+        result,
+        request.runId
+      );
       if (shouldWriteClassifiedOutbox(classification.status)) {
         await this.writeClassifiedOutbox({
           request,
@@ -833,6 +843,30 @@ function shouldWriteClassifiedOutbox(status: CliSessionRunStatus): boolean {
   return status !== "completed" && status !== "failed";
 }
 
+function classifyAgentJobResult(
+  agent: AgentId,
+  result: CommandRunResult,
+  runId: string
+): CliRunClassification {
+  const stdoutOutbox =
+    agent === "gemini" ? extractOutboxFromStdout(result.stdout) : undefined;
+  if (
+    stdoutOutbox !== null &&
+    typeof stdoutOutbox === "object" &&
+    !Array.isArray(stdoutOutbox) &&
+    (stdoutOutbox as Record<string, unknown>).run_id === runId &&
+    runStatusFromOutbox(stdoutOutbox) === "completed"
+  ) {
+    return {
+      status: "completed",
+      reason: "stdout_outbox_completed",
+      message: "Agent CLI returned a valid completed stdout outbox."
+    };
+  }
+
+  return classifyCliRunResult(agent, result);
+}
+
 function generatedFailureClassification(
   result: CommandRunResult,
   classification: CliRunClassification
@@ -907,63 +941,6 @@ async function readContextContent(
   contextPath: string
 ): Promise<string> {
   return readFile(resolveInside(projectRoot, contextPath), "utf8");
-}
-
-function extractOutboxFromStdout(stdout: string): unknown | undefined {
-  for (const candidate of stdoutCandidates(stdout)) {
-    const match = /KAIRON_OUTBOX_JSON_START\s*([\s\S]*?)\s*KAIRON_OUTBOX_JSON_END/.exec(
-      candidate
-    );
-    if (match?.[1] === undefined) {
-      continue;
-    }
-
-    try {
-      return JSON.parse(match[1]) as unknown;
-    } catch {
-      continue;
-    }
-  }
-
-  return undefined;
-}
-
-function stdoutCandidates(stdout: string): string[] {
-  const candidates = [stdout];
-
-  for (const line of stdout.split(/\r?\n/)) {
-    if (!line.trim().startsWith("{")) {
-      continue;
-    }
-
-    try {
-      collectStrings(JSON.parse(line) as unknown, candidates);
-    } catch {
-      continue;
-    }
-  }
-
-  return candidates;
-}
-
-function collectStrings(value: unknown, output: string[]): void {
-  if (typeof value === "string") {
-    output.push(value);
-    return;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      collectStrings(item, output);
-    }
-    return;
-  }
-
-  if (value !== null && typeof value === "object") {
-    for (const item of Object.values(value)) {
-      collectStrings(item, output);
-    }
-  }
 }
 
 function withOutboxDefaults(

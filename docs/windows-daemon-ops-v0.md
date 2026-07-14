@@ -84,6 +84,8 @@ kairon daemon task install `
   --interval-ms 60000
 ```
 
+`reason=task_scheduler_permission_denied`になった場合は、Windows PowerShellを「管理者として実行」で開き直して同じコマンドを再実行します。Kaironはこの権限不足をstack traceではなく`status=setup_required`として返します。
+
 状態確認、再起動、登録解除もCLIから実行できます。Task未登録時の`status`は`task.exists=false`を返し、コマンド自体は成功扱いです。
 
 ```powershell

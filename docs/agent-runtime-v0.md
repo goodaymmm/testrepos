@@ -122,14 +122,15 @@ T17では `node-pty` backed runner を追加し、CLI / runtime queue / review l
 interactive runner が未設定、またはPTY起動に失敗した場合、Kairon は `setup_required` として扱い、automated task dispatch では non-interactive agent へfallbackする。
 
 ```text
-agy --prompt-interactive "<prompt>"  # PTY adapter path
+agy --add-dir "<run-outbox-directory>" --prompt-interactive "<prompt>"  # PTY adapter path
 ```
 
 Antigravity は QA、research、large context review を優先する。
 加えて、Google ecosystem と multimodal review で優先的に起用する。
 AntigravityCLI の背後 service に third-party client で直接アクセスしない。
-`agy` に native JSON output flag がない場合でも、Kairon は Agent に `outbox.json` を書かせる file-based contract を主経路にする。
-PTY runner は `outbox.json` が有効JSONとして生成されたことを検出した時点で graceful exit を要求し、timeoutまで生成されない場合は run failed として記録する。
+`agy` に native JSON output flag がないため、Kairon はrun固有markerで囲んだstdout outboxを主経路とし、file outboxも受理する。
+PTY runnerはrun idが一致する有効なfile / stdout outboxを検出した時点でgraceful exitを要求し、stdout outboxはTUIがechoしたprompt内の分類用語より優先する。
+timeoutまで有効なoutboxが生成されない場合だけrun failedとして記録する。
 
 ```json
 {

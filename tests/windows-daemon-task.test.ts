@@ -48,6 +48,8 @@ describe("kairon-daemon-task.ps1", () => {
     expect(guide).toContain("kairon daemon task install");
     expect(guide).toContain("kairon daemon task uninstall");
     expect(guide).toContain("kairon daemon task restart");
+    expect(guide).toContain("task_scheduler_permission_denied");
+    expect(guide).toContain("管理者として実行");
   });
 
   runIfPowerShell("parses as a PowerShell script", async () => {

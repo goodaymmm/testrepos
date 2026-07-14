@@ -471,6 +471,36 @@ describe("CliSessionRunner", () => {
     });
   });
 
+  it("does not treat an echoed Codex fallback contract as a completed run", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) =>
+        commandResult(invocation, {
+          exitCode: 1,
+          stdout: invocation.stdin ?? "",
+          stderr: "Approval required: allow this command?"
+        })
+    });
+
+    const record = await runner.runAgentJob({
+      agent: "codex",
+      date: "2026-05-25",
+      runId: "RUN-0010-ECHO",
+      taskId: "TASK-0010-ECHO",
+      persona: "implementer"
+    });
+
+    expect(record).toMatchObject({
+      status: "permission_required",
+      classification: {
+        status: "permission_required",
+        reason: "cli_permission_required"
+      }
+    });
+  });
+
   it("keeps login-required setup pauses in same-day session state", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
@@ -738,6 +768,60 @@ describe("CliSessionRunner", () => {
       readJsonFile(path.join(root, ".kairon", "runtime", "terminals", "TERM-gemini-20260525.json"))
     ).resolves.toMatchObject({
       status: "ready"
+    });
+  });
+
+  it("prioritizes a completed Antigravity stdout outbox over echoed permission wording", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      interactiveSessionRunner: async (job) =>
+        commandResult(
+          {
+            command: job.command,
+            args: ["--prompt-interactive", job.prompt],
+            cwd: job.cwd,
+            timeoutMs: job.timeoutMs
+          },
+          {
+            stdout: [
+              job.prompt,
+              "KAIRON_OUTBOX_JSON_START",
+              JSON.stringify({
+                schema_version: "0.1",
+                run_id: job.runId,
+                task_id: job.taskId,
+                persona: job.persona,
+                status: "completed",
+                events: []
+              }),
+              "KAIRON_OUTBOX_JSON_END"
+            ].join("\n")
+          }
+        )
+    });
+
+    const record = await runner.runAgentJob({
+      agent: "gemini",
+      date: "2026-05-25",
+      runId: "RUN-0019",
+      taskId: "TASK-0019",
+      persona: "smoke"
+    });
+
+    expect(record).toMatchObject({
+      status: "completed",
+      classification: {
+        status: "completed",
+        reason: "stdout_outbox_completed"
+      }
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runs", "RUN-0019", "outbox.json"))
+    ).resolves.toMatchObject({
+      run_id: "RUN-0019",
+      status: "completed"
     });
   });
 

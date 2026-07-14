@@ -7,6 +7,7 @@ export type BootstrapPromptInput = {
 };
 
 export type JobPromptInput = {
+  agent?: AgentId;
   runId: string;
   taskId: string;
   persona: string;
@@ -41,6 +42,7 @@ export function buildDailyBootstrapPrompt(input: BootstrapPromptInput): string {
 }
 
 export function buildJobPrompt(input: JobPromptInput): string {
+  const fallbackOutbox = JSON.stringify(buildFallbackOutbox(input), null, 2);
   const capabilityLines =
     input.capabilities === undefined || input.capabilities.length === 0
       ? []
@@ -48,6 +50,31 @@ export function buildJobPrompt(input: JobPromptInput): string {
           "",
           "Capability hints:",
           ...input.capabilities.map((capability) => `- ${capability}`)
+        ];
+  const outboxDeliveryLines =
+    input.agent === "gemini"
+      ? [
+          "- Do not call file creation or editing tools for the expected outbox; interactive permission prompts can block the PTY runner.",
+          "- Print the complete outbox JSON between the stdout fallback markers below in your final response."
+        ]
+      : [
+          "- Prefer writing the required outbox JSON file when file tools are available.",
+          "- If file writing, tool execution, or approval is blocked, print the complete outbox JSON between the stdout fallback markers below."
+        ];
+  const fallbackFormatLines =
+    input.agent === "gemini"
+      ? [
+          "Stdout fallback contract:",
+          "- Begin with this marker on its own line: KAIRON_OUTBOX_JSON_START",
+          "- Then print exactly this JSON object without Markdown fencing:",
+          fallbackOutbox,
+          "- End with this marker on its own line: KAIRON_OUTBOX_JSON_END"
+        ]
+      : [
+          "Stdout fallback format:",
+          "KAIRON_OUTBOX_JSON_START",
+          fallbackOutbox,
+          "KAIRON_OUTBOX_JSON_END"
         ];
 
   return [
@@ -60,14 +87,10 @@ export function buildJobPrompt(input: JobPromptInput): string {
     "Instructions:",
     "- Use the current project session context.",
     "- The job context is embedded in this prompt; do not call file read tools just to read the context path.",
-    "- Prefer writing the required outbox JSON file when file tools are available.",
-    "- If file writing, tool execution, or approval is blocked, print the complete outbox JSON between the stdout fallback markers below.",
+    ...outboxDeliveryLines,
     "- Do not modify canonical state directly.",
     "",
-    "Stdout fallback format:",
-    "KAIRON_OUTBOX_JSON_START",
-    JSON.stringify(buildFallbackOutbox(input), null, 2),
-    "KAIRON_OUTBOX_JSON_END",
+    ...fallbackFormatLines,
     "",
     "Context path:",
     input.contextPath,
