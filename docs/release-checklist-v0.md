@@ -88,9 +88,16 @@ npm publishを前提にしたversion bumpではなく、運用上のrelease tag 
 Release helperを使う場合は、先にdry-runを確認してからwriteします。
 
 ```powershell
+kairon release validate
 kairon release bump --version 0.2.0
 kairon release bump --version 0.2.0 --write
 ```
+
+`release validate` は次を一括確認し、不整合時はexit code 1を返します。
+
+- `package.json.version` と `src/index.ts` の `KAIRON_VERSION` が`x.y.z`形式で一致する。
+- checklistにrelease readiness、evidence、versioningのmarkerがある。
+- release notesに`Unreleased` heading / markerと現在versionのheadingがある。
 
 `--write` はtracked worktreeがcleanな場合だけ実行できます。
 実行時は `.kairon/release/backups/<timestamp>/` に変更前の対象fileを保存します。
