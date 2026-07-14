@@ -1,6 +1,7 @@
 import { loadConfigFile } from "../core/config/load-config.js";
 import { getAgentAdapter } from "./adapters/index.js";
 import { agentDisplayName } from "./display.js";
+import type { AgentSessionHealthStatus } from "./session-health.js";
 import type { AgentId, RunnerMode, SessionScope } from "./types.js";
 import { agentIds, isAgentId } from "./types.js";
 
@@ -17,6 +18,8 @@ export type AgentSessionAvailability = {
     | "rate_limited"
     | "usage_limited";
   mode?: RunnerMode;
+  healthStatus?: AgentSessionHealthStatus;
+  nextRetryAt?: string | null;
 };
 
 export type DispatchRequest = {
@@ -30,6 +33,8 @@ export type DispatchRequest = {
   availableSessions?: AgentSessionAvailability[];
   excludedAgents?: AgentId[];
   allowInteractiveAgents?: boolean;
+  avoidUnhealthyAgents?: boolean;
+  now?: Date;
   policy?: {
     allowedAgents?: AgentId[];
     excludedAgents?: AgentId[];
@@ -191,7 +196,12 @@ export class AgentDispatcher {
           return false;
         }
 
-        return hasAvailableSession(agent, request.availableSessions);
+        return hasAvailableSession(
+          agent,
+          request.availableSessions,
+          request.avoidUnhealthyAgents !== false,
+          request.now ?? new Date()
+        );
       })
     );
 
@@ -218,14 +228,33 @@ export async function decideAgent(
 
 function hasAvailableSession(
   agent: AgentId,
-  sessions: AgentSessionAvailability[] | undefined
+  sessions: AgentSessionAvailability[] | undefined,
+  avoidUnhealthyAgents: boolean,
+  now: Date
 ): boolean {
   if (sessions === undefined) {
     return true;
   }
 
   const session = sessions.find((candidate) => candidate.agent === agent);
-  return session?.status === "ready" || session?.status === "idle";
+  if (session?.status !== "ready" && session?.status !== "idle") {
+    return false;
+  }
+
+  if (
+    !avoidUnhealthyAgents ||
+    session.healthStatus === undefined ||
+    session.healthStatus === "healthy"
+  ) {
+    return true;
+  }
+
+  if (session.nextRetryAt === undefined || session.nextRetryAt === null) {
+    return false;
+  }
+
+  const nextRetryAt = Date.parse(session.nextRetryAt);
+  return Number.isFinite(nextRetryAt) && nextRetryAt <= now.getTime();
 }
 
 function uniqueAgentIds(values: readonly string[]): AgentId[] {
@@ -293,6 +322,9 @@ function buildReason(
 
   if (session !== undefined) {
     parts.push(`session ${session.status}`);
+    if (session.healthStatus !== undefined) {
+      parts.push(`health ${session.healthStatus}`);
+    }
   }
 
   return parts.join("; ");

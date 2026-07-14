@@ -98,6 +98,49 @@ describe("AgentDispatcher", () => {
     });
   });
 
+  it("avoids unhealthy ready sessions until retry backoff expires", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const dispatcher = new AgentDispatcher(root);
+    const availableSessions = [
+      {
+        agent: "codex" as const,
+        status: "ready" as const,
+        healthStatus: "blocked" as const,
+        nextRetryAt: "2026-05-25T02:00:00.000Z"
+      },
+      { agent: "claude" as const, status: "ready" as const }
+    ];
+
+    await expect(
+      dispatcher.decide({
+        persona: "implementer",
+        availableSessions,
+        now: new Date("2026-05-25T01:00:00.000Z")
+      })
+    ).resolves.toMatchObject({ agent: "claude" });
+
+    await expect(
+      dispatcher.decide({
+        persona: "implementer",
+        availableSessions,
+        avoidUnhealthyAgents: false,
+        now: new Date("2026-05-25T01:00:00.000Z")
+      })
+    ).resolves.toMatchObject({ agent: "codex" });
+
+    await expect(
+      dispatcher.decide({
+        persona: "implementer",
+        availableSessions,
+        now: new Date("2026-05-25T02:00:00.000Z")
+      })
+    ).resolves.toMatchObject({
+      agent: "codex",
+      reason: expect.stringContaining("health blocked")
+    });
+  });
+
   it("honors policy, capability, and non-interactive runner constraints", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

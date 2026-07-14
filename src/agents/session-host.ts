@@ -6,6 +6,15 @@ import { loadConfigFile } from "../core/config/load-config.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import { getAgentAdapter } from "./adapters/index.js";
+import {
+  createAgentSessionHealth,
+  reconcileAgentCommandHealth,
+  recordAgentSessionHealth,
+  summarizeAgentSessionHealth,
+  type AgentSessionHealthArtifact,
+  type AgentSessionHealthSummary,
+  type SessionHealthObservation
+} from "./session-health.js";
 import { agentIds, type AgentId, type RunnerMode } from "./types.js";
 
 export type SessionStatus = "ready" | "setup_required" | "closed";
@@ -133,6 +142,8 @@ export type SessionMetadata = {
   resume_hint?: SessionResumeHint;
   context_manifest: string;
   session_context_manifest?: string;
+  health?: AgentSessionHealthSummary;
+  health_path?: string;
   scratch: string;
   created_at: string;
   updated_at: string;
@@ -159,6 +170,8 @@ export type SameDaySessionSnapshot = {
   session_path: string;
   scratch: string;
   session_context_manifest?: string;
+  health?: AgentSessionHealthSummary;
+  health_path?: string;
 };
 
 export type SameDaySessionSummary = {
@@ -230,8 +243,9 @@ export class FileSessionHost {
     });
     const created = await this.createSessionMetadata(agent, date);
     const current = await this.attachSession(agent, date);
-    const metadata =
+    const baseMetadata =
       current === null ? created : mergeSessionMetadata(current, created, this.now());
+    const metadata = await this.reconcileSessionHealth(baseMetadata);
     await this.ensureSessionContextManifest(metadata);
     await writeJsonFileAtomic(this.sessionPath(agent, date), metadata);
     return metadata;
@@ -319,7 +333,7 @@ export class FileSessionHost {
     }
 
     const runId = typeof run === "string" ? run : run.run_id;
-    const updated = await this.writeSession(agent, date, {
+    let next: SessionMetadata = {
       ...current,
       active_run_id:
         runId !== undefined && current.active_run_id === runId
@@ -343,7 +357,13 @@ export class FileSessionHost {
       last_status: typeof run === "string" ? current.last_status : run.status,
       pause: typeof run === "string" ? current.pause : pauseForRun(run, this.now()),
       updated_at: this.now().toISOString()
-    });
+    };
+
+    if (typeof run !== "string") {
+      next = await this.withRunHealth(next, run);
+    }
+
+    const updated = await this.writeSession(agent, date, next);
 
     if (typeof run !== "string") {
       await this.upsertSessionRun(agent, date, run);
@@ -362,7 +382,7 @@ export class FileSessionHost {
       return null;
     }
 
-    const updated = await this.writeSession(agent, date, {
+    let next: SessionMetadata = {
       ...current,
       last_run_id: run.run_id ?? current.last_run_id,
       last_task_id: run.task_id ?? current.last_task_id ?? null,
@@ -375,7 +395,9 @@ export class FileSessionHost {
       last_status: run.status,
       pause: pauseForRun(run, this.now()),
       updated_at: this.now().toISOString()
-    });
+    };
+    next = await this.withRunHealth(next, run);
+    const updated = await this.writeSession(agent, date, next);
     await this.upsertSessionRun(agent, date, run);
     return updated;
   }
@@ -538,6 +560,80 @@ export class FileSessionHost {
     return readJsonFile<SessionContextManifest>(manifestPath);
   }
 
+  private async reconcileSessionHealth(
+    metadata: SessionMetadata
+  ): Promise<SessionMetadata> {
+    const now = this.now();
+    const existing = await this.readSessionHealth(metadata.agent, metadata.date);
+    const health = existing === null
+      ? createAgentSessionHealth({
+          sessionId: metadata.session_id,
+          date: metadata.date,
+          agent: metadata.agent,
+          commandAvailable: metadata.command_available,
+          now
+        })
+      : reconcileAgentCommandHealth(existing, metadata.command_available, now);
+    await writeJsonFileAtomic(this.healthPath(metadata.agent, metadata.date), health);
+    return this.withHealthSummary(metadata, health);
+  }
+
+  private async withRunHealth(
+    metadata: SessionMetadata,
+    run: SessionRunUpdate
+  ): Promise<SessionMetadata> {
+    const observation = healthObservationForRun(run);
+    if (observation === null) {
+      return metadata;
+    }
+
+    const now = this.now();
+    const current =
+      (await this.readSessionHealth(metadata.agent, metadata.date)) ??
+      createAgentSessionHealth({
+        sessionId: metadata.session_id,
+        date: metadata.date,
+        agent: metadata.agent,
+        commandAvailable: metadata.command_available,
+        now
+      });
+    const health = recordAgentSessionHealth(current, observation, now);
+    await writeJsonFileAtomic(this.healthPath(metadata.agent, metadata.date), health);
+    return this.withHealthSummary(metadata, health);
+  }
+
+  private withHealthSummary(
+    metadata: SessionMetadata,
+    health: AgentSessionHealthArtifact
+  ): SessionMetadata {
+    return {
+      ...metadata,
+      health: summarizeAgentSessionHealth(health),
+      health_path: toArtifactPath(
+        this.projectRoot,
+        this.healthPath(metadata.agent, metadata.date)
+      )
+    };
+  }
+
+  private async readSessionHealth(
+    agent: AgentId,
+    date: string
+  ): Promise<AgentSessionHealthArtifact | null> {
+    const healthPath = this.healthPath(agent, date);
+    try {
+      await access(healthPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return null;
+      }
+
+      throw error;
+    }
+
+    return readJsonFile<AgentSessionHealthArtifact>(healthPath);
+  }
+
   private async loadConfiguredAgent(agent: AgentId): Promise<{
     command?: string;
     adapter?: string;
@@ -569,6 +665,10 @@ export class FileSessionHost {
       this.sessionDir(agent, date),
       "session_context_manifest.json"
     );
+  }
+
+  private healthPath(agent: AgentId, date: string): string {
+    return resolveInside(this.sessionDir(agent, date), "health.json");
   }
 
   private async updateSessionScratchCheckpoint(
@@ -681,6 +781,8 @@ export function sessionSnapshot(
     last_runner_metadata_path: metadata.last_runner_metadata_path,
     pause: metadata.pause,
     resume_hint: metadata.resume_hint,
+    health: metadata.health,
+    health_path: metadata.health_path,
     session_path: toArtifactPath(
       projectRoot,
       resolveInside(
@@ -828,6 +930,25 @@ function createEmptySessionContextManifest(
     latest_context_path: null,
     runs: [],
     updated_at: now.toISOString()
+  };
+}
+
+function healthObservationForRun(
+  run: SessionRunUpdate
+): SessionHealthObservation | null {
+  if (run.status === "running") {
+    return null;
+  }
+
+  return {
+    status: run.status,
+    reason: run.failure_reason ?? `session_run_${run.status}`,
+    run_id: run.run_id,
+    task_id: run.task_id,
+    setup_action: run.setup_action,
+    resume_hint: run.resume_hint,
+    retry_after: run.retry_after,
+    matched_pattern: run.matched_pattern
   };
 }
 

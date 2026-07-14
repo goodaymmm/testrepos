@@ -175,6 +175,7 @@ create run artifact under .kairon/runs/RUN-xxxx/
 invoke official CLI with a minimal Kairon job prompt
 require .kairon/runs/RUN-xxxx/outbox.json
 write stdout.log / stderr.log / runner.json
+update .kairon/sessions/YYYY-MM-DD/{agent}/health.json
 return setup_required without invoking CLI when command is missing
 ```
 
@@ -190,9 +191,26 @@ command=codex
 command_available=true
 runner=.kairon/runs/RUN-0001/runner.json
 outbox=.kairon/runs/RUN-0001/outbox.json
+health=.kairon/sessions/2026-05-26/codex/health.json
 ```
 
 実CLIを起動するため、unit testではcommand runner mockで検証し、実Agent smokeは手動運用テストとして扱う。
+
+## kairon agent session
+
+当日のAgent session状態とhealthを確認し、必要に応じて証跡を残したままresetする。
+
+```text
+kairon agent session list [--date YYYY-MM-DD]
+kairon agent session show codex|claude|gemini [--date YYYY-MM-DD]
+kairon agent session reset codex|claude|gemini --date YYYY-MM-DD
+```
+
+`session show` は `health_status`、連続失敗回数、retry backoff秒数、`health_next_retry_at`、現在再試行可能かを表示する。履歴は `.kairon/sessions/YYYY-MM-DD/{agent}/health.json` に最大25件保存し、`setup_required`、permission、rate/usage limit、timeout、no outputなどの理由をrun単位で追跡する。成功時は連続失敗とbackoffをresetするが、履歴とsetup_required累計は保持する。
+
+dispatcherは既定でbackoff中の `degraded` / `blocked` sessionを避ける。内部dispatch requestで `avoidUnhealthyAgents=false` を明示した場合、または `health_next_retry_at` を経過した場合は候補へ戻す。
+
+`session reset` はAgent directory全体を `.archived-*` へrenameするため、`session.json`、`health.json`、context manifest、scratchを削除せず保存する。
 
 ## kairon approval list
 
