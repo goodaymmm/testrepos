@@ -17,6 +17,19 @@ describe("initializeProject", () => {
 
     const configs = await loadAllConfigs(root);
     expect(configs["project.json"]).toMatchObject({ schema_version: "0.1" });
+    expect(configs["policies.json"]).toMatchObject({
+      cleanup: {
+        delete_directly: false,
+        proposal_required: true,
+        retention: {
+          enabled: true,
+          categories: {
+            runs: expect.objectContaining({ min_keep: 10 }),
+            daemon_logs: expect.objectContaining({ min_keep: 7 })
+          }
+        }
+      }
+    });
     expect(await validateAllConfigs(root)).toMatchObject({ ok: true, errors: [] });
   });
 

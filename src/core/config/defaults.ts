@@ -1,5 +1,6 @@
 import path from "node:path";
 import { normalizeProjectRoot, toPosixPath } from "../fs/paths.js";
+import { mergeCleanupRetentionPolicy } from "./cleanup-retention.js";
 
 export type ConfigMap = Record<string, unknown>;
 
@@ -139,7 +140,8 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
       },
       cleanup: {
         delete_directly: false,
-        proposal_required: true
+        proposal_required: true,
+        retention: mergeCleanupRetentionPolicy(undefined)
       },
       review: {
         required_for_code: true,

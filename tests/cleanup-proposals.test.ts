@@ -46,7 +46,6 @@ describe("createCleanupProposals", () => {
     expect(proposal.direct_delete).toBe(false);
     expect(proposal.candidates.map((candidate) => candidate.path)).toEqual([
       ".kairon/config/project.json.bak-20260601010101",
-      ".kairon/runtime/discord/approval-notifications.jsonl",
       ".kairon/worktrees",
       "coverage",
       "dist",
@@ -63,6 +62,11 @@ describe("createCleanupProposals", () => {
       type: "cleanup_triage",
       priority: 100,
       schedule_mode: "active_work"
+    });
+    expect(proposal.retention_summary).toMatchObject({
+      scanned_items: 1,
+      protected_items: 1,
+      candidates: 0
     });
     await expect(access(path.join(root, "dist", "bundle.js"))).resolves.toBeUndefined();
     await expect(

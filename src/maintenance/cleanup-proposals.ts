@@ -1,21 +1,35 @@
-import { access, mkdir, readdir, rename, stat } from "node:fs/promises";
+import { access, lstat, mkdir, readdir, rename, stat } from "node:fs/promises";
 import path from "node:path";
+import type {
+  CleanupRetentionCategory,
+  CleanupRetentionRule
+} from "../core/config/cleanup-retention.js";
 import { loadConfigFile } from "../core/config/load-config.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
+import {
+  scanCleanupRetention,
+  type CleanupRetentionCandidate,
+  type CleanupRetentionScanResult
+} from "./retention-scanner.js";
 
 export type CleanupCandidate = {
   id: string;
   path: string;
-  kind: "file" | "directory";
+  kind: "file" | "directory" | "symbolic_link";
   reason: string;
   proposed_action: "move_to_kairon_tmp";
   destination: string;
   size_bytes: number;
+  category?: CleanupRetentionCategory;
+  modified_at?: string;
+  age_days?: number;
+  retention_rule?: CleanupRetentionRule;
 };
 
 export type CleanupProposal = {
   schema_version: string;
+  proposal_id?: string;
   date: string;
   proposal_path: string;
   direct_delete: false;
@@ -28,10 +42,14 @@ export type CleanupProposal = {
     resources: string[];
     acceptance: string[];
   };
+  retention_summary?: Omit<CleanupRetentionScanResult, "candidates"> & {
+    candidates: number;
+  };
   created_at: string;
 };
 
 export type CleanupProposalSummary = {
+  proposal_id: string;
   date: string;
   proposal_path: string;
   candidates: number;
@@ -62,7 +80,9 @@ export type CleanupCandidateApplyResult = {
     | "missing"
     | "blocked_protected_path"
     | "blocked_invalid_action"
-    | "blocked_invalid_destination";
+    | "blocked_invalid_destination"
+    | "blocked_symbolic_link"
+    | "blocked_retention_changed";
   reason?: string;
 };
 
@@ -88,6 +108,18 @@ export type CleanupArchiveResult = {
 export type CreateCleanupProposalsRequest = {
   date: string;
   candidatePaths?: string[];
+  now?: Date;
+};
+
+export type CleanupRetentionPlanOptions = {
+  now?: Date;
+  writeProposal?: boolean;
+};
+
+export type CleanupRetentionPlanResult = {
+  dry_run: boolean;
+  written: boolean;
+  proposal: CleanupProposal;
 };
 
 type ProjectConfig = {
@@ -106,47 +138,75 @@ type PoliciesConfig = {
 type CandidateRoot = {
   absolutePath: string;
   reason: string;
+  retention?: CleanupRetentionCandidate;
 };
 
 export async function createCleanupProposals(
   projectRoot: string,
   request: CreateCleanupProposalsRequest
 ): Promise<CleanupProposal> {
+  const now = request.now ?? new Date();
   const paths = getKaironPaths(projectRoot);
+  const proposalId = request.date;
   const proposalPath = resolveInside(
     paths.cleanupDir,
     "proposals",
-    `${request.date}.json`
+    `${proposalId}.json`
   );
-  const candidateRoots = await resolveCandidateRoots(projectRoot, request);
-  const candidates = await Promise.all(
-    candidateRoots.map((candidate, index) =>
-      buildCandidate(projectRoot, request.date, candidate, index + 1)
-    )
-  );
-  const proposal: CleanupProposal = {
-    schema_version: "0.1",
+  const retention = await scanCleanupRetention(projectRoot, { now });
+  const candidateRoots = await resolveCandidateRoots(projectRoot, request, retention);
+  const proposal = await buildCleanupProposal({
+    projectRoot,
+    proposalId,
     date: request.date,
-    proposal_path: toProjectPath(paths.root, proposalPath),
-    direct_delete: false,
-    candidates: candidates.filter((candidate): candidate is CleanupCandidate => candidate !== null),
-    morning_review_task: {
-      type: "cleanup_triage",
-      title: `Review cleanup proposals for ${request.date}`,
-      priority: 100,
-      schedule_mode: "active_work",
-      resources: [toProjectPath(paths.root, proposalPath)],
-      acceptance: [
-        "Review each candidate before moving it to .kairon/tmp.",
-        "Do not delete source files directly.",
-        "Record approved moves as follow-up work."
-      ]
-    },
-    created_at: new Date().toISOString()
-  };
+    proposalPath,
+    candidateRoots,
+    retention,
+    now
+  });
 
   await writeJsonFileAtomic(proposalPath, proposal);
   return proposal;
+}
+
+export async function planCleanupRetention(
+  projectRoot: string,
+  options: CleanupRetentionPlanOptions = {}
+): Promise<CleanupRetentionPlanResult> {
+  const now = options.now ?? new Date();
+  const paths = getKaironPaths(projectRoot);
+  const date = now.toISOString().slice(0, 10);
+  const proposalId = `retention-${formatTimestamp(now)}`;
+  const proposalPath = resolveInside(
+    paths.cleanupDir,
+    "proposals",
+    `${proposalId}.json`
+  );
+  const retention = await scanCleanupRetention(projectRoot, { now });
+  const candidateRoots = retention.candidates.map((candidate) => ({
+    absolutePath: candidate.absolutePath,
+    reason: candidate.reason,
+    retention: candidate
+  }));
+  const proposal = await buildCleanupProposal({
+    projectRoot,
+    proposalId,
+    date,
+    proposalPath,
+    candidateRoots,
+    retention,
+    now
+  });
+
+  if (options.writeProposal === true) {
+    await writeJsonFileAtomic(proposalPath, proposal);
+  }
+
+  return {
+    dry_run: options.writeProposal !== true,
+    written: options.writeProposal === true,
+    proposal
+  };
 }
 
 export async function listCleanupProposals(
@@ -167,6 +227,7 @@ export async function listCleanupProposals(
 
     return proposals
       .map((proposal) => ({
+        proposal_id: proposal.proposal_id ?? proposal.date,
         date: proposal.date,
         proposal_path: proposal.proposal_path,
         candidates: proposal.candidates.length,
@@ -176,7 +237,7 @@ export async function listCleanupProposals(
         ),
         created_at: proposal.created_at
       }))
-      .sort((left, right) => left.date.localeCompare(right.date));
+      .sort((left, right) => left.proposal_id.localeCompare(right.proposal_id));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return [];
@@ -205,6 +266,10 @@ export async function applyCleanupProposal(
 
   const paths = getKaironPaths(projectRoot);
   const protectedPatterns = await loadProtectedPatterns(projectRoot);
+  const currentRetention = await scanCleanupRetention(projectRoot, { now });
+  const currentRetentionPaths = new Set(
+    currentRetention.candidates.map((candidate) => candidate.path)
+  );
   const candidates = await Promise.all(
     proposal.candidates.map((candidate) =>
       evaluateCleanupCandidate({
@@ -212,7 +277,8 @@ export async function applyCleanupProposal(
         tmpDir: paths.tmpDir,
         candidate,
         dryRun,
-        protectedPatterns
+        protectedPatterns,
+        currentRetentionPaths
       })
     )
   );
@@ -277,7 +343,7 @@ export async function archiveCleanupProposal(
   const archivedPath = resolveInside(
     paths.cleanupDir,
     "archived",
-    `${proposal.date}-${formatTimestamp(now)}.json`
+    `${options.proposalId}-${formatTimestamp(now)}.json`
   );
 
   await mkdir(path.dirname(archivedPath), { recursive: true });
@@ -290,9 +356,59 @@ export async function archiveCleanupProposal(
   };
 }
 
+async function buildCleanupProposal(options: {
+  projectRoot: string;
+  proposalId: string;
+  date: string;
+  proposalPath: string;
+  candidateRoots: CandidateRoot[];
+  retention: CleanupRetentionScanResult;
+  now: Date;
+}): Promise<CleanupProposal> {
+  const candidates = await Promise.all(
+    options.candidateRoots.map((candidate, index) =>
+      buildCandidate(options.projectRoot, options.date, candidate, index + 1)
+    )
+  );
+  const proposalPath = toProjectPath(options.projectRoot, options.proposalPath);
+
+  return {
+    schema_version: "0.1",
+    proposal_id: options.proposalId,
+    date: options.date,
+    proposal_path: proposalPath,
+    direct_delete: false,
+    candidates: candidates.filter(
+      (candidate): candidate is CleanupCandidate => candidate !== null
+    ),
+    morning_review_task: {
+      type: "cleanup_triage",
+      title: `Review cleanup proposals for ${options.date}`,
+      priority: 100,
+      schedule_mode: "active_work",
+      resources: [proposalPath],
+      acceptance: [
+        "Review each candidate before moving it to .kairon/tmp.",
+        "Do not delete source files directly.",
+        "Record approved moves as follow-up work."
+      ]
+    },
+    retention_summary: {
+      enabled: options.retention.enabled,
+      scanned_items: options.retention.scanned_items,
+      protected_items: options.retention.protected_items,
+      skipped_symbolic_links: options.retention.skipped_symbolic_links,
+      candidate_bytes: options.retention.candidate_bytes,
+      candidates: options.retention.candidates.length
+    },
+    created_at: options.now.toISOString()
+  };
+}
+
 async function resolveCandidateRoots(
   projectRoot: string,
-  request: CreateCleanupProposalsRequest
+  request: CreateCleanupProposalsRequest,
+  retention: CleanupRetentionScanResult
 ): Promise<CandidateRoot[]> {
   const paths = getKaironPaths(projectRoot);
   const config = await loadConfigFile<ProjectConfig>(projectRoot, "project.json");
@@ -310,7 +426,16 @@ async function resolveCandidateRoots(
       reason: "configured generated path exists after the work day"
     }));
   const internalCandidates = await resolveOperationalArtifactCandidates(paths);
-  const unique = dedupeCandidateRoots([...roots, ...internalCandidates]);
+  const retentionCandidates = retention.candidates.map((candidate) => ({
+    absolutePath: candidate.absolutePath,
+    reason: candidate.reason,
+    retention: candidate
+  }));
+  const unique = dedupeCandidateRoots([
+    ...roots,
+    ...internalCandidates,
+    ...retentionCandidates
+  ]);
   const existing: CandidateRoot[] = [];
 
   for (const candidate of unique) {
@@ -336,7 +461,6 @@ async function resolveOperationalArtifactCandidates(
 ): Promise<CandidateRoot[]> {
   return [
     ...(await resolveConfigBackupCandidates(paths.configDir)),
-    ...(await resolveDiscordAuditCandidates(paths.runtimeDir)),
     ...(await resolveExistingCandidate(
       paths.root,
       "operation-test-results",
@@ -366,25 +490,6 @@ async function resolveConfigBackupCandidates(configDir: string): Promise<Candida
       .map((entry) => ({
         absolutePath: resolveInside(configDir, entry.name),
         reason: "config backup can be archived after review"
-      }));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-
-    throw error;
-  }
-}
-
-async function resolveDiscordAuditCandidates(runtimeDir: string): Promise<CandidateRoot[]> {
-  const discordDir = resolveInside(runtimeDir, "discord");
-  try {
-    const entries = await readdir(discordDir, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
-      .map((entry) => ({
-        absolutePath: resolveInside(discordDir, entry.name),
-        reason: "Discord audit JSONL should be reviewed before archival"
       }));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -455,23 +560,34 @@ async function buildCandidate(
   index: number
 ): Promise<CleanupCandidate | null> {
   const candidatePath = candidate.absolutePath;
-  const stats = await stat(candidatePath);
+  const stats = await lstat(candidatePath);
   const projectPath = toProjectPath(projectRoot, candidatePath);
   const id = `CLEAN-${date.replaceAll("-", "")}-${String(index).padStart(3, "0")}`;
 
   return {
     id,
     path: projectPath,
-    kind: stats.isDirectory() ? "directory" : "file",
+    kind: stats.isSymbolicLink()
+      ? "symbolic_link"
+      : stats.isDirectory()
+        ? "directory"
+        : "file",
     reason: candidate.reason,
     proposed_action: "move_to_kairon_tmp",
     destination: toPosixPath(path.join(".kairon", "tmp", date, slug(projectPath))),
-    size_bytes: await sizeBytes(candidatePath)
+    size_bytes: candidate.retention?.size_bytes ?? (await sizeBytes(candidatePath)),
+    category: candidate.retention?.category,
+    modified_at: candidate.retention?.modified_at,
+    age_days: candidate.retention?.age_days,
+    retention_rule: candidate.retention?.retention_rule
   };
 }
 
 async function sizeBytes(candidatePath: string): Promise<number> {
-  const stats = await stat(candidatePath);
+  const stats = await lstat(candidatePath);
+  if (stats.isSymbolicLink()) {
+    return 0;
+  }
   if (!stats.isDirectory()) {
     return stats.size;
   }
@@ -505,8 +621,10 @@ function toProjectPath(projectRoot: string, filePath: string): string {
 }
 
 function cleanupProposalPath(projectRoot: string, proposalId: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(proposalId)) {
-    throw new Error("Invalid cleanup proposal id. Use a YYYY-MM-DD proposal date.");
+  if (!/^(?:\d{4}-\d{2}-\d{2}|retention-\d{14})$/.test(proposalId)) {
+    throw new Error(
+      "Invalid cleanup proposal id. Use YYYY-MM-DD or retention-YYYYMMDDHHMMSS."
+    );
   }
 
   return resolveInside(getKaironPaths(projectRoot).cleanupDir, "proposals", `${proposalId}.json`);
@@ -544,6 +662,7 @@ async function evaluateCleanupCandidate(options: {
   candidate: CleanupCandidate;
   dryRun: boolean;
   protectedPatterns: string[];
+  currentRetentionPaths: Set<string>;
 }): Promise<CleanupCandidateApplyResult> {
   const candidate = options.candidate;
   const baseResult = {
@@ -594,6 +713,26 @@ async function evaluateCleanupCandidate(options: {
       ...baseResult,
       status: "missing",
       reason: "candidate source path does not exist"
+    };
+  }
+
+  if (
+    candidate.category !== undefined &&
+    !options.currentRetentionPaths.has(candidate.path)
+  ) {
+    return {
+      ...baseResult,
+      status: "blocked_retention_changed",
+      reason: "candidate no longer exceeds retention limits or is now protected"
+    };
+  }
+
+  const sourceStats = await lstat(sourcePath);
+  if (sourceStats.isSymbolicLink()) {
+    return {
+      ...baseResult,
+      status: "blocked_symbolic_link",
+      reason: "candidate source is a symbolic link"
     };
   }
 

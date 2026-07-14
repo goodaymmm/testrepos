@@ -1,14 +1,22 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readFile,
+  symlink,
+  utimes,
+  writeFile
+} from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   applyCleanupCommand,
   archiveCleanupCommand,
   listCleanupCommand,
+  planCleanupRetentionCommand,
   showCleanupCommand
 } from "../src/cli/commands/cleanup.js";
 import { initializeProject } from "../src/cli/commands/init.js";
-import { readJsonFile } from "../src/core/fs/json-file.js";
+import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import {
   applyCleanupProposal,
   archiveCleanupProposal,
@@ -191,4 +199,148 @@ describe("cleanup proposal commands", () => {
       )
     ).resolves.toBe("new build\n");
   });
+
+  it("dry-runs and writes retention-only proposals for operator review", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const policiesPath = path.join(root, ".kairon", "config", "policies.json");
+    const policies = await readJsonFile<TestPoliciesConfig>(policiesPath);
+    policies.cleanup.retention.categories.daemon_logs = {
+      max_age_days: 1,
+      max_files: 10,
+      max_bytes: 1_000_000,
+      min_keep: 1
+    };
+    await writeJsonFileAtomic(policiesPath, policies);
+    const daemonDir = path.join(root, ".kairon", "runtime", "daemon");
+    const oldLog = path.join(daemonDir, "2026-01-01.jsonl");
+    const currentLog = path.join(daemonDir, "2026-01-02.jsonl");
+    await writeFile(oldLog, "{}\n", "utf8");
+    await writeFile(currentLog, "{}\n", "utf8");
+    const oldTime = new Date("2026-01-01T00:00:00Z");
+    const currentTime = new Date("2026-01-02T00:00:00Z");
+    await utimes(oldLog, oldTime, oldTime);
+    await utimes(currentLog, currentTime, currentTime);
+
+    const dryRun = await planCleanupRetentionCommand(root, { dryRun: true });
+
+    expect(dryRun).toContain("Kairon cleanup retention dry run.");
+    expect(dryRun).toContain("written=false");
+    expect(dryRun).toContain("category=daemon_logs");
+    expect(dryRun).toContain("path=.kairon/runtime/daemon/2026-01-01.jsonl");
+
+    const written = await planCleanupRetentionCommand(root, {
+      writeProposal: true
+    });
+    expect(written).toContain("Kairon cleanup retention proposal created.");
+    expect(written).toContain("written=true");
+    await expect(listCleanupCommand(root)).resolves.toContain(
+      "proposal_id=retention-"
+    );
+
+    const proposalId = /proposal_id=(retention-\d{14})/.exec(written)?.[1];
+    expect(proposalId).toBeDefined();
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "approvals", "APR-RETENTION.json"),
+      {
+        schema_version: "0.1",
+        id: "APR-RETENTION",
+        status: "pending",
+        artifact_path: ".kairon/runtime/daemon/2026-01-01.jsonl"
+      }
+    );
+    const rechecked = await applyCleanupProposal({
+      projectRoot: root,
+      proposalId: proposalId!,
+      dryRun: true
+    });
+    expect(rechecked).toMatchObject({
+      planned: 0,
+      blocked: 1,
+      candidates: [
+        expect.objectContaining({
+          status: "blocked_retention_changed"
+        })
+      ]
+    });
+  });
+
+  it("rejects conflicting retention plan modes", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+
+    await expect(
+      planCleanupRetentionCommand(root, {
+        dryRun: true,
+        writeProposal: true
+      })
+    ).rejects.toThrow("Use either --dry-run or --write-proposal");
+  });
+
+  it("blocks symbolic links and proposal paths that escape the project", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const target = path.join(root, "linked-target");
+    const link = path.join(root, "linked-output");
+    await mkdir(target, { recursive: true });
+    await writeFile(path.join(target, "output.txt"), "keep\n", "utf8");
+    await symlink(target, link, process.platform === "win32" ? "junction" : "dir");
+    const proposal = await createCleanupProposals(root, {
+      date: "2026-06-06",
+      candidatePaths: ["linked-output"]
+    });
+
+    expect(proposal.candidates).toEqual([
+      expect.objectContaining({
+        path: "linked-output",
+        kind: "symbolic_link",
+        size_bytes: 0
+      })
+    ]);
+    await expect(
+      applyCleanupProposal({
+        projectRoot: root,
+        proposalId: "2026-06-06",
+        dryRun: true
+      })
+    ).resolves.toMatchObject({
+      blocked: 1,
+      candidates: [
+        expect.objectContaining({ status: "blocked_symbolic_link" })
+      ]
+    });
+
+    proposal.candidates[0]!.path = "../outside";
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "cleanup", "proposals", "2026-06-06.json"),
+      proposal
+    );
+    await expect(
+      applyCleanupProposal({
+        projectRoot: root,
+        proposalId: "2026-06-06",
+        dryRun: true
+      })
+    ).resolves.toMatchObject({
+      blocked: 1,
+      candidates: [
+        expect.objectContaining({ status: "blocked_invalid_destination" })
+      ]
+    });
+  });
 });
+
+type TestPoliciesConfig = {
+  cleanup: {
+    retention: {
+      categories: Record<string, TestRetentionRule>;
+    };
+  };
+};
+
+type TestRetentionRule = {
+  max_age_days: number;
+  max_files: number;
+  max_bytes: number;
+  min_keep: number;
+};
