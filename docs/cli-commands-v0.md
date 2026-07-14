@@ -753,7 +753,9 @@ kairon rag query "approval routing" --type approval --limit 5 --explain
 `--explain` は通常のranked resultに加えて、lexical score、matched terms、term hit、source modified timestamp、indexed timestamp、stale source warningを表示する。
 `--explain` を付けない場合、既存のquery出力形式を維持する。
 
-RAG indexは `.kairon/rag/index.json` に保存する。secret-like pathとprotected pathはindex対象から除外する。
+初回refreshは`mode=full`、既存indexに対する通常refreshは`mode=incremental`、filter付きrefreshは`mode=scoped`となる。incremental refreshはsource manifestの`file_mtime_ms`と`file_size_bytes`が一致するsource/chunkを再利用し、metadataが変わったsourceだけcontent hashを確認する。`rag refresh`はscanned / added / updated / unchangedと理由別skip / prune件数を表示する。
+
+`rag status`は`freshness=fresh|stale|not_indexed`と、`pending_added_sources` / `pending_changed_sources` / `pending_missing_sources`を表示する。RAG indexは `.kairon/rag/index.json` に保存し、secret-like path、protected path、generated pathはindex対象から除外する。
 
 ## kairon release
 

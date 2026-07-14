@@ -274,7 +274,7 @@ kairon rag status
 kairon rag query "approval routing" --type approval --limit 5
 ```
 
-local lexical RAG indexを `.kairon/rag/index.json` に作成し、metadata filter付きで検索します。context builderは必要に応じてRAG検索結果をrun contextへ含めます。secret-like pathやprotected pathはindex対象から除外します。
+local lexical RAG indexを `.kairon/rag/index.json` に作成し、metadata filter付きで検索します。2回目以降の通常refreshはsource manifestのmtime・file size・content hashを使うincremental modeになり、変更sourceだけを再構築します。`rag status`はpending added / changed / missingとfreshnessを表示し、refresh・maintenance出力はprotected / generated / missing / archivedなどのskip・prune理由を件数で示します。context builderは必要に応じてRAG検索結果をrun contextへ含め、secret-like path、protected path、generated pathはindex対象から除外します。
 
 ### 状態確認
 

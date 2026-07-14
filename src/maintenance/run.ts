@@ -50,15 +50,27 @@ export type DailyMaintenanceResult = {
   rag_index?: Pick<
     BuildRagIndexResult,
     | "index_path"
+    | "refresh_mode"
     | "source_count"
     | "chunk_count"
+    | "scanned_source_count"
+    | "added_source_count"
+    | "updated_source_count"
+    | "unchanged_source_count"
     | "skipped_source_count"
     | "skipped_protected_count"
+    | "skipped_generated_count"
+    | "skipped_missing_count"
+    | "skipped_archived_count"
+    | "skipped_reason_counts"
     | "pruned_source_count"
     | "pruned_missing_source_count"
     | "pruned_excluded_source_count"
+    | "pruned_protected_source_count"
+    | "pruned_generated_source_count"
     | "pruned_archived_source_count"
     | "pruned_ephemeral_source_count"
+    | "pruned_reason_counts"
   >;
   rag_index_skipped?: RagIndexSkipped;
 };
@@ -118,15 +130,27 @@ export async function runDailyMaintenance(
         ? undefined
         : {
             index_path: ragIndex.index_path,
+            refresh_mode: ragIndex.refresh_mode,
             source_count: ragIndex.source_count,
             chunk_count: ragIndex.chunk_count,
+            scanned_source_count: ragIndex.scanned_source_count,
+            added_source_count: ragIndex.added_source_count,
+            updated_source_count: ragIndex.updated_source_count,
+            unchanged_source_count: ragIndex.unchanged_source_count,
             skipped_source_count: ragIndex.skipped_source_count,
             skipped_protected_count: ragIndex.skipped_protected_count,
+            skipped_generated_count: ragIndex.skipped_generated_count,
+            skipped_missing_count: ragIndex.skipped_missing_count,
+            skipped_archived_count: ragIndex.skipped_archived_count,
+            skipped_reason_counts: ragIndex.skipped_reason_counts,
             pruned_source_count: ragIndex.pruned_source_count,
             pruned_missing_source_count: ragIndex.pruned_missing_source_count,
             pruned_excluded_source_count: ragIndex.pruned_excluded_source_count,
+            pruned_protected_source_count: ragIndex.pruned_protected_source_count,
+            pruned_generated_source_count: ragIndex.pruned_generated_source_count,
             pruned_archived_source_count: ragIndex.pruned_archived_source_count,
-            pruned_ephemeral_source_count: ragIndex.pruned_ephemeral_source_count
+            pruned_ephemeral_source_count: ragIndex.pruned_ephemeral_source_count,
+            pruned_reason_counts: ragIndex.pruned_reason_counts
           },
     rag_index_skipped:
       ragIndex === undefined
