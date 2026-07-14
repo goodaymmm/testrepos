@@ -1,7 +1,11 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { FileSessionHost } from "../src/agents/session-host.js";
+import {
+  FileSessionHost,
+  type SessionRunStatus,
+  type SessionRunUpdate
+} from "../src/agents/session-host.js";
 import {
   listAgentSessionsCommand,
   resetAgentSessionCommand,
@@ -41,6 +45,77 @@ describe("agent session commands", () => {
     expect(showOutput).toContain(
       "session_path=.kairon/sessions/2026-05-25/gemini/session.json"
     );
+    expect(showOutput).toContain("health_status=blocked");
+    expect(showOutput).toContain("health_last_reason=cli_command_missing");
+    expect(showOutput).toContain(
+      "health_path=.kairon/sessions/2026-05-25/gemini/health.json"
+    );
+  });
+
+  it("records bounded retry health and resets consecutive failures after recovery", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    let now = new Date("2026-05-25T01:00:00.000Z");
+    const host = new FileSessionHost(root, {
+      commandAvailability: async () => true,
+      now: () => now
+    });
+
+    await host.openSession("codex", "2026-05-25");
+    await host.markRunFinished(
+      "codex",
+      "2026-05-25",
+      runUpdate("RUN-0010", "setup_required", "cli_login_required")
+    );
+    now = new Date("2026-05-25T01:05:00.000Z");
+    await host.markRunFinished(
+      "codex",
+      "2026-05-25",
+      runUpdate("RUN-0011", "setup_required", "cli_login_required")
+    );
+
+    const healthPath = path.join(
+      root,
+      ".kairon",
+      "sessions",
+      "2026-05-25",
+      "codex",
+      "health.json"
+    );
+    await expect(readJsonFile(healthPath)).resolves.toMatchObject({
+      kind: "agent_session_health",
+      status: "blocked",
+      consecutive_failures: 2,
+      retry_backoff_seconds: 600,
+      next_retry_at: "2026-05-25T01:15:00.000Z",
+      setup_required_count: 2,
+      history_entries: 3
+    });
+
+    const blockedOutput = await showAgentSessionCommand(root, "codex", {
+      date: "2026-05-25",
+      now: () => new Date("2026-05-25T01:06:00.000Z")
+    });
+    expect(blockedOutput).toContain("health_status=blocked");
+    expect(blockedOutput).toContain("health_consecutive_failures=2");
+    expect(blockedOutput).toContain("health_retry_ready=false");
+
+    now = new Date("2026-05-25T01:20:00.000Z");
+    await host.markRunFinished(
+      "codex",
+      "2026-05-25",
+      runUpdate("RUN-0012", "completed")
+    );
+
+    await expect(readJsonFile(healthPath)).resolves.toMatchObject({
+      status: "healthy",
+      consecutive_failures: 0,
+      retry_backoff_seconds: 0,
+      next_retry_at: null,
+      last_observed_status: "completed",
+      setup_required_count: 2,
+      history_entries: 4
+    });
   });
 
   it("shows paused setup_required details from the latest run", async () => {
@@ -122,3 +197,21 @@ describe("agent session commands", () => {
     });
   });
 });
+
+function runUpdate(
+  runId: string,
+  status: SessionRunStatus,
+  failureReason?: string
+): SessionRunUpdate {
+  return {
+    kind: "job",
+    run_id: runId,
+    task_id: `TASK-${runId.slice(4)}`,
+    persona: "smoke",
+    context_path: `.kairon/runs/${runId}/context.md`,
+    outbox_path: `.kairon/runs/${runId}/outbox.json`,
+    runner_metadata_path: `.kairon/runs/${runId}/runner.json`,
+    status,
+    failure_reason: failureReason
+  };
+}

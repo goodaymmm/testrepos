@@ -336,7 +336,9 @@ function sessionAvailabilityFromSummary(
   return summary.agents.map((session) => ({
     agent: session.agent,
     status: session.dispatcher_status,
-    mode: session.mode
+    mode: session.mode,
+    healthStatus: session.health?.status,
+    nextRetryAt: session.health?.next_retry_at
   }));
 }
 

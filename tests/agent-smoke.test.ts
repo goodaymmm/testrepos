@@ -61,7 +61,8 @@ describe("runAgentSmoke", () => {
         status: "completed",
         command_available: true,
         outbox_path: `.kairon/runs/${result.run_id}/outbox.json`,
-        runner_metadata_path: `.kairon/runs/${result.run_id}/runner.json`
+        runner_metadata_path: `.kairon/runs/${result.run_id}/runner.json`,
+        session_health_path: `.kairon/sessions/2026-05-26/${agent}/health.json`
       });
       await expect(
         readJsonFile(path.join(root, ".kairon", "tasks", result.task_id, "task.json"))
@@ -102,6 +103,14 @@ describe("runAgentSmoke", () => {
       command: "agy",
       command_available: true,
       status: "setup_required"
+    });
+    await expect(
+      readJsonFile(path.join(root, geminiResult.session_health_path))
+    ).resolves.toMatchObject({
+      agent: "gemini",
+      status: "blocked",
+      last_observed_status: "setup_required",
+      last_reason: "cli_pty_required"
     });
     await expect(
       readJsonFile(path.join(root, ".kairon", "runs", geminiResult.run_id, "outbox.json"))

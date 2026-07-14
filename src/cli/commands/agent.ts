@@ -4,6 +4,7 @@ import {
 } from "../../agents/smoke-runner.js";
 import { agentCliIdHint } from "../../agents/display.js";
 import { createAntigravityPtySessionRunner } from "../../agents/pty-session-runner.js";
+import { isAgentSessionRetryReady } from "../../agents/session-health.js";
 import {
   dispatcherStatusFor,
   sameDaySessionStatus,
@@ -115,6 +116,7 @@ export async function showAgentSessionCommand(
     ...(metadata.session_context_manifest === undefined
       ? []
       : [`session_context_manifest=${metadata.session_context_manifest}`]),
+    ...formatHealthLines(metadata, options.now?.() ?? new Date()),
     ...formatIssueLines(issue)
   ].join("\n");
 }
@@ -223,9 +225,30 @@ function formatSessionListLine(metadata: SessionMetadata): string {
     `command=${metadata.command}`,
     `command_available=${metadata.command_available}`,
     `last_status=${metadata.last_status ?? ""}`,
+    `health_status=${metadata.health?.status ?? "unknown"}`,
+    `health_next_retry_at=${metadata.health?.next_retry_at ?? ""}`,
     `reason=${issue?.reason ?? ""}`,
     `session_path=${sessionArtifactPathFromMetadata(metadata)}`
   ].join(" ");
+}
+
+function formatHealthLines(metadata: SessionMetadata, now: Date): string[] {
+  if (metadata.health === undefined) {
+    return ["health_status=unknown"];
+  }
+
+  return [
+    `health_status=${metadata.health.status}`,
+    `health_consecutive_failures=${metadata.health.consecutive_failures}`,
+    `health_retry_backoff_seconds=${metadata.health.retry_backoff_seconds}`,
+    `health_next_retry_at=${metadata.health.next_retry_at ?? ""}`,
+    `health_retry_ready=${isAgentSessionRetryReady(metadata.health, now)}`,
+    `health_last_status=${metadata.health.last_observed_status}`,
+    `health_last_reason=${metadata.health.last_reason}`,
+    `health_history_entries=${metadata.health.history_entries}`,
+    `health_setup_required_count=${metadata.health.setup_required_count}`,
+    `health_path=${metadata.health_path ?? ""}`
+  ];
 }
 
 type SessionIssue = {

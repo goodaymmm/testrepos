@@ -164,6 +164,16 @@ Antigravity は互換性維持のため CLI 引数では `--agent gemini` を使
 
 設定済みの公式CLIへ最小promptを送り、`.kairon/runs/RUN-xxxx/` に `stdin.md`、`stdout.log`、`stderr.log`、`runner.json`、`outbox.json` を記録します。CLIが見つからない場合は実行せず `setup_required` としてoutboxへ記録します。
 
+### Agent Session Health
+
+```powershell
+kairon agent session list
+kairon agent session show codex
+kairon agent session reset codex --date 2026-07-14
+```
+
+Agentごとのhealth、連続失敗、retry backoff、setup_required履歴を `.kairon/sessions/YYYY-MM-DD/{agent}/health.json` に保存します。dispatcherはbackoff中の不健康なsessionを既定で避け、成功後は連続失敗をresetします。`session reset` はsession directoryをarchiveするため、healthを含む既存証跡は残ります。
+
 ### タスク作成と実行
 
 ```powershell

@@ -29,6 +29,7 @@ export type AgentSmokeResult = {
   command: string;
   args: string[];
   command_available: boolean;
+  session_health_path: string;
 };
 
 export async function runAgentSmoke(
@@ -83,7 +84,11 @@ export async function runAgentSmoke(
     stderr_log: record.stderr_log,
     command: record.command,
     args: record.args,
-    command_available: record.command_available
+    command_available: record.command_available,
+    session_health_path: toProjectPath(
+      projectRoot,
+      resolveInside(getKaironPaths(projectRoot).sessionsDir, date, request.agent, "health.json")
+    )
   };
 }
 
@@ -102,7 +107,8 @@ export function formatAgentSmokeResult(result: AgentSmokeResult): string {
     `runner=${result.runner_metadata_path}`,
     `outbox=${result.outbox_path}`,
     `stdout=${result.stdout_log}`,
-    `stderr=${result.stderr_log}`
+    `stderr=${result.stderr_log}`,
+    `health=${result.session_health_path}`
   ].join("\n");
 }
 
