@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildJobPrompt } from "../src/agents/prompt-envelope.js";
+import { extractOutboxFromStdout } from "../src/agents/stdout-outbox.js";
 
 describe("buildJobPrompt", () => {
   it("includes review_result in stdout fallback for reviewer jobs", () => {
@@ -43,6 +44,29 @@ describe("buildJobPrompt", () => {
     );
 
     expect(outbox).not.toHaveProperty("review_result");
+  });
+
+  it("requires Antigravity to return the outbox through stdout without file tools", () => {
+    const prompt = buildJobPrompt({
+      agent: "gemini",
+      runId: "RUN-0003",
+      taskId: "TASK-0003",
+      persona: "smoke",
+      contextPath: ".kairon/runs/RUN-0003/context.md",
+      expectedOutboxPath: ".kairon/runs/RUN-0003/outbox.json"
+    });
+
+    expect(prompt).toContain(
+      "Do not call file creation or editing tools for the expected outbox"
+    );
+    expect(prompt).toContain(
+      "Print the complete outbox JSON between the stdout fallback markers"
+    );
+    expect(prompt).not.toContain(
+      "Prefer writing the required outbox JSON file when file tools are available."
+    );
+    expect(prompt).toContain("Stdout fallback contract:");
+    expect(extractOutboxFromStdout(prompt)).toBeUndefined();
   });
 });
 

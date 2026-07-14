@@ -317,6 +317,12 @@ async function resolveSources(
   }
 
   if (sources.length === 0) {
+    if (request.resultRoot !== undefined) {
+      throw new Error(
+        `No summary.json or summary.md files were found under --result-root: ${request.resultRoot}. ` +
+          "Pass a transcript as logFile or generate a harness summary first."
+      );
+    }
     throw new Error("Specify a log file or --result-root.");
   }
 

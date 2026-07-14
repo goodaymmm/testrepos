@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { createProgram, isCliEntrypoint } from "../src/cli/main.js";
+import {
+  createProgram,
+  isCliEntrypoint,
+  resolveStateSnapshotRestoreCliOptions
+} from "../src/cli/main.js";
 import { resolveAllowInteractiveAgents } from "../src/cli/commands/task.js";
 
 describe("createProgram", () => {
@@ -188,6 +192,51 @@ describe("createProgram", () => {
     expect(restore?.options.map((option) => option.long)).toEqual(
       expect.arrayContaining(["--dry-run", "--confirm", "--format"])
     );
+  });
+
+  it("routes nested snapshot restore options to the restore action", async () => {
+    const program = createProgram();
+    const state = program.commands.find((command) => command.name() === "state")!;
+    const snapshot = state.commands.find(
+      (command) => command.name() === "snapshot"
+    )!;
+    const restore = snapshot.commands.find(
+      (command) => command.name() === "restore"
+    )!;
+    let captured:
+      | ReturnType<typeof resolveStateSnapshotRestoreCliOptions>
+      | undefined;
+
+    restore.action((_snapshotId: string, options) => {
+      captured = resolveStateSnapshotRestoreCliOptions(options, snapshot.opts());
+    });
+
+    await program.parseAsync(
+      ["state", "snapshot", "restore", "SNP-TEST", "--dry-run", "--format", "json"],
+      { from: "user" }
+    );
+
+    expect(captured).toMatchObject({ dryRun: true, format: "json" });
+  });
+
+  it("keeps release bump --version scoped to the bump command", async () => {
+    const program = createProgram();
+    const release = program.commands.find(
+      (command) => command.name() === "release"
+    )!;
+    const bump = release.commands.find((command) => command.name() === "bump")!;
+    let captured: { version?: string; dryRun?: boolean } | undefined;
+
+    bump.action((options) => {
+      captured = options;
+    });
+
+    await program.parseAsync(
+      ["release", "bump", "--version", "0.2.0", "--dry-run"],
+      { from: "user" }
+    );
+
+    expect(captured).toMatchObject({ version: "0.2.0", dryRun: true });
   });
 
   it("registers board export and serve commands", () => {

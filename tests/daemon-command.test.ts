@@ -129,6 +129,24 @@ describe("daemonTaskCommand", () => {
     expect(invocations).toHaveLength(0);
   });
 
+  it("classifies Task Scheduler permission failures as setup_required", async () => {
+    const output = await daemonTaskCommand("C:\\work\\project", "install", {
+      platform: "win32",
+      helperPath: "C:\\kairon\\scripts\\kairon-daemon-task.ps1",
+      commandRunner: async (invocation) =>
+        commandResult(invocation, {
+          exitCode: 1,
+          stderr:
+            "PermissionDenied: HRESULT 0x80070005 Register-ScheduledTask token=should-not-leak"
+        })
+    });
+
+    expect(output).toContain("status=setup_required");
+    expect(output).toContain("reason=task_scheduler_permission_denied");
+    expect(output).toContain("Administrator");
+    expect(output).not.toContain("should-not-leak");
+  });
+
   it("redacts secret-like helper errors", async () => {
     await expect(
       daemonTaskCommand("C:\\work\\project", "restart", {

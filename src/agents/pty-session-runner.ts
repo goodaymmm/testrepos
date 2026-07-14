@@ -6,6 +6,7 @@ import type {
   InteractiveSessionJob,
   InteractiveSessionRunner
 } from "./interactive-session-runner.js";
+import { hasMatchingStdoutOutbox } from "./stdout-outbox.js";
 
 export type PtyExitEvent = {
   exitCode: number;
@@ -159,6 +160,13 @@ async function runPtySession(
 
     pty.onData((data) => {
       stdout += data;
+      if (outboxDetected || !hasMatchingStdoutOutbox(stdout, job.runId)) {
+        return;
+      }
+
+      outboxDetected = true;
+      requestGracefulExit(pty);
+      closeTimer = setTimeout(() => finish({ exitCode: 0 }), closeGraceMs);
     });
     pty.onExit((event) => {
       exited = true;
@@ -231,7 +239,12 @@ async function defaultPtySpawner(
 }
 
 function antigravityArgs(job: InteractiveSessionJob): string[] {
-  return ["--prompt-interactive", job.prompt];
+  return [
+    "--add-dir",
+    path.dirname(job.outboxPath),
+    "--prompt-interactive",
+    job.prompt
+  ];
 }
 
 function getEnvValue(env: NodeJS.ProcessEnv, name: string): string | undefined {

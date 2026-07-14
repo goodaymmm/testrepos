@@ -133,6 +133,15 @@ export async function daemonTaskCommand(
 
   if (result.exitCode !== 0 || result.timedOut) {
     const detail = redactDaemonTaskOutput(result.stderr || result.stdout).trim();
+    if (isTaskSchedulerPermissionError(detail)) {
+      return [
+        "Kairon daemon task setup required.",
+        "status=setup_required",
+        `action=${action}`,
+        "reason=task_scheduler_permission_denied",
+        "guidance=Run Windows PowerShell as Administrator, then retry the command."
+      ].join("\n");
+    }
     throw new Error(
       `Kairon daemon task ${action} failed${detail.length === 0 ? "." : `: ${detail}`}`
     );
@@ -197,4 +206,16 @@ function redactDaemonTaskOutput(value: string): string {
       /\b(api[_-]?key|token|secret|password|authorization)\b\s*[:=]\s*[^\s"',}]+/giu,
       "$1=[redacted]"
     );
+}
+
+function isTaskSchedulerPermissionError(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return [
+    "permissiondenied",
+    "access denied",
+    "access is denied",
+    "0x80070005",
+    "unauthorizedaccessexception",
+    "アクセスが拒否"
+  ].some((pattern) => normalized.includes(pattern));
 }

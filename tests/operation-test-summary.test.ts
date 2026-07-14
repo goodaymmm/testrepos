@@ -207,4 +207,18 @@ describe("operation test result summary", () => {
       summarizeOperationTestResults({ projectRoot: root })
     ).rejects.toThrow("Specify a log file or --result-root.");
   });
+
+  it("explains when a result root contains no summary artifacts", async () => {
+    const root = await createTempProject();
+    await mkdir(path.join(root, "operation-test-results", "manual-run"), {
+      recursive: true
+    });
+
+    await expect(
+      summarizeOperationTestResults({
+        projectRoot: root,
+        resultRoot: path.join("operation-test-results", "manual-run")
+      })
+    ).rejects.toThrow("No summary.json or summary.md files were found");
+  });
 });

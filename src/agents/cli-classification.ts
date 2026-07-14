@@ -145,6 +145,45 @@ export function classifyCliRunResult(
     };
   }
 
+  const invalidConfiguration = firstMatch(normalized, [
+    "error loading config.toml",
+    "model_reasoning_effort",
+    "failed to parse config.toml"
+  ]);
+  if (invalidConfiguration !== undefined) {
+    return {
+      status: "setup_required",
+      reason: "cli_configuration_invalid",
+      message: "Agent CLI configuration is invalid.",
+      setup_action:
+        agent === "codex"
+          ? "Fix the reported Codex config.toml setting, then retry the Kairon command."
+          : "Fix the reported agent CLI configuration, then retry the Kairon command.",
+      resume_hint: "Retry after the CLI starts successfully with the corrected configuration.",
+      matched_pattern: invalidConfiguration.pattern
+    };
+  }
+
+  const termsAcceptance =
+    agent === "claude"
+      ? firstMatch(normalized, [
+          "review the updated terms",
+          "consumer terms and privacy policy will take effect",
+          "terms acceptance required"
+        ])
+      : undefined;
+  if (termsAcceptance !== undefined) {
+    return {
+      status: "setup_required",
+      reason: "cli_terms_acceptance_required",
+      message: "Claude Code requires an interactive terms review before automation can continue.",
+      setup_action:
+        "Run claude interactively, review the displayed terms, and complete the required confirmation.",
+      resume_hint: "Retry after Claude Code exits the terms review flow normally.",
+      matched_pattern: termsAcceptance.pattern
+    };
+  }
+
   const login = firstMatch(normalized, [
     "login required",
     "not logged in",

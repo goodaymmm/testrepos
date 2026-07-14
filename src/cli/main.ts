@@ -98,13 +98,31 @@ import {
 import { summarizeOperationTestsCommand } from "./commands/test-summary.js";
 import { workflowRunCommand } from "./commands/workflow.js";
 
+export type StateSnapshotRestoreCliOptions = {
+  dryRun?: boolean;
+  confirm?: string;
+  format?: string;
+};
+
+export function resolveStateSnapshotRestoreCliOptions(
+  restoreOptions: StateSnapshotRestoreCliOptions,
+  snapshotOptions: Pick<StateSnapshotRestoreCliOptions, "dryRun" | "format">
+): StateSnapshotRestoreCliOptions {
+  return {
+    dryRun: restoreOptions.dryRun ?? snapshotOptions.dryRun,
+    confirm: restoreOptions.confirm,
+    format: restoreOptions.format ?? snapshotOptions.format
+  };
+}
+
 export function createProgram(): Command {
   const program = new Command();
 
   program
     .name("kairon")
     .description("Local AI-human symbiosis runtime for project orchestration.")
-    .version(KAIRON_VERSION);
+    .version(KAIRON_VERSION)
+    .enablePositionalOptions();
 
   program
     .command("init")
@@ -583,14 +601,18 @@ export function createProgram(): Command {
     .argument("<snapshot-id>", "Snapshot id, for example SNP-20260712000000000")
     .option("--dry-run", "Show add, update, and delete candidates without writing state.")
     .option("--confirm <snapshotId>", "Restore only when this value matches snapshot-id.")
-    .option("--format <format>", "Output format: text or json.", "text")
+    .option("--format <format>", "Output format: text or json.")
     .action(
       async (
         snapshotId: string,
-        options: { dryRun?: boolean; confirm?: string; format?: string }
+        options: StateSnapshotRestoreCliOptions
       ) => {
         console.log(
-          await stateSnapshotRestoreCommand(process.cwd(), snapshotId, options)
+          await stateSnapshotRestoreCommand(
+            process.cwd(),
+            snapshotId,
+            resolveStateSnapshotRestoreCliOptions(options, stateSnapshot.opts())
+          )
         );
       }
     );

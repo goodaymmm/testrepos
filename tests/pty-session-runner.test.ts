@@ -40,8 +40,12 @@ describe("createAntigravityPtySessionRunner", () => {
     });
     const result = await resultPromise;
 
-    expect(spawnedArgs[0]).toBe("--prompt-interactive");
-    expect(spawnedArgs[1]).toContain("KAIRON_JOB_START RUN-0001");
+    expect(spawnedArgs).toEqual([
+      "--add-dir",
+      path.dirname(outboxPath),
+      "--prompt-interactive",
+      expect.stringContaining("KAIRON_JOB_START RUN-0001")
+    ]);
     expect(result).toMatchObject({
       command: "agy",
       args: spawnedArgs,
@@ -70,6 +74,45 @@ describe("createAntigravityPtySessionRunner", () => {
       exitCode: 1,
       timedOut: true
     });
+    expect(pty.killed).toBe(true);
+  });
+
+  it("completes when Antigravity prints a valid stdout fallback and stays interactive", async () => {
+    const root = await createTempProject();
+    const outboxPath = path.join(root, ".kairon", "runs", "RUN-0006", "outbox.json");
+    const pty = new FakePty();
+    const runner = createAntigravityPtySessionRunner({
+      ptySpawner: fakeSpawner(pty),
+      pollIntervalMs: 5,
+      closeGraceMs: 5,
+      platform: "linux"
+    });
+
+    const resultPromise = runner(job(root, outboxPath, { runId: "RUN-0006" }));
+    await waitForPtyReady();
+    pty.emitData([
+      "KAIRON_OUTBOX_JSON_START\n",
+      "prompt contract is not JSON\n",
+      "KAIRON_OUTBOX_JSON_END\n",
+      "\u001b[32mKAIRON_OUTBOX_JSON_START\u001b[0m\n",
+      JSON.stringify({
+        schema_version: "0.1",
+        run_id: "RUN-0006",
+        task_id: "TASK-0001",
+        status: "completed",
+        events: []
+      }),
+      "\nKAIRON_OUTBOX_JSON_END\n",
+      "agy remains at its interactive prompt"
+    ].join(""));
+    const result = await resultPromise;
+
+    expect(result).toMatchObject({
+      exitCode: 0,
+      timedOut: false
+    });
+    expect(result.stdout).toContain("agy remains at its interactive prompt");
+    expect(pty.writes.join("")).toContain("exit");
     expect(pty.killed).toBe(true);
   });
 
