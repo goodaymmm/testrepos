@@ -112,6 +112,22 @@ describe("createProgram", () => {
     expect(run?.description()).toContain("recovery artifact");
   });
 
+  it("registers cleanup retention planning modes", () => {
+    const cleanup = createProgram().commands.find(
+      (command) => command.name() === "cleanup"
+    );
+    const retention = cleanup?.commands.find(
+      (command) => command.name() === "retention"
+    );
+    const plan = retention?.commands.find((command) => command.name() === "plan");
+
+    expect(retention?.description()).toContain("retention");
+    expect(plan?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining(["--dry-run", "--write-proposal"])
+    );
+    expect(plan?.description()).toContain("without deleting");
+  });
+
   it("documents status and recovery operational scope", () => {
     const program = createProgram();
     const status = program.commands.find((command) => command.name() === "status");
@@ -293,6 +309,7 @@ describe("createProgram", () => {
       "apply",
       "archive",
       "list",
+      "retention",
       "show"
     ]);
     expect(

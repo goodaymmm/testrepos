@@ -57,6 +57,8 @@ export async function runMaintenance(
     `daily_report=${result.daily_report_path}`,
     `cleanup_proposal=${result.cleanup_proposal_path}`,
     `cleanup_candidates=${result.cleanup_proposal.candidates.length}`,
+    `cleanup_retention_candidates=${result.cleanup_proposal.retention_summary?.candidates ?? 0}`,
+    `cleanup_retention_candidate_bytes=${result.cleanup_proposal.retention_summary?.candidate_bytes ?? 0}`,
     `next_day_plan=${result.next_day_plan_path}`,
     `next_day_action_items=${result.next_day_plan.summary.action_items}`,
     `handoffs=${result.handoff_paths.length}`,

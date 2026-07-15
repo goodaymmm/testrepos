@@ -2,15 +2,22 @@ import {
   applyCleanupProposal,
   archiveCleanupProposal,
   listCleanupProposals,
+  planCleanupRetention,
   readCleanupProposalById,
   type CleanupApplyResult,
   type CleanupArchiveResult,
   type CleanupProposal,
-  type CleanupProposalSummary
+  type CleanupProposalSummary,
+  type CleanupRetentionPlanResult
 } from "../../maintenance/cleanup-proposals.js";
 
 export type CleanupApplyCommandOptions = {
   dryRun?: boolean;
+};
+
+export type CleanupRetentionPlanCommandOptions = {
+  dryRun?: boolean;
+  writeProposal?: boolean;
 };
 
 export async function listCleanupCommand(projectRoot: string): Promise<string> {
@@ -50,6 +57,20 @@ export async function archiveCleanupCommand(
   );
 }
 
+export async function planCleanupRetentionCommand(
+  projectRoot: string,
+  options: CleanupRetentionPlanCommandOptions = {}
+): Promise<string> {
+  if (options.dryRun === true && options.writeProposal === true) {
+    throw new Error("Use either --dry-run or --write-proposal, not both.");
+  }
+  return formatCleanupRetentionPlan(
+    await planCleanupRetention(projectRoot, {
+      writeProposal: options.writeProposal === true
+    })
+  );
+}
+
 export function formatCleanupProposalList(proposals: CleanupProposalSummary[]): string {
   if (proposals.length === 0) {
     return "No Kairon cleanup proposals found.";
@@ -59,7 +80,7 @@ export function formatCleanupProposalList(proposals: CleanupProposalSummary[]): 
     "Kairon cleanup proposals:",
     ...proposals.map(
       (proposal) =>
-        `date=${proposal.date} candidates=${proposal.candidates} size_bytes=${proposal.size_bytes} path=${proposal.proposal_path}`
+        `proposal_id=${proposal.proposal_id} date=${proposal.date} candidates=${proposal.candidates} size_bytes=${proposal.size_bytes} path=${proposal.proposal_path}`
     )
   ].join("\n");
 }
@@ -67,13 +88,52 @@ export function formatCleanupProposalList(proposals: CleanupProposalSummary[]): 
 export function formatCleanupProposal(proposal: CleanupProposal): string {
   return [
     "Kairon cleanup proposal:",
+    `proposal_id=${proposal.proposal_id ?? proposal.date}`,
     `date=${proposal.date}`,
     `proposal_path=${proposal.proposal_path}`,
     `direct_delete=${proposal.direct_delete}`,
     `candidates=${proposal.candidates.length}`,
+    ...(proposal.retention_summary === undefined
+      ? []
+      : [
+          `retention.scanned=${proposal.retention_summary.scanned_items}`,
+          `retention.protected=${proposal.retention_summary.protected_items}`,
+          `retention.candidates=${proposal.retention_summary.candidates}`,
+          `retention.candidate_bytes=${proposal.retention_summary.candidate_bytes}`,
+          `retention.skipped_symbolic_links=${proposal.retention_summary.skipped_symbolic_links}`
+        ]),
+    ...proposal.candidates.map(
+      (candidate) => {
+        const retention =
+          candidate.category === undefined
+            ? ""
+            : ` category=${candidate.category} age_days=${candidate.age_days}`;
+        return `candidate=${candidate.id} kind=${candidate.kind} path=${candidate.path} action=${candidate.proposed_action} destination=${candidate.destination} size_bytes=${candidate.size_bytes}${retention} reason=${candidate.reason}`;
+      }
+    )
+  ].join("\n");
+}
+
+export function formatCleanupRetentionPlan(
+  result: CleanupRetentionPlanResult
+): string {
+  const proposal = result.proposal;
+  const summary = proposal.retention_summary;
+  return [
+    result.dry_run
+      ? "Kairon cleanup retention dry run."
+      : "Kairon cleanup retention proposal created.",
+    `proposal_id=${proposal.proposal_id}`,
+    `proposal_path=${proposal.proposal_path}`,
+    `written=${result.written}`,
+    `retention.scanned=${summary?.scanned_items ?? 0}`,
+    `retention.protected=${summary?.protected_items ?? 0}`,
+    `retention.candidates=${summary?.candidates ?? 0}`,
+    `retention.candidate_bytes=${summary?.candidate_bytes ?? 0}`,
+    `retention.skipped_symbolic_links=${summary?.skipped_symbolic_links ?? 0}`,
     ...proposal.candidates.map(
       (candidate) =>
-        `candidate=${candidate.id} kind=${candidate.kind} path=${candidate.path} action=${candidate.proposed_action} destination=${candidate.destination} size_bytes=${candidate.size_bytes}`
+        `- ${candidate.id} category=${candidate.category} path=${candidate.path} age_days=${candidate.age_days} size_bytes=${candidate.size_bytes} reason=${candidate.reason}`
     )
   ].join("\n");
 }

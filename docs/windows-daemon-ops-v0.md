@@ -196,6 +196,30 @@ kairon recovery resolve <target-id> --reason "operator verified stale runtime st
 kairon recovery acknowledge <target-id> --reason "operator will handle this manually"
 ```
 
+## Runtime artifact retention
+
+長期稼働で増加するrun、session、daemon log、audit、reportは、`policies.json`の`cleanup.retention`で保持上限を設定します。上限を超えたartifactは自動削除されず、既存cleanup proposalへ移動候補として追加されます。
+
+候補だけを確認する場合:
+
+```powershell
+cd M:\EnglishApp
+kairon cleanup retention plan --dry-run
+```
+
+operator review用proposalを保存する場合:
+
+```powershell
+kairon cleanup retention plan --write-proposal
+kairon cleanup list
+kairon cleanup show <retention-proposal-id>
+kairon cleanup apply <retention-proposal-id> --dry-run
+```
+
+各categoryは`max_age_days`、`max_files`、`max_bytes`、`min_keep`で制御します。最新の成功run、open approvalや未解決recovery targetから参照されるartifact、各categoryの最新`min_keep`件は候補から除外されます。JSONLはfile単位で扱い、途中の行だけを切り出しません。symbolic linkを含むartifact rootは候補化しません。
+
+`kairon maintenance run`も同じretention scannerを使用します。結果の`cleanup_retention_candidates`と`cleanup_retention_candidate_bytes`を確認し、`kairon cleanup apply`の前に必ずdry-runしてください。
+
 ## 登録解除
 
 ```powershell

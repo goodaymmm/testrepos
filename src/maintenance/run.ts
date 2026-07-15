@@ -87,7 +87,7 @@ export async function runDailyMaintenance(
   const date = request.date ?? (await resolveDate(projectRoot, now));
   const expiredTestItems = await new WorkQueue(projectRoot).expireStaleTestItems(now);
   const recovery = await runRuntimeRecovery(projectRoot, { now });
-  const cleanupProposal = await createCleanupProposals(projectRoot, { date });
+  const cleanupProposal = await createCleanupProposals(projectRoot, { date, now });
   const dailyReport = await createDailyReport(projectRoot, { date });
   const nextDayPlan = await createNextDayPlan(projectRoot, {
     date,

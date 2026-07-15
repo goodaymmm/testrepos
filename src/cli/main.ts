@@ -29,6 +29,7 @@ import {
   applyCleanupCommand,
   archiveCleanupCommand,
   listCleanupCommand,
+  planCleanupRetentionCommand,
   showCleanupCommand
 } from "./commands/cleanup.js";
 import { applyConfig, proposeConfig } from "./commands/config.js";
@@ -394,6 +395,19 @@ export function createProgram(): Command {
     .argument("<proposalId>", "Cleanup proposal date, for example 2026-06-01.")
     .action(async (proposalId: string) => {
       console.log(await archiveCleanupCommand(process.cwd(), proposalId));
+    });
+
+  const cleanupRetention = cleanup
+    .command("retention")
+    .description("Plan retention moves for local runtime artifacts.");
+
+  cleanupRetention
+    .command("plan")
+    .description("Inspect retention limits without deleting artifacts.")
+    .option("--dry-run", "Show candidates without writing a proposal. This is the default.")
+    .option("--write-proposal", "Write the retention proposal for operator review.")
+    .action(async (options: { dryRun?: boolean; writeProposal?: boolean }) => {
+      console.log(await planCleanupRetentionCommand(process.cwd(), options));
     });
 
   const discord = program

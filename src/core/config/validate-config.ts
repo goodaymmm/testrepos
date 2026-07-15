@@ -18,6 +18,28 @@ const agentsConfigSchema = schemaVersion.extend({
   })
 });
 
+const cleanupRetentionRuleSchema = z
+  .object({
+    max_age_days: z.number().int().nonnegative(),
+    max_files: z.number().int().positive(),
+    max_bytes: z.number().int().positive(),
+    min_keep: z.number().int().nonnegative()
+  })
+  .refine((rule) => rule.min_keep <= rule.max_files, {
+    message: "min_keep must not exceed max_files"
+  });
+
+const cleanupRetentionSchema = z.object({
+  enabled: z.boolean(),
+  categories: z.object({
+    runs: cleanupRetentionRuleSchema,
+    sessions: cleanupRetentionRuleSchema,
+    daemon_logs: cleanupRetentionRuleSchema,
+    audits: cleanupRetentionRuleSchema,
+    reports: cleanupRetentionRuleSchema
+  })
+});
+
 const policiesConfigSchema = schemaVersion.extend({
   git: z
     .object({
@@ -33,6 +55,13 @@ const policiesConfigSchema = schemaVersion.extend({
   review: z
     .object({
       required_for_code: z.literal(true)
+    })
+    .passthrough(),
+  cleanup: z
+    .object({
+      delete_directly: z.literal(false),
+      proposal_required: z.literal(true),
+      retention: cleanupRetentionSchema.optional()
     })
     .passthrough()
 });
@@ -59,7 +88,7 @@ export function validateConfigFile(fileName: string, value: unknown): Validation
     const result = policiesConfigSchema.safeParse(value);
     if (!result.success) {
       errors.push(
-        `${fileName}: review is required for code and review-before-commit must be true`
+        `${fileName}: review and cleanup safety policies are invalid`
       );
     } else if (result.data.git.allow_auto_push) {
       warnings.push(`${fileName}: allow_auto_push=true should be used only after review`);
