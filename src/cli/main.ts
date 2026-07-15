@@ -82,6 +82,10 @@ import {
 import { runReviewLoopCommand } from "./commands/review.js";
 import { startRuntime } from "./commands/start.js";
 import {
+  stateBackupCreateCommand,
+  stateBackupRehearseCommand,
+  stateBackupRestoreCommand,
+  stateBackupVerifyCommand,
   stateCheckCommand,
   stateEventsCompactCommand,
   stateEventsVerifyCommand,
@@ -679,6 +683,54 @@ export function createProgram(): Command {
     .option("--format <format>", "Output format: text or json.", "text")
     .action(async (checkpointId: string, options: { format?: string }) => {
       console.log(await stateEventsVerifyCommand(process.cwd(), checkpointId, options));
+    });
+
+  const stateBackup = state
+    .command("backup")
+    .description("Create, verify, rehearse, and restore deterministic state backups.");
+
+  stateBackup
+    .command("create")
+    .description("Plan or create a manifest-based backup of canonical Kairon state.")
+    .option("--dry-run", "List included and excluded paths without writing a backup.")
+    .option("--output <path>", "Parent directory for the backup package.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: { dryRun?: boolean; output?: string; format?: string }) => {
+      console.log(await stateBackupCreateCommand(process.cwd(), options));
+    });
+
+  stateBackup
+    .command("verify")
+    .description("Verify a backup manifest, payload set, sizes, and checksums.")
+    .argument("<backup-id>", "Backup id, for example BKP-20260715000000000-abcdef123456")
+    .option("--source <path>", "Backup package path when the local registry is unavailable.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (backupId: string, options: { source?: string; format?: string }) => {
+      console.log(await stateBackupVerifyCommand(process.cwd(), backupId, options));
+    });
+
+  stateBackup
+    .command("rehearse")
+    .description("Extract and validate a backup in an isolated temporary project.")
+    .argument("<backup-id>", "Backup id, for example BKP-20260715000000000-abcdef123456")
+    .option("--source <path>", "Backup package path when the local registry is unavailable.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (backupId: string, options: { source?: string; format?: string }) => {
+      console.log(await stateBackupRehearseCommand(process.cwd(), backupId, options));
+    });
+
+  stateBackup
+    .command("restore")
+    .description("Restore a verified backup with an exact confirmation and rollback snapshot.")
+    .argument("<backup-id>", "Backup id, for example BKP-20260715000000000-abcdef123456")
+    .requiredOption("--confirm <backupId>", "Restore only when this value matches backup-id.")
+    .option("--source <path>", "Backup package path when the local registry is unavailable.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (
+      backupId: string,
+      options: { confirm?: string; source?: string; format?: string }
+    ) => {
+      console.log(await stateBackupRestoreCommand(process.cwd(), backupId, options));
     });
 
   const git = program

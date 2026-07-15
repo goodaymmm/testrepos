@@ -259,6 +259,63 @@ kairon cleanup apply <retention-proposal-id> --dry-run
 
 `kairon maintenance run`も同じretention scannerを使用します。結果の`cleanup_retention_candidates`と`cleanup_retention_candidate_bytes`を確認し、`kairon cleanup apply`の前に必ずdry-runしてください。
 
+## State backup / restore drill
+
+backupはdaemon停止中に作成・復元します。保存先はtarget projectとは別driveまたは同期対象外の外部directoryを推奨します。
+
+```powershell
+$TARGET = "M:\EnglishApp"
+$BACKUP_ROOT = "D:\KaironBackups\EnglishApp"
+
+cd $TARGET
+kairon stop
+kairon state backup create --dry-run
+$backupJson = kairon state backup create --output $BACKUP_ROOT --format json | ConvertFrom-Json
+$BACKUP_ID = $backupJson.backup_id
+$BACKUP_PACKAGE = $backupJson.package_path
+
+kairon state backup verify $BACKUP_ID --format json | ConvertFrom-Json
+kairon state backup rehearse $BACKUP_ID --format json | ConvertFrom-Json
+```
+
+`rehearse`の`status=passed`、`cleaned_up=true`、`integrity.summary.errors=0`を確認します。
+外部packageを別hostまたはregistryのない状態で検証する場合は`--source`を指定します。
+
+```powershell
+kairon state backup verify $BACKUP_ID --source $BACKUP_PACKAGE
+kairon state backup rehearse $BACKUP_ID --source $BACKUP_PACKAGE
+```
+
+復元前に対象projectを別名へ複製するのではなく、Kaironの確認付きrestoreを使用します。restoreは現行stateのpre-restore snapshotを自動作成します。
+
+```powershell
+cd $TARGET
+kairon stop
+kairon state backup verify $BACKUP_ID --source $BACKUP_PACKAGE
+kairon state backup restore $BACKUP_ID `
+  --source $BACKUP_PACKAGE `
+  --confirm $BACKUP_ID
+kairon state check
+```
+
+restoreが失敗した場合は、再実行する前にRecovery targetとmarkerを確認します。
+
+```powershell
+kairon recovery list
+Get-Content .kairon\runtime\state-backup-restore.json -Raw -Encoding UTF8 | ConvertFrom-Json
+```
+
+markerの`pre_restore_snapshot_id`を確認し、rollbackを選択した場合だけ次を実行します。
+
+```powershell
+$marker = Get-Content .kairon\runtime\state-backup-restore.json -Raw -Encoding UTF8 | ConvertFrom-Json
+kairon state snapshot restore $marker.pre_restore_snapshot_id `
+  --confirm $marker.pre_restore_snapshot_id
+kairon state check
+```
+
+rollback後もmarkerは調査証跡として残ります。内容を確認してRecovery targetをresolveまたはacknowledgeし、次のrestoreを開始する前にoperator判断でmarkerを退避してください。backup package、manifest、markerへsecret値を直接書かないでください。
+
 ## 登録解除
 
 ```powershell

@@ -61,6 +61,7 @@ export type RuntimeRecoveryResult = {
     approvals_existing: number;
     git_transaction_issues: number;
     state_compaction_issues: number;
+    state_backup_restore_issues: number;
   };
   actions: RuntimeRecoveryAction[];
 };
@@ -76,6 +77,7 @@ export type RuntimeRecoveryInspection = {
     gateway_issues: number;
     git_transaction_issues: number;
     state_compaction_issues: number;
+    state_backup_restore_issues: number;
     resolved_targets: number;
   };
   issues: RuntimeRecoveryIssue[];
@@ -125,7 +127,8 @@ export type RuntimeRecoveryIssue = {
     | "partial_outbox"
     | "discord_gateway_starting"
     | "git_transaction_mid_state"
-    | "state_compaction_mid_state";
+    | "state_compaction_mid_state"
+    | "state_backup_restore_mid_state";
   target_id: string;
   target_type:
     | "runtime_lock"
@@ -133,7 +136,8 @@ export type RuntimeRecoveryIssue = {
     | "run"
     | "discord_gateway"
     | "git_transaction"
-    | "state_compaction";
+    | "state_compaction"
+    | "state_backup_restore";
   reason: string;
   severity: "medium" | "high";
   run_id?: string;
@@ -148,6 +152,12 @@ export type RuntimeRecoveryIssue = {
   compaction_marker_path?: string;
   moved_segments?: number;
   snapshot_id?: string;
+  backup_id?: string;
+  restore_status?: string;
+  restore_marker_path?: string;
+  restored_files?: number;
+  deleted_files?: number;
+  pre_restore_snapshot_id?: string;
 };
 
 type RuntimeRecoveryIssueInput = Omit<RuntimeRecoveryIssue, "fingerprint">;
@@ -286,6 +296,14 @@ export async function runRuntimeRecovery(
     ) {
       actions.push(await requestRecoveryApproval(projectRoot, compactionIssue));
     }
+
+    const backupRestoreIssue = await findStateBackupRestoreIssue(projectRoot);
+    if (
+      backupRestoreIssue !== null &&
+      !resolvedFingerprints.has(backupRestoreIssue.fingerprint)
+    ) {
+      actions.push(await requestRecoveryApproval(projectRoot, backupRestoreIssue));
+    }
   }
 
   const result: RuntimeRecoveryResult = {
@@ -317,6 +335,11 @@ export async function runRuntimeRecovery(
         (action) =>
           (action.type === "approval_requested" || action.type === "approval_existing") &&
           action.issue.kind === "state_compaction_mid_state"
+      ).length,
+      state_backup_restore_issues: actions.filter(
+        (action) =>
+          (action.type === "approval_requested" || action.type === "approval_existing") &&
+          action.issue.kind === "state_backup_restore_mid_state"
       ).length
     },
     actions
@@ -340,7 +363,8 @@ export function formatRuntimeRecoveryResult(result: RuntimeRecoveryResult): stri
     `approvals_requested=${result.summary.approvals_requested}`,
     `approvals_existing=${result.summary.approvals_existing}`,
     `git_transaction_issues=${result.summary.git_transaction_issues}`,
-    `state_compaction_issues=${result.summary.state_compaction_issues}`
+    `state_compaction_issues=${result.summary.state_compaction_issues}`,
+    `state_backup_restore_issues=${result.summary.state_backup_restore_issues}`
   ].join("\n");
 }
 
@@ -401,6 +425,10 @@ export async function inspectRuntimeRecoveryTargets(
   if (compactionIssue !== null) {
     issues.push(compactionIssue);
   }
+  const backupRestoreIssue = await findStateBackupRestoreIssue(projectRoot);
+  if (backupRestoreIssue !== null) {
+    issues.push(backupRestoreIssue);
+  }
   const resolvedFingerprints = await readResolvedRecoveryFingerprints(projectRoot);
   const unresolvedIssues = issues.filter(
     (issue) => !resolvedFingerprints.has(issue.fingerprint)
@@ -425,6 +453,9 @@ export async function inspectRuntimeRecoveryTargets(
       ).length,
       state_compaction_issues: unresolvedIssues.filter(
         (issue) => issue.kind === "state_compaction_mid_state"
+      ).length,
+      state_backup_restore_issues: unresolvedIssues.filter(
+        (issue) => issue.kind === "state_backup_restore_mid_state"
       ).length,
       resolved_targets: resolvedTargets
     },
@@ -857,6 +888,59 @@ async function findStateCompactionIssue(
   });
 }
 
+async function findStateBackupRestoreIssue(
+  projectRoot: string
+): Promise<RuntimeRecoveryIssue | null> {
+  const markerPath = resolveInside(
+    getKaironPaths(projectRoot).runtimeDir,
+    "state-backup-restore.json"
+  );
+  const marker = await readOptionalJson<Record<string, unknown>>(markerPath);
+  if (marker === null) {
+    return null;
+  }
+
+  const backupId =
+    typeof marker.backup_id === "string" &&
+    /^BKP-\d{17}-[0-9a-f]{12}$/u.test(marker.backup_id)
+      ? marker.backup_id
+      : "unknown-backup";
+  const restoreStatus =
+    typeof marker.status === "string" &&
+    [
+      "pre_restore_snapshot_created",
+      "restoring",
+      "validating",
+      "restore_failed"
+    ].includes(marker.status)
+      ? marker.status
+      : "unknown";
+  const snapshotId =
+    typeof marker.pre_restore_snapshot_id === "string" &&
+    /^SNP-[A-Z0-9][A-Z0-9_-]{2,80}$/u.test(marker.pre_restore_snapshot_id)
+      ? marker.pre_restore_snapshot_id
+      : undefined;
+  const restoredFiles = readSafeCount(marker.restored_files);
+  const deletedFiles = readSafeCount(marker.deleted_files);
+  const markerProjectPath = toProjectPath(projectRoot, markerPath);
+
+  return createRecoveryIssue({
+    kind: "state_backup_restore_mid_state",
+    target_id: backupId,
+    target_type: "state_backup_restore",
+    backup_id: backupId,
+    restore_status: restoreStatus,
+    restore_marker_path: markerProjectPath,
+    restored_files: restoredFiles,
+    deleted_files: deletedFiles,
+    pre_restore_snapshot_id: snapshotId,
+    snapshot_id: snapshotId,
+    severity: "high",
+    reason:
+      "State backup restore stopped before completion. Verify the backup and use the pre-restore snapshot for an explicit rollback or resume decision."
+  });
+}
+
 async function readOutboxHealth(
   projectRoot: string,
   run: {
@@ -951,6 +1035,12 @@ function readTimestamp(value: unknown): number | undefined {
 
   const timestamp = Date.parse(value);
   return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function readSafeCount(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : 0;
 }
 
 function sanitizeRecord(record: Record<string, unknown>): Record<string, unknown> {

@@ -380,6 +380,7 @@ function idFromApprovalPath(filePath: string): string | undefined {
 function ignoredStatePath(filePath: string): boolean {
   return (
     filePath.startsWith(".kairon/snapshots/") ||
+    filePath.startsWith(".kairon/backups/") ||
     filePath.startsWith(".kairon/tmp/") ||
     filePath.startsWith(".kairon/worktrees/") ||
     filePath.includes("/.resource-locks/")
