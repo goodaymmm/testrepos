@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { loadConfigFile } from "../core/config/load-config.js";
 import { writeJsonFileAtomic } from "../core/fs/json-file.js";
@@ -5,6 +6,7 @@ import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js"
 import { nextId } from "../core/ids/counter.js";
 import { StateApplier } from "../state/state-applier.js";
 import type { GitPolicy, PoliciesConfig } from "../git/workspace-manager.js";
+import { assertDeployPolicySelection, defaultDeployPolicy } from "./policy.js";
 
 export type DryRunOperation = "merge" | "deploy";
 export type DryRunCheckStatus = "passed" | "failed" | "skipped" | "unknown";
@@ -28,9 +30,17 @@ export type DryRunRequest = {
   targetBranch: string;
   commitRange?: string;
   environment?: string;
+  provider?: string;
   checks?: DryRunCheck[];
   rollbackHint?: string;
   reason?: string;
+};
+
+export type DryRunApprovalBinding = {
+  approval_id: string;
+  provider: string;
+  environment: string;
+  input_digest: string;
 };
 
 export type DryRunArtifact = {
@@ -44,6 +54,9 @@ export type DryRunArtifact = {
   target_branch: string;
   commit_range?: string;
   environment?: string;
+  provider?: string;
+  input_digest?: string;
+  approval_binding?: DryRunApprovalBinding;
   checks_summary: DryRunCheck[];
   rollback_hint: string;
   required_approvals: DryRunRequiredApproval[];
@@ -77,9 +90,15 @@ export async function createDryRunApproval(
   projectRoot: string,
   request: DryRunRequest
 ): Promise<DryRunApprovalResult> {
-  validateDryRunRequest(request);
-
   const policies = await loadConfigFile<PoliciesConfig>(projectRoot, "policies.json");
+  validateDryRunRequest(request);
+  if (request.operation === "deploy" && request.provider !== undefined) {
+    assertDeployPolicySelection(
+      policies.deploy ?? defaultDeployPolicy,
+      request.provider,
+      request.environment ?? "local-sandbox"
+    );
+  }
   const approvalId = await nextId(projectRoot, "approval");
   const createdAt = new Date().toISOString();
   const artifactPath = dryRunArtifactPath(projectRoot, approvalId);
@@ -97,6 +116,19 @@ export async function createDryRunApproval(
     request.operation,
     policies.git.require_approval_for
   );
+  const deployInput =
+    request.operation === "deploy" && request.provider !== undefined
+      ? {
+          provider: request.provider,
+          environment: request.environment ?? "local-sandbox",
+          inputDigest: computeDeployInputDigest({
+            targetBranch: request.targetBranch,
+            environment: request.environment ?? "local-sandbox",
+            provider: request.provider,
+            commitRange: request.commitRange
+          })
+        }
+      : undefined;
   const artifact: DryRunArtifact = {
     schema_version: "0.1",
     operation: request.operation,
@@ -107,7 +139,18 @@ export async function createDryRunApproval(
     source_branch: request.sourceBranch,
     target_branch: request.targetBranch,
     commit_range: request.commitRange,
-    environment: request.environment,
+    environment: deployInput?.environment ?? request.environment,
+    provider: deployInput?.provider,
+    input_digest: deployInput?.inputDigest,
+    approval_binding:
+      deployInput === undefined
+        ? undefined
+        : {
+            approval_id: approvalId,
+            provider: deployInput.provider,
+            environment: deployInput.environment,
+            input_digest: deployInput.inputDigest
+          },
     checks_summary: checks,
     rollback_hint: rollbackHint,
     required_approvals: requiredApprovals,
@@ -139,7 +182,9 @@ export async function createDryRunApproval(
         source_branch: request.sourceBranch,
         target_branch: request.targetBranch,
         commit_range: request.commitRange,
-        environment: request.environment,
+        environment: deployInput?.environment ?? request.environment,
+        provider: deployInput?.provider,
+        input_digest: deployInput?.inputDigest,
         checks_summary: checks,
         rollback_hint: rollbackHint,
         required_approvals: requiredApprovals,
@@ -211,9 +256,28 @@ export function formatDryRunApprovalResult(result: DryRunApprovalResult): string
     ...(result.artifact.environment
       ? [`environment=${result.artifact.environment}`]
       : []),
+    ...(result.artifact.provider ? [`provider=${result.artifact.provider}`] : []),
+    ...(result.artifact.input_digest
+      ? [`input_digest=${result.artifact.input_digest}`]
+      : []),
     `required_approvals=${formatRequiredApprovals(result.artifact.required_approvals)}`,
     `event_id=${result.event_id}`
   ].join("\n");
+}
+
+export function computeDeployInputDigest(input: {
+  targetBranch: string;
+  environment: string;
+  provider: string;
+  commitRange?: string;
+}): string {
+  const canonical = JSON.stringify({
+    commit_range: input.commitRange ?? null,
+    environment: input.environment,
+    provider: input.provider,
+    target_branch: input.targetBranch
+  });
+  return `sha256:${createHash("sha256").update(canonical).digest("hex")}`;
 }
 
 function validateDryRunRequest(request: DryRunRequest): void {

@@ -203,6 +203,47 @@ describe("approval follow-up runner", () => {
     });
   });
 
+  it("runs provider-bound deploy follow-ups through the shared execution guard", async () => {
+    const root = await createInitializedProject();
+    const dryRun = await createDryRunApproval(root, {
+      operation: "deploy",
+      targetBranch: "main",
+      environment: "local-sandbox",
+      provider: "local-sandbox",
+      checks: [{ name: "smoke", status: "passed" }]
+    });
+    await new ApprovalQueue(root).decide({
+      approvalId: dryRun.approval_id,
+      action: "approve",
+      reason: "local re-auth completed"
+    });
+    const followUpId = `FUP-${dryRun.approval_id}-approve-deploy-execute_preflight`;
+
+    const result = await runApprovalFollowUp(root, followUpId, { dryRun: true });
+    expect(result).toMatchObject({
+      supported: true,
+      readiness: "passed",
+      execution_performed: false,
+      details: {
+        preflight_status: "passed",
+        execution_allowed: false,
+        operation: "deploy"
+      }
+    });
+    expect(result.details?.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "deploy_provider_policy",
+          status: "passed"
+        }),
+        expect.objectContaining({
+          name: "deploy_input_digest",
+          status: "passed"
+        })
+      ])
+    );
+  });
+
   it("requires exact confirmation and records unsupported actions as skipped", async () => {
     const root = await createInitializedProject();
     const followUp = await recordApprovalFollowUp(root, {

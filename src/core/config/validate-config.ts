@@ -56,6 +56,15 @@ const policiesConfigSchema = schemaVersion.extend({
         .optional()
     })
     .passthrough(),
+  deploy: z
+    .object({
+      allowed_providers: z.array(z.string().min(1)).min(1),
+      allowed_environments: z.array(z.string().min(1)).min(1),
+      production_providers: z.array(z.string().min(1)),
+      production_providers_enabled: z.boolean(),
+      execution_timeout_ms: z.number().int().min(100).max(300_000)
+    })
+    .optional(),
   review: z
     .object({
       required_for_code: z.literal(true)

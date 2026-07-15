@@ -8,6 +8,10 @@ export type KaironEventType =
   | "approval.follow_up.updated"
   | "git.pr.merge.completed"
   | "git.pr.merge.failed"
+  | "deploy.execution.updated"
+  | "deploy.execution.completed"
+  | "deploy.execution.failed"
+  | "deploy.execution.timed_out"
   | "run.completed"
   | "schedule.override.created"
   | "active_work.closed";
@@ -22,6 +26,10 @@ export const kaironEventTypes = [
   "approval.follow_up.updated",
   "git.pr.merge.completed",
   "git.pr.merge.failed",
+  "deploy.execution.updated",
+  "deploy.execution.completed",
+  "deploy.execution.failed",
+  "deploy.execution.timed_out",
   "run.completed",
   "schedule.override.created",
   "active_work.closed"
