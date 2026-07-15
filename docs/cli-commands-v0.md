@@ -62,7 +62,9 @@ kairon release check
 kairon release validate
 kairon release notes --since <ref> [--write]
 kairon release bump --version <version> [--write]
-kairon workflow run --candidate --dry-run
+kairon workflow run <workflow-id> --task-id <task-id>
+kairon workflow show <workflow-id>
+kairon workflow recover <workflow-id> --dry-run
 ```
 
 ## kairon init
@@ -828,7 +830,32 @@ npm publish / git tag / GitHub Releaseは実行しないこと
 
 ## kairon workflow
 
-experimental workflow runtimeをproduction接続候補として評価する。既定はread-only dry-runで、明示した場合だけfeature flag配下のqueueへ接続する。
+task、approval、queue item、resource lockを永続workflow状態として管理する。production実行はfeature flag配下で行い、run artifactと遷移ごとのcheckpointから再起動後に継続できる。
+
+```text
+kairon workflow run WF-0001 --task-id TASK-0001
+kairon workflow run WF-0002 --task-id TASK-0002 --approval-id APR-0001 --resource-lock src/shared.ts --retry-max-attempts 3
+kairon workflow show WF-0001
+kairon workflow recover WF-0001 --dry-run
+kairon workflow recover WF-0001
+```
+
+production runtimeの有効化条件。
+
+```text
+KAIRON_WORKFLOW_RUNTIME=1
+```
+
+`run`は未作成workflowを`--task-id`から開始し、既存workflowではapproval・queue状態を照合して続行する。`recover --dry-run`はartifactを変更せず復旧候補だけを表示する。実際の`recover`とRuntimeLoop起動時のrecoveryは、完了nodeを再投入せず未完了nodeだけを進める。
+
+- run artifact: `.kairon/workflows/runs/<workflow_id>.json`
+- checkpoint: `.kairon/workflows/checkpoints/<workflow_id>-<sequence>.json`
+- queue itemは`workflow/node/attempt`のidempotency keyを持つ。
+- nodeはattempt、queue item ID、run ID、input/output digest、fencing tokenを保持する。
+- approval待ちは`waiting_approval`、resource lock競合は`paused`として永続化する。
+- feature flag無効時はproduction workflow itemをRuntimeLoopがclaimしない。
+
+experimental candidateとの互換経路も維持する。
 
 ```text
 kairon workflow run --candidate --dry-run
@@ -836,7 +863,7 @@ kairon workflow run --candidate --dry-run --workflow-id EXP-WF-CANDIDATE-0001 --
 kairon workflow run --candidate --connect-queue --workflow-id EXP-WF-CONNECT-0001 --task-id TASK-0001 --approval-id APR-0001
 ```
 
-有効化条件。
+candidate経路の有効化条件。
 
 ```text
 KAIRON_EXPERIMENTAL_WORKFLOW_RUNTIME=1

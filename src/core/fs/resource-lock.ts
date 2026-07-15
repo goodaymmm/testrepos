@@ -23,6 +23,7 @@ export type ResourceLockHandle = {
 
 export type ResourceLockOptions = {
   owner?: string;
+  fencingToken?: string;
   now?: Date;
   ttlMs?: number;
 };
@@ -72,7 +73,7 @@ export async function acquireResourceLock(
     resource,
     owner: options.owner ?? "resource-writer",
     pid: process.pid,
-    fencing_token: randomUUID(),
+    fencing_token: options.fencingToken ?? randomUUID(),
     acquired_at: now.toISOString(),
     updated_at: now.toISOString(),
     expires_at: new Date(now.getTime() + ttlMs).toISOString()

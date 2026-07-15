@@ -40,6 +40,10 @@ import {
 } from "./schedule-engine.js";
 import { formatRuntimeStatus, getRuntimeStatus } from "./status.js";
 import { isWorkflowRuntimeCandidateEnabled } from "../experimental/workflow-runtime.js";
+import {
+  isProductionWorkflowRuntimeEnabled,
+  ProductionWorkflowRuntime
+} from "../workflow/runtime.js";
 
 export type RuntimeTickAction =
   | "processed-command"
@@ -111,6 +115,11 @@ export class RuntimeLoop {
       );
     }
 
+    await new ProductionWorkflowRuntime(this.projectRoot, {
+      now: () => now,
+      env: this.options.env
+    }).recoverActive();
+
     const queueResult = await this.createQueueWorker(
       now,
       sessionAvailabilityFromSummary(sessions),
@@ -132,10 +141,11 @@ export class RuntimeLoop {
     availableSessions: AgentSessionAvailability[],
     date: string
   ): QueueWorker {
-    return new QueueWorker(
-      this.projectRoot,
-      new WorkQueue(this.projectRoot),
-      new CommandInbox(this.projectRoot),
+    const workflowRuntime = new ProductionWorkflowRuntime(this.projectRoot, {
+      now: () => now,
+      env: this.options.env
+    });
+    const handlers = wrapProductionWorkflowHandler(
       mergeHandlers(
         defaultQueueHandlers(this.projectRoot, now, {
           reviewLoopRunner: this.options.reviewLoopRunner,
@@ -144,7 +154,14 @@ export class RuntimeLoop {
           date
         }),
         this.options.handlers
-      )
+      ),
+      workflowRuntime
+    );
+    return new QueueWorker(
+      this.projectRoot,
+      new WorkQueue(this.projectRoot),
+      new CommandInbox(this.projectRoot),
+      handlers
     );
   }
 
@@ -222,11 +239,33 @@ export class RuntimeLoop {
   }
 
   private isWorkflowRuntimeItemBlocked(item: QueueItem): boolean {
+    const env = this.options.env ?? process.env;
     return (
-      item.metadata?.workflow_runtime !== undefined &&
-      !isWorkflowRuntimeCandidateEnabled(this.options.env ?? process.env)
+      (item.metadata?.workflow_runtime !== undefined &&
+        !isWorkflowRuntimeCandidateEnabled(env)) ||
+      (item.metadata?.production_workflow !== undefined &&
+        !isProductionWorkflowRuntimeEnabled(env))
     );
   }
+}
+
+function wrapProductionWorkflowHandler(
+  handlers: QueueWorkerHandlers,
+  workflowRuntime: ProductionWorkflowRuntime
+): QueueWorkerHandlers {
+  const agentRun = handlers.items?.["agent.run"];
+  if (agentRun === undefined) {
+    return handlers;
+  }
+
+  return {
+    ...handlers,
+    items: {
+      ...handlers.items,
+      "agent.run": (item) =>
+        workflowRuntime.executeQueueItem(item, () => agentRun(item))
+    }
+  };
 }
 
 function defaultQueueHandlers(

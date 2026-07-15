@@ -41,6 +41,11 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
       process: {
         no_output_timeout_seconds: 600,
         graceful_shutdown_seconds: 30
+      },
+      workflow: {
+        enabled_env: "KAIRON_WORKFLOW_RUNTIME",
+        resource_lock_ttl_seconds: 86400,
+        checkpoint_on_transition: true
       }
     },
     "schedule.json": {
@@ -254,6 +259,9 @@ export const kaironDirectories = [
   "messages",
   "approvals",
   "runs",
+  "workflows",
+  "workflows/runs",
+  "workflows/checkpoints",
   "git",
   "git/branches",
   "git/transactions",

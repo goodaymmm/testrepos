@@ -10,6 +10,13 @@ import {
 } from "../queue/work-queue.js";
 import { TaskRunner, type TaskRecord } from "../tasks/task-runner.js";
 
+export type {
+  WorkflowNodeState,
+  WorkflowNodeStatus,
+  WorkflowRunArtifact,
+  WorkflowStatus
+} from "../workflow/types.js";
+
 export type ExperimentalWorkflowNodeStatus =
   | "completed"
   | "skipped"

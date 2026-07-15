@@ -20,6 +20,7 @@ describe("resource-level state locks", () => {
 
     const lock = await acquireResourceLock(root, resourcePath, {
       owner: "test-writer",
+      fencingToken: "workflow-fence-0001",
       now: new Date("2026-06-01T00:00:00.000Z")
     });
 
@@ -28,6 +29,7 @@ describe("resource-level state locks", () => {
       kind: "resource_lock",
       resource: ".kairon/approvals/APR-0001.json",
       owner: "test-writer",
+      fencing_token: "workflow-fence-0001",
       acquired_at: "2026-06-01T00:00:00.000Z"
     });
     await expect(

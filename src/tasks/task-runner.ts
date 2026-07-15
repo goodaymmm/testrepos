@@ -84,6 +84,7 @@ export type EnqueueTaskRequest = {
   timeoutMs?: number;
   allowInteractiveAgents?: boolean;
   metadata?: QueueMetadata;
+  idempotencyKey?: string;
   createdAt?: Date;
 };
 
@@ -205,14 +206,21 @@ export class TaskRunner {
   }
 
   async enqueueTask(request: EnqueueTaskRequest): Promise<QueueItem> {
+    return (await this.enqueueTaskWithResult(request)).item;
+  }
+
+  async enqueueTaskWithResult(
+    request: EnqueueTaskRequest
+  ): Promise<{ item: QueueItem; created: boolean }> {
     assertTaskId(request.taskId);
     const task = await readJsonFile<TaskRecord>(taskPath(this.projectRoot, request.taskId));
     const now = request.createdAt ?? this.now();
 
-    return new WorkQueue(this.projectRoot).enqueue({
+    const input = {
       type: "agent.run",
       task_id: request.taskId,
       priority: task.priority,
+      idempotency_key: request.idempotencyKey,
       schedule_mode: task.schedule_mode,
       metadata: request.metadata,
       test_scope: buildTestScope(task.tags, now),
@@ -227,7 +235,19 @@ export class TaskRunner {
         approval_required: task.approval_required,
         timeout_ms: request.timeoutMs
       }
-    });
+    } as const;
+
+    if (request.idempotencyKey !== undefined) {
+      return new WorkQueue(this.projectRoot).enqueueIdempotent({
+        ...input,
+        idempotency_key: request.idempotencyKey
+      });
+    }
+
+    return {
+      item: await new WorkQueue(this.projectRoot).enqueue(input),
+      created: true
+    };
   }
 
   async runQueuedAgentItem(

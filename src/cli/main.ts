@@ -106,7 +106,11 @@ import {
   generateOperationTestDocsCommand
 } from "./commands/test-commands.js";
 import { summarizeOperationTestsCommand } from "./commands/test-summary.js";
-import { workflowRunCommand } from "./commands/workflow.js";
+import {
+  workflowRecoverCommand,
+  workflowRunCommand,
+  workflowShowCommand
+} from "./commands/workflow.js";
 
 export type StateSnapshotRestoreCliOptions = {
   dryRun?: boolean;
@@ -931,11 +935,12 @@ export function createProgram(): Command {
 
   const workflow = program
     .command("workflow")
-    .description("Evaluate experimental workflow runtime candidates.");
+    .description("Run and inspect persistent Kairon workflows.");
 
   workflow
     .command("run")
-    .description("Run a feature-flagged workflow candidate dry-run or queue connection.")
+    .description("Run a production workflow or an experimental candidate.")
+    .argument("[workflowId]", "Production workflow id, for example WF-0001.")
     .option("--candidate", "Run the production-candidate workflow adapter.")
     .option("--dry-run", "Write only experimental candidate artifacts. This is the default.")
     .option("--connect-queue", "Enqueue an approved candidate task behind the workflow feature flag.")
@@ -944,7 +949,10 @@ export function createProgram(): Command {
     .option("--queue-item-id <queueItemId>", "Optional queue item id to read without claiming.")
     .option("--approval-id <approvalId>", "Optional approval id to read as a gate.")
     .option("--objective <objective>", "Candidate evaluation objective.")
-    .action(async (options: {
+    .option("--resource-lock <key>", "Exclusive workflow resource key. Repeatable.", collectOption, [])
+    .option("--retry-max-attempts <count>", "Maximum task dispatch attempts.")
+    .option("--retry-backoff-seconds <seconds>", "Retry policy backoff metadata.")
+    .action(async (workflowId: string | undefined, options: {
       candidate?: boolean;
       dryRun?: boolean;
       connectQueue?: boolean;
@@ -953,8 +961,35 @@ export function createProgram(): Command {
       queueItemId?: string;
       approvalId?: string;
       objective?: string;
+      resourceLock?: string[];
+      retryMaxAttempts?: string;
+      retryBackoffSeconds?: string;
     }) => {
-      console.log(await workflowRunCommand(process.cwd(), options));
+      console.log(
+        await workflowRunCommand(process.cwd(), {
+          ...options,
+          workflowId: workflowId ?? options.workflowId
+        })
+      );
+    });
+
+  workflow
+    .command("show")
+    .description("Show the persistent state of a production or legacy workflow.")
+    .argument("<workflowId>", "Workflow id.")
+    .action(async (workflowId: string) => {
+      console.log(await workflowShowCommand(process.cwd(), workflowId));
+    });
+
+  workflow
+    .command("recover")
+    .description("Reconcile workflow state with approval and queue artifacts.")
+    .argument("<workflowId>", "Workflow id.")
+    .option("--dry-run", "Preview recovery without writing or dispatching.")
+    .action(async (workflowId: string, options: { dryRun?: boolean }) => {
+      console.log(
+        await workflowRecoverCommand(process.cwd(), workflowId, options)
+      );
     });
 
   const operationTest = program
