@@ -1,4 +1,5 @@
 import path from "node:path";
+import { uptime } from "node:os";
 import { appendJsonLine } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
 import {
@@ -39,6 +40,7 @@ export type RuntimeDaemonOptions = {
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
   runTick?: () => Promise<RuntimeTickResult>;
+  hostBootAt?: () => string;
 };
 
 export class RuntimeDaemon {
@@ -49,6 +51,7 @@ export class RuntimeDaemon {
 
   async run(): Promise<RuntimeDaemonResult> {
     const startedAt = this.now().toISOString();
+    const hostBootAt = this.options.hostBootAt?.() ?? getHostBootAt(this.now());
     let ticks = 0;
     let idleTicks = 0;
     let stopReason: RuntimeDaemonStopReason = "stop_requested";
@@ -64,6 +67,7 @@ export class RuntimeDaemon {
         event: "started",
         pid: process.pid,
         started_at: startedAt,
+        host_boot_at: hostBootAt,
         interval_ms: this.options.intervalMs ?? 5_000,
         max_ticks: this.options.maxTicks,
         max_idle_ticks: this.options.maxIdleTicks,
@@ -269,6 +273,11 @@ function sanitizeText(value: string): string {
     .replace(/[A-Za-z0-9_-]{24,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{20,}/g, "[redacted-token]")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function getHostBootAt(now: Date): string {
+  const bootTimeMs = now.getTime() - uptime() * 1_000;
+  return new Date(Math.floor(bootTimeMs / 60_000) * 60_000).toISOString();
 }
 
 function toProjectPath(projectRoot: string, filePath: string): string {

@@ -39,6 +39,7 @@ import {
   startDiscordHttpCommand
 } from "./commands/discord.js";
 import {
+  daemonCertifyCommand,
   daemonReportCommand,
   daemonTaskCommand
 } from "./commands/daemon.js";
@@ -523,6 +524,30 @@ export function createProgram(): Command {
       heartbeatGapMs?: string;
     }) => {
       console.log(await daemonReportCommand(process.cwd(), options));
+    });
+
+  daemon
+    .command("certify")
+    .description("Certify daemon soak evidence against explicit long-run thresholds.")
+    .option("--since <duration>", "Certification window such as 24h or an ISO timestamp.", "24h")
+    .option("--format <format>", "Certification format: markdown or json.", "markdown")
+    .option("--output <path>", "Write the certification artifact to a file instead of stdout.")
+    .option("--expected-interval-ms <ms>", "Expected daemon tick interval in milliseconds.", "60000")
+    .option("--max-heartbeat-gap-ms <ms>", "Maximum heartbeat gap in milliseconds.")
+    .option("--max-restart-gap-ms <ms>", "Maximum allowed scheduled restart or reboot gap.")
+    .option("--max-fatal-errors <count>", "Maximum allowed fatal error count.", "0")
+    .option("--minimum-ticks <count>", "Minimum tick count; defaults to 90% of the expected count.")
+    .action(async (options: {
+      since?: string;
+      format?: string;
+      output?: string;
+      expectedIntervalMs?: string;
+      maxHeartbeatGapMs?: string;
+      maxRestartGapMs?: string;
+      maxFatalErrors?: string;
+      minimumTicks?: string;
+    }) => {
+      console.log(await daemonCertifyCommand(process.cwd(), options));
     });
 
   const daemonTask = daemon

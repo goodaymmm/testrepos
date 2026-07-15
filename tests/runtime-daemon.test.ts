@@ -25,6 +25,7 @@ describe("RuntimeDaemon", () => {
     const result = await new RuntimeDaemon(root, {
       intervalMs: 1_000,
       maxTicks: 2,
+      hostBootAt: () => "2026-06-12T00:00:00.000Z",
       now: () => now,
       sleep: async (ms) => {
         now = new Date(now.getTime() + ms);
@@ -57,6 +58,10 @@ describe("RuntimeDaemon", () => {
       "tick",
       "stopped"
     ]);
+    expect(events[0]).toMatchObject({
+      event: "started",
+      host_boot_at: "2026-06-12T00:00:00.000Z"
+    });
     expect(events[2]).toMatchObject({
       event: "tick",
       tick_count: 2,

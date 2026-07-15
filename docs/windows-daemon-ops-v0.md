@@ -174,6 +174,45 @@ reportには次を含めます。
 - 参照した `.kairon/runtime/daemon/*.jsonl` のpath
 - token / api key / secret / password をredactしたfailure summary
 
+## 24時間soak certification
+
+`daemon report`で集計した証跡を、固定thresholdに対して機械判定する場合は`daemon certify`を使用します。実時間24時間の認証では、先にTask Scheduler上のdaemonを24時間以上継続させます。
+
+```powershell
+cd M:\EnglishApp
+
+kairon daemon certify --since 24h
+kairon daemon certify --since 24h --format json
+kairon daemon certify --since 24h --output .kairon\reports\daemon\certification-24h.md
+```
+
+既定profileはtick interval 60秒、最大heartbeat gap 180秒、最大restart gap 600秒、fatal error許容0件、期待tick数の90%以上です。Task Schedulerのintervalが異なる場合は、実際の設定値に合わせて明示します。
+
+Task Scheduler登録は24時間で強制終了しないよう`ExecutionTimeLimit=PT0S`を使用します。T146以前に登録したTaskは、一度`kairon daemon task uninstall`を実行してから`install`し直し、無期限設定へ更新してください。
+
+```powershell
+kairon daemon certify `
+  --since 24h `
+  --expected-interval-ms 60000 `
+  --max-heartbeat-gap-ms 180000 `
+  --max-restart-gap-ms 600000 `
+  --max-fatal-errors 0 `
+  --output .kairon\reports\daemon\certification-24h.md
+```
+
+certification statusは次の意味です。
+
+| Status | 意味 |
+| --- | --- |
+| `PASS` | window、tick、heartbeat、restart、fatal error、stale判定をすべて満たす |
+| `UNPASSED` | fatal error、未許可gap、予期しないrestart、staleなどの失敗証跡がある |
+| `INCOMPLETE` | daemon証跡はあるが、選択したwindowの先頭または末尾を満たしていない |
+| `SETUP_REQUIRED` | 選択window内にdaemon logがなく、外部soak実行が必要 |
+
+`stop_requested`から制限時間内に再度`started`となるpairはscheduled restartとして許可されます。`host_boot_at`が変化した短時間の再開はhost rebootとして許可されます。同一bootでclean stopを伴わない再開、`max_ticks`、`max_idle_ticks`、`fatal_error`による停止は予期しないsequenceとして扱います。
+
+artifactには評価window、全threshold、個別check、restart分類、参照daemon log pathとSHA-256を保存します。raw daemon event、token、環境変数値は保存しません。短縮fixtureはunit test専用であり、実時間24時間のoperation test証跡の代替にはなりません。
+
 ## stale lock復旧
 
 daemonを停止した後もlockが残る場合は、次の順で確認します。

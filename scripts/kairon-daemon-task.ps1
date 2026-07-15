@@ -228,7 +228,7 @@ function Register-KaironTask {
     -RestartCount 3 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
     -AllowStartIfOnBatteries `
-    -ExecutionTimeLimit (New-TimeSpan -Days 1)
+    -ExecutionTimeLimit (New-TimeSpan -Seconds 0)
 
   try {
     Register-ScheduledTask `

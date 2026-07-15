@@ -1,9 +1,16 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type {
   CliInvocation,
   CommandRunResult
 } from "../src/agents/command-runner.js";
-import { daemonTaskCommand } from "../src/cli/commands/daemon.js";
+import {
+  daemonCertifyCommand,
+  daemonTaskCommand
+} from "../src/cli/commands/daemon.js";
+import { initializeProject } from "../src/cli/commands/init.js";
+import { createTempProject } from "./test-utils.js";
 
 describe("daemonTaskCommand", () => {
   it("returns setup guidance without invoking PowerShell outside Windows", async () => {
@@ -159,6 +166,43 @@ describe("daemonTaskCommand", () => {
           })
       })
     ).rejects.toThrow("token=[redacted]");
+  });
+});
+
+describe("daemonCertifyCommand", () => {
+  it("writes a JSON certification artifact and reports setup requirements", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+
+    const output = await daemonCertifyCommand(root, {
+      since: "24h",
+      format: "json",
+      output: ".kairon/reports/daemon/certification-24h.json"
+    });
+
+    expect(output).toContain("Kairon daemon soak certification written.");
+    expect(output).toContain("status=SETUP_REQUIRED");
+    expect(output).toContain(
+      "certification=.kairon/reports/daemon/certification-24h.json"
+    );
+    const artifact = JSON.parse(
+      await readFile(
+        path.join(root, ".kairon", "reports", "daemon", "certification-24h.json"),
+        "utf8"
+      )
+    ) as { kind: string; status: string };
+    expect(artifact).toMatchObject({
+      kind: "daemon_soak_certification",
+      status: "SETUP_REQUIRED"
+    });
+  });
+
+  it("rejects invalid certification thresholds", async () => {
+    await expect(
+      daemonCertifyCommand("C:\\work\\project", {
+        maxFatalErrors: "-1"
+      })
+    ).rejects.toThrow("Invalid max-fatal-errors: -1");
   });
 });
 

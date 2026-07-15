@@ -58,9 +58,16 @@ export type DaemonEvidenceReportOptions = {
   heartbeatGapMs?: number;
 };
 
-type DaemonLogEvent = Record<string, unknown> & {
+export type DaemonLogEvent = Record<string, unknown> & {
   event?: string;
   created_at?: string;
+};
+
+export type DaemonLogEvidence = {
+  events: DaemonLogEvent[];
+  paths: string[];
+  prior_started?: DaemonLogEvent;
+  context_paths: string[];
 };
 
 const defaultSince = "24h";
@@ -75,7 +82,7 @@ export async function createDaemonEvidenceReport(
   const heartbeatGapMs = options.heartbeatGapMs ?? defaultHeartbeatGapMs;
   const { events, paths } = await readDaemonLogEvents(projectRoot, since, now);
   const sortedEvents = events.sort(
-    (left, right) => eventTime(left).getTime() - eventTime(right).getTime()
+    (left, right) => daemonEventTime(left).getTime() - daemonEventTime(right).getTime()
   );
   const ticks = sortedEvents.filter((event) => event.event === "tick");
   const stopped = sortedEvents.filter((event) => event.event === "stopped");
@@ -128,7 +135,7 @@ export async function createDaemonEvidenceReport(
       stale_lock_suspected:
         latestEvent !== undefined &&
         latestEvent.event !== "stopped" &&
-        now.getTime() - eventTime(latestEvent).getTime() > heartbeatGapMs
+        now.getTime() - daemonEventTime(latestEvent).getTime() > heartbeatGapMs
     },
     failures: summarizeFailures([...fatalErrors, ...stopped]),
     heartbeat_gaps: heartbeatGaps
@@ -262,11 +269,11 @@ export function parseSinceDate(value: string, now: Date): Date {
   throw new Error(`Invalid daemon report since value: ${value}`);
 }
 
-async function readDaemonLogEvents(
+export async function readDaemonLogEvents(
   projectRoot: string,
   since: Date,
   until: Date
-): Promise<{ events: DaemonLogEvent[]; paths: string[] }> {
+): Promise<DaemonLogEvidence> {
   const daemonDir = path.join(getKaironPaths(projectRoot).runtimeDir, "daemon");
   let entries: string[];
   try {
@@ -276,7 +283,7 @@ async function readDaemonLogEvents(
       .sort();
   } catch (error) {
     if (String(error).includes("ENOENT")) {
-      return { events: [], paths: [] };
+      return { events: [], paths: [], context_paths: [] };
     }
 
     throw error;
@@ -284,22 +291,46 @@ async function readDaemonLogEvents(
 
   const events: DaemonLogEvent[] = [];
   const usedPaths = new Set<string>();
+  let priorStarted:
+    | { event: DaemonLogEvent; at: number; sourcePath: string }
+    | undefined;
   for (const entry of entries) {
     const filePath = path.join(daemonDir, entry);
     const lines = await readJsonLines<DaemonLogEvent>(filePath);
-    const filtered = lines.filter((event) => {
-      const time = eventTime(event);
+    const sourcePath = toProjectPath(projectRoot, filePath);
+    const sanitizedLines = lines.map(sanitizeDaemonEvent);
+    for (const event of sanitizedLines) {
+      const time = daemonEventTime(event);
+      if (
+        event.event === "started" &&
+        time < since &&
+        (priorStarted === undefined || time.getTime() > priorStarted.at)
+      ) {
+        priorStarted = {
+          event,
+          at: time.getTime(),
+          sourcePath
+        };
+      }
+    }
+    const filtered = sanitizedLines.filter((event) => {
+      const time = daemonEventTime(event);
       return time >= since && time <= until;
     });
     if (filtered.length > 0) {
-      usedPaths.add(toProjectPath(projectRoot, filePath));
-      events.push(...filtered.map(sanitizeDaemonEvent));
+      usedPaths.add(sourcePath);
+      events.push(...filtered);
     }
   }
 
   return {
     events,
-    paths: [...usedPaths]
+    paths: [...usedPaths],
+    prior_started: priorStarted?.event,
+    context_paths:
+      priorStarted === undefined || usedPaths.has(priorStarted.sourcePath)
+        ? []
+        : [priorStarted.sourcePath]
   };
 }
 
@@ -370,11 +401,11 @@ function findHeartbeatGaps(
   for (let index = 1; index < events.length; index += 1) {
     const previous = events[index - 1];
     const current = events[index];
-    const gapMs = eventTime(current).getTime() - eventTime(previous).getTime();
+    const gapMs = daemonEventTime(current).getTime() - daemonEventTime(previous).getTime();
     if (gapMs > heartbeatGapMs) {
       gaps.push({
-        from: previous.created_at ?? eventTime(previous).toISOString(),
-        to: current.created_at ?? eventTime(current).toISOString(),
+        from: previous.created_at ?? daemonEventTime(previous).toISOString(),
+        to: current.created_at ?? daemonEventTime(current).toISOString(),
         gap_ms: gapMs
       });
     }
@@ -405,7 +436,7 @@ function summarizeDaemonStatus(input: {
   return "running_or_incomplete";
 }
 
-function eventTime(event: DaemonLogEvent): Date {
+export function daemonEventTime(event: DaemonLogEvent): Date {
   const value =
     asString(event.created_at) ??
     asString(event.started_at) ??
