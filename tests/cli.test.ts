@@ -542,7 +542,8 @@ describe("createProgram", () => {
     ]);
     expect(deploy?.commands.map((command) => command.name()).sort()).toEqual([
       "dry-run",
-      "execute"
+      "execute",
+      "status"
     ]);
     expect(
       merge?.commands
@@ -566,6 +567,7 @@ describe("createProgram", () => {
       expect.arrayContaining([
         "--target",
         "--environment",
+        "--provider",
         "--commit-range",
         "--check",
         "--rollback-hint",
@@ -597,6 +599,7 @@ describe("createProgram", () => {
         "--dry-run-artifact",
         "--preflight",
         "--execute",
+        "--provider",
         "--expected-head-sha",
         "--actual-head-sha",
         "--required-check",

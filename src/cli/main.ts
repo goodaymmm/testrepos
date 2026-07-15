@@ -46,6 +46,7 @@ import {
 import {
   deployExecuteCommand,
   deployDryRunCommand,
+  deployStatusCommand,
   mergeExecuteCommand,
   mergeDryRunCommand
 } from "./commands/deploy.js";
@@ -840,13 +841,14 @@ export function createProgram(): Command {
 
   const deploy = program
     .command("deploy")
-    .description("Prepare deploy approvals without executing a deploy.");
+    .description("Prepare, execute, and inspect guarded deploy provider operations.");
 
   deploy
     .command("dry-run")
     .description("Create a high-risk approval artifact for a planned deploy.")
     .requiredOption("--target <branch>", "Branch or release ref planned for deployment.")
-    .option("--environment <name>", "Deployment environment.")
+    .option("--environment <name>", "Deployment environment.", "local-sandbox")
+    .option("--provider <name>", "Allowed deploy provider.", "local-sandbox")
     .option("--commit-range <range>", "Commit range reviewed for this dry-run.")
     .option("--check <check>", "Check summary as name:status[:detail]. Repeatable.", collectOption, [])
     .option("--rollback-hint <hint>", "Operator rollback hint recorded in the artifact.")
@@ -854,6 +856,7 @@ export function createProgram(): Command {
     .action(async (options: {
       target?: string;
       environment?: string;
+      provider?: string;
       commitRange?: string;
       check?: string[];
       rollbackHint?: string;
@@ -864,19 +867,21 @@ export function createProgram(): Command {
 
   deploy
     .command("execute")
-    .description("Run deploy execution preflight. Actual deployment is intentionally disabled.")
+    .description("Preflight or execute an approved deploy through an allowed provider.")
     .requiredOption("--dry-run-artifact <idOrPath>", "Dry-run artifact approval id or JSON path.")
     .option("--preflight", "Show execution guardrails without executing. This is the default.")
-    .option("--execute", "Request execution after preflight. Execution is still explicitly disabled.")
+    .option("--execute", "Execute once after all deploy guardrails pass.")
+    .option("--provider <name>", "Provider bound to the dry-run artifact.")
     .option("--expected-head-sha <sha>", "Expected current target branch head SHA.")
     .option("--actual-head-sha <sha>", "Observed target branch head SHA for deterministic checks.")
     .option("--required-check <name>", "Dry-run check name that must be passed. Repeatable.", collectOption, [])
     .option("--approval-id <approvalId>", "Approved dry-run approval id.")
-    .option("--confirm <phrase>", "Local confirmation phrase for later execution modes.")
+    .option("--confirm <dryRunId>", "Exact dry-run id required for provider execution.")
     .action(async (options: {
       dryRunArtifact?: string;
       preflight?: boolean;
       execute?: boolean;
+      provider?: string;
       expectedHeadSha?: string;
       actualHeadSha?: string;
       requiredCheck?: string[];
@@ -884,6 +889,14 @@ export function createProgram(): Command {
       confirm?: string;
     }) => {
       console.log(await deployExecuteCommand(process.cwd(), options));
+    });
+
+  deploy
+    .command("status")
+    .description("Reconcile and show a deploy provider execution.")
+    .argument("<executionId>", "Deploy execution id, for example DEP-0001.")
+    .action(async (executionId: string) => {
+      console.log(await deployStatusCommand(process.cwd(), executionId));
     });
 
   const task = program.command("task").description("Manage Kairon tasks.");

@@ -32,8 +32,10 @@ kairon git pr merge <candidate-id> --dry-run --follow-up-id <follow-up-id>
 kairon git pr merge <candidate-id> --execute --confirm <candidate-id> --follow-up-id <follow-up-id>
 kairon merge dry-run --candidate-id <candidate-id> --source <branch> --target <branch>
 kairon merge execute --dry-run-artifact <id> [--preflight]
-kairon deploy dry-run --target <branch> [--environment <name>]
+kairon deploy dry-run --target <branch> [--environment <name>] [--provider <name>]
 kairon deploy execute --dry-run-artifact <id> [--preflight]
+kairon deploy execute --dry-run-artifact <id> --provider local-sandbox --execute --confirm <id>
+kairon deploy status <execution-id>
 kairon start
 kairon start --daemon [--interval-ms <ms>] [--max-ticks <count>] [--max-idle-ticks <count>]
 kairon daemon task status [--task-name <name>] [--project-root <path>]
@@ -397,13 +399,15 @@ PR本文は日本語テンプレートで生成し、raw diffやtokenは表示�
 
 ## kairon merge / deploy
 
-top-levelのmerge / deploy commandはdry-run artifactと高リスクapprovalを作成し、実行前preflightで安全条件を確認する。top-levelの`merge execute`と`deploy execute`は実処理を行わず、`execute` modeでも明示的に拒否する。実際のGitHub Pull Request mergeは、より厳格なcandidate-bound契約を持つ`kairon git pr merge`だけが担当する。
+top-levelのmerge / deploy commandはdry-run artifactと高リスクapprovalを作成し、実行前preflightで安全条件を確認する。top-levelの`merge execute`は実処理を行わず、実際のGitHub Pull Request mergeは、より厳格なcandidate-bound契約を持つ`kairon git pr merge`だけが担当する。`deploy execute`はprovider-bound dry-runだけを対象とし、既定で許可された`local-sandbox` providerに限って実行できる。production providerはpolicy上の明示許可がない限り候補作成時と実行直前の両方で拒否する。
 
 ```text
 kairon merge dry-run --candidate-id GTX-0001 --source codex/t149 --target main --check build:passed
 kairon merge execute --dry-run-artifact APR-0001 --preflight --required-check build
-kairon deploy dry-run --target main --environment staging --check smoke:passed
-kairon deploy execute --dry-run-artifact APR-0002 --preflight --required-check smoke
+kairon deploy dry-run --target main --environment local-sandbox --provider local-sandbox --check smoke:passed
+kairon deploy execute --dry-run-artifact APR-0002 --preflight --provider local-sandbox --required-check smoke
+kairon deploy execute --dry-run-artifact APR-0002 --provider local-sandbox --execute --approval-id APR-0002 --confirm APR-0002 --required-check smoke
+kairon deploy status DEP-0002
 ```
 
 `execute` preflight の主な確認項目。
@@ -411,8 +415,11 @@ kairon deploy execute --dry-run-artifact APR-0002 --preflight --required-check s
 ```text
 dry-run artifactが対象operationと一致すること
 approval recordが存在し、approve済みであること
+deploy approvalがlocal CLIで再認証・confirmation済みであること
 required approvalsがpolicy上presentであること
 required checksがpassedであること
+providerとenvironmentがallowlist内であること
+provider、environment、target、commit rangeのinput digestとapproval bindingが一致すること
 expected head shaとobserved head shaが一致すること
 rollback hintがartifactに残っていること
 ```
@@ -422,13 +429,16 @@ rollback hintがartifactに残っていること
 ```text
 --dry-run-artifact <idOrPath>   APR-xxxx または .kairon/deploy/dry-runs/*.json
 --preflight                     実行せずguardrail確認だけを表示する。既定動作。
---execute                       実行要求を検証するが、現段階では execution_not_implemented で拒否する。
+--execute                       deploy guardrail通過後、provider operationを1回だけ実行する。mergeでは実行しない。
+--provider <name>               dry-run artifactに固定されたprovider。既定許可はlocal-sandboxのみ。
 --expected-head-sha <sha>       対象branch headが動いていないことを確認する期待SHA。
 --actual-head-sha <sha>         運用テスト用に観測SHAを明示する。未指定時はgit rev-parseで確認する。
 --required-check <name>         passed必須のdry-run check。複数指定可。
 --approval-id <approvalId>      artifactと一致すべき承認ID。
---confirm <phrase>              将来の実行mode向けlocal confirmation phrase。
+--confirm <dryRunId>            deploy実行時にdry-run IDとの完全一致を要求する。
 ```
+
+deploy executionは`.kairon/deploy/executions/<execution-id>.json`へstatusとoperation IDだけを保存し、raw provider responseやcredentialは保存しない。完了時は`.kairon/deploy/rollback-plans/<execution-id>.json`へrollback planを作成する。timeoutや通信結果不明の再実行では同じoperation IDを照会し、providerの`execute`を再送しない。
 
 ## kairon board
 

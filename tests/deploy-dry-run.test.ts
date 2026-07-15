@@ -6,7 +6,7 @@ import {
   mergeDryRunCommand
 } from "../src/cli/commands/deploy.js";
 import { initializeProject } from "../src/cli/commands/init.js";
-import { readJsonFile } from "../src/core/fs/json-file.js";
+import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { createDryRunApproval, parseDryRunCheck } from "../src/deploy/dry-run.js";
 import { WorkQueue } from "../src/queue/work-queue.js";
 import { createTempProject } from "./test-utils.js";
@@ -138,7 +138,7 @@ describe("merge/deploy dry-run approvals", () => {
     await initializeProject({ projectRoot: root });
     await deployDryRunCommand(root, {
       target: "main",
-      environment: "production",
+      environment: "local-sandbox",
       check: ["release:passed"]
     });
 
@@ -178,5 +178,78 @@ describe("merge/deploy dry-run approvals", () => {
     ).rejects.toThrow(/Invalid --check status/);
 
     await expect(new ApprovalQueue(root).list({ status: "all" })).resolves.toEqual([]);
+  });
+
+  it("binds provider, environment, digest, and approval at candidate creation", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+
+    const text = await deployDryRunCommand(root, {
+      target: "main",
+      environment: "local-sandbox",
+      provider: "local-sandbox",
+      commitRange: "v0.1.0..main",
+      check: ["smoke:passed"]
+    });
+    const artifact = await readJsonFile<Record<string, unknown>>(
+      path.join(root, ".kairon", "deploy", "dry-runs", "APR-0001.json")
+    );
+
+    expect(text).toContain("provider=local-sandbox");
+    expect(text).toContain("input_digest=sha256:");
+    expect(artifact).toMatchObject({
+      provider: "local-sandbox",
+      environment: "local-sandbox",
+      approval_binding: {
+        approval_id: "APR-0001",
+        provider: "local-sandbox",
+        environment: "local-sandbox"
+      }
+    });
+    expect(String(artifact.input_digest)).toMatch(/^sha256:[a-f0-9]{64}$/u);
+  });
+
+  it("rejects providers and environments outside the deploy allowlist", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+
+    await expect(
+      deployDryRunCommand(root, {
+        target: "main",
+        environment: "local-sandbox",
+        provider: "production-cloud"
+      })
+    ).rejects.toThrow("provider production-cloud is not allowed");
+    await expect(
+      deployDryRunCommand(root, {
+        target: "main",
+        environment: "production",
+        provider: "local-sandbox"
+      })
+    ).rejects.toThrow("environment production is not allowed");
+    await expect(new ApprovalQueue(root).list({ status: "all" })).resolves.toEqual([]);
+  });
+
+  it("keeps an allowlisted production provider disabled by default", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const policyPath = path.join(root, ".kairon", "config", "policies.json");
+    const policies = await readJsonFile<Record<string, unknown>>(policyPath);
+    const deploy = policies.deploy as Record<string, unknown>;
+    await writeJsonFileAtomic(policyPath, {
+      ...policies,
+      deploy: {
+        ...deploy,
+        allowed_providers: ["local-sandbox", "production-cloud"]
+      }
+    });
+
+    await expect(
+      deployDryRunCommand(root, {
+        target: "main",
+        environment: "local-sandbox",
+        provider: "production-cloud"
+      })
+    ).rejects.toThrow("production provider production-cloud is disabled");
   });
 });

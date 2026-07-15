@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ApprovalQueue } from "../src/approvals/approval-queue.js";
 import {
+  deployDryRunCommand,
   deployExecuteCommand,
   mergeExecuteCommand
 } from "../src/cli/commands/deploy.js";
@@ -134,35 +135,37 @@ describe("merge/deploy execution guardrails", () => {
     expect(text).toContain("check.approval_decision=failed approval record is missing");
   });
 
-  it("keeps execute mode explicitly rejected even after all preflight checks pass", async () => {
+  it("authorizes provider execution only when provider binding and exact id confirm pass", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
-    const dryRun = await createDryRunApproval(root, {
-      operation: "deploy",
-      targetBranch: "main",
-      environment: "production",
-      checks: [{ name: "release", status: "passed" }],
-      rollbackHint: "Redeploy the previous production artifact."
+    await deployDryRunCommand(root, {
+      target: "main",
+      environment: "local-sandbox",
+      provider: "local-sandbox",
+      check: ["release:passed"],
+      rollbackHint: "Clear the disposable local sandbox state."
     });
     await new ApprovalQueue(root).decide({
-      approvalId: dryRun.approval_id,
+      approvalId: "APR-0001",
       action: "approve"
     });
 
     const text = await deployExecuteCommand(root, {
-      dryRunArtifact: dryRun.approval_id,
+      dryRunArtifact: "APR-0001",
       execute: true,
-      approvalId: dryRun.approval_id,
+      provider: "local-sandbox",
+      approvalId: "APR-0001",
       expectedHeadSha: "target-sha",
       actualHeadSha: "target-sha",
       requiredCheck: ["release"],
-      confirm: `EXECUTE DEPLOY ${dryRun.approval_id}`
+      confirm: "APR-0001"
     });
 
-    expect(text).toContain("Kairon deploy execution rejected.");
-    expect(text).toContain("mode=execute");
+    expect(text).toContain("Kairon deploy provider execution completed.");
     expect(text).toContain("preflight.status=passed");
-    expect(text).toContain("reason=execution_not_implemented");
-    expect(text).toContain("execution_allowed=false");
+    expect(text).toContain("execution_allowed=true");
+    expect(text).toContain("check.local_reauthentication=passed");
+    expect(text).toContain("check.deploy_provider_policy=passed");
+    expect(text).toContain("check.deploy_input_digest=passed");
   });
 });

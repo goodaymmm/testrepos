@@ -27,8 +27,17 @@ export type GitPolicy = {
   };
 };
 
+export type DeployPolicy = {
+  allowed_providers: string[];
+  allowed_environments: string[];
+  production_providers: string[];
+  production_providers_enabled: boolean;
+  execution_timeout_ms: number;
+};
+
 export type PoliciesConfig = {
   git: GitPolicy;
+  deploy?: DeployPolicy;
 };
 
 export type AllocateWorkspaceRequest = {

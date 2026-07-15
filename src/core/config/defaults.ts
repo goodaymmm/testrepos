@@ -133,6 +133,13 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           merged: "revert_commit"
         }
       },
+      deploy: {
+        allowed_providers: ["local-sandbox"],
+        allowed_environments: ["local-sandbox", "staging"],
+        production_providers: ["production-cloud"],
+        production_providers_enabled: false,
+        execution_timeout_ms: 30000
+      },
       security: {
         official_cli_only: true,
         disallow_token_extraction: true,
@@ -274,5 +281,11 @@ export const kaironDirectories = [
   "cleanup/proposals",
   "cleanup/applied",
   "cleanup/archived",
+  "deploy",
+  "deploy/dry-runs",
+  "deploy/executions",
+  "deploy/rollback-plans",
+  "deploy/providers/local-sandbox/operations",
+  "deploy/providers/local-sandbox/environments",
   "tmp"
 ];

@@ -6,7 +6,12 @@ import {
 import { readJsonFile } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import type { ApprovalRecord } from "../approvals/approval-queue.js";
-import type { DryRunArtifact, DryRunOperation } from "./dry-run.js";
+import {
+  computeDeployInputDigest,
+  type DryRunArtifact,
+  type DryRunOperation
+} from "./dry-run.js";
+import { loadDeployPolicy, validateDeployPolicySelection } from "./policy.js";
 
 export type ExecutionGuardMode = "preflight" | "execute";
 export type ExecutionGuardStatus = "passed" | "failed";
@@ -21,6 +26,7 @@ export type ExecutionGuardRequest = {
   requiredChecks?: string[];
   approvalId?: string;
   confirm?: string;
+  provider?: string;
 };
 
 export type ExecutionGuardCheck = {
@@ -34,12 +40,14 @@ export type ExecutionGuardPreflight = {
   operation: DryRunOperation;
   mode: ExecutionGuardMode;
   status: ExecutionGuardStatus;
-  execution_allowed: false;
+  execution_allowed: boolean;
   dry_run_artifact_path: string;
   approval_id: string;
   target_branch: string;
   source_branch?: string;
   environment?: string;
+  provider?: string;
+  input_digest?: string;
   expected_head_sha?: string;
   actual_head_sha?: string;
   required_checks: string[];
@@ -60,11 +68,15 @@ export async function buildExecutionPreflight(
   request: ExecutionGuardRequest,
   options: { commandRunner?: CommandRunner } = {}
 ): Promise<ExecutionGuardPreflight> {
-  const artifactPath = resolveDryRunArtifactPath(projectRoot, request.dryRunArtifact);
-  const artifact = await readJsonFile<DryRunArtifact>(artifactPath);
-  assertArtifactMatchesRequest(artifact, request.operation);
+  const { artifactPath, artifact } = await loadExecutionDryRunArtifact(
+    projectRoot,
+    request.dryRunArtifact,
+    request.operation
+  );
 
   const approval = await readApprovalRecord(projectRoot, artifact.approval_id);
+  const deployPolicy =
+    request.operation === "deploy" ? await loadDeployPolicy(projectRoot) : undefined;
   const actualHeadSha =
     request.actualHeadSha ??
     (request.expectedHeadSha === undefined
@@ -74,7 +86,10 @@ export async function buildExecutionPreflight(
   const checks = [
     approvalCheck(artifact, approval, request.approvalId),
     approvalDecisionCheck(approval),
+    approvalReauthenticationCheck(request, approval),
     requiredApprovalsCheck(artifact),
+    deployProviderCheck(request, artifact, deployPolicy),
+    deployInputDigestCheck(request, artifact),
     requiredDryRunChecksCheck(artifact, requiredChecks),
     headShaCheck(request.expectedHeadSha, actualHeadSha),
     rollbackPlanCheck(artifact),
@@ -83,26 +98,34 @@ export async function buildExecutionPreflight(
   const status = checks.every((check) => check.status !== "failed")
     ? "passed"
     : "failed";
+  const executionAllowed =
+    request.operation === "deploy" &&
+    request.mode === "execute" &&
+    status === "passed";
 
   return {
     schema_version: "0.1",
     operation: request.operation,
     mode: request.mode ?? "preflight",
     status,
-    execution_allowed: false,
+    execution_allowed: executionAllowed,
     dry_run_artifact_path: toProjectPath(projectRoot, artifactPath),
     approval_id: artifact.approval_id,
     target_branch: artifact.target_branch,
     source_branch: artifact.source_branch,
     environment: artifact.environment,
+    provider: artifact.provider,
+    input_digest: artifact.input_digest,
     expected_head_sha: request.expectedHeadSha,
     actual_head_sha: actualHeadSha,
     required_checks: requiredChecks,
     rollback_plan: artifact.rollback_hint,
     checks,
     next_action:
-      status === "passed"
-        ? "Execution remains disabled until explicit implementation is added."
+      executionAllowed
+        ? "Execute the selected deploy provider once and persist the execution artifact."
+        : status === "passed"
+          ? "Preflight passed; use explicit execute mode and exact confirmation to continue."
         : "Resolve failed preflight checks before requesting execution."
   };
 }
@@ -110,14 +133,18 @@ export async function buildExecutionPreflight(
 export function formatExecutionPreflight(result: ExecutionGuardPreflight): string {
   const header =
     result.mode === "execute"
-      ? `Kairon ${result.operation} execution rejected.`
+      ? result.execution_allowed
+        ? `Kairon ${result.operation} execution authorized.`
+        : `Kairon ${result.operation} execution rejected.`
       : `Kairon ${result.operation} execution preflight.`;
   const reason =
     result.mode === "execute"
       ? [
-          result.status === "passed"
-            ? "reason=execution_not_implemented"
-            : "reason=preflight_failed"
+          result.execution_allowed
+            ? "reason=provider_execution_authorized"
+            : result.status === "passed"
+              ? "reason=execution_not_implemented"
+              : "reason=preflight_failed"
         ]
       : [];
 
@@ -126,7 +153,7 @@ export function formatExecutionPreflight(result: ExecutionGuardPreflight): strin
     `operation=${result.operation}`,
     `mode=${result.mode}`,
     `preflight.status=${result.status}`,
-    "execution_allowed=false",
+    `execution_allowed=${result.execution_allowed}`,
     ...reason,
     `dry_run_artifact=${result.dry_run_artifact_path}`,
     `approval_id=${result.approval_id}`,
@@ -135,15 +162,31 @@ export function formatExecutionPreflight(result: ExecutionGuardPreflight): strin
       ? []
       : [`source_branch=${result.source_branch}`]),
     ...(result.environment === undefined ? [] : [`environment=${result.environment}`]),
+    ...(result.provider === undefined ? [] : [`provider=${result.provider}`]),
+    ...(result.input_digest === undefined
+      ? []
+      : [`input_digest=${result.input_digest}`]),
     `expected_head_sha=${result.expected_head_sha ?? "not_provided"}`,
     `actual_head_sha=${result.actual_head_sha ?? "not_checked"}`,
     `required_checks=${result.required_checks.length === 0 ? "none" : result.required_checks.join(",")}`,
-    `rollback_plan=${result.rollback_plan}`,
+    `rollback_plan=${sanitizeGuardDetail(result.rollback_plan)}`,
     ...result.checks.map(
-      (check) => `check.${check.name}=${check.status} ${check.detail}`
+      (check) =>
+        `check.${check.name}=${check.status} ${sanitizeGuardDetail(check.detail)}`
     ),
     `next_action=${result.next_action}`
   ].join("\n");
+}
+
+export async function loadExecutionDryRunArtifact(
+  projectRoot: string,
+  value: string,
+  operation: DryRunOperation
+): Promise<{ artifactPath: string; artifact: DryRunArtifact }> {
+  const artifactPath = resolveDryRunArtifactPath(projectRoot, value);
+  const artifact = await readJsonFile<DryRunArtifact>(artifactPath);
+  assertArtifactMatchesRequest(artifact, operation);
+  return { artifactPath, artifact };
 }
 
 function resolveDryRunArtifactPath(projectRoot: string, value: string): string {
@@ -297,6 +340,138 @@ function approvalDecisionCheck(
   };
 }
 
+function approvalReauthenticationCheck(
+  request: ExecutionGuardRequest,
+  approval: ApprovalRecord | null
+): ExecutionGuardCheck {
+  if (request.operation !== "deploy") {
+    return {
+      name: "local_reauthentication",
+      status: "skipped",
+      detail: "not required for merge preflight"
+    };
+  }
+  if (approval === null) {
+    return {
+      name: "local_reauthentication",
+      status: "failed",
+      detail: "approval record is missing"
+    };
+  }
+  const confirmation = isRecord(approval.confirmation)
+    ? approval.confirmation
+    : undefined;
+  const decidedBy = isRecord(approval.decided_by) ? approval.decided_by : undefined;
+  if (
+    confirmation?.status !== "confirmed" ||
+    decidedBy?.source !== "local-cli"
+  ) {
+    return {
+      name: "local_reauthentication",
+      status: "failed",
+      detail: `confirmation=${String(confirmation?.status ?? "missing")} source=${String(decidedBy?.source ?? "missing")}`
+    };
+  }
+  return {
+    name: "local_reauthentication",
+    status: "passed",
+    detail: "confirmed through local-cli"
+  };
+}
+
+function deployProviderCheck(
+  request: ExecutionGuardRequest,
+  artifact: DryRunArtifact,
+  policy: Awaited<ReturnType<typeof loadDeployPolicy>> | undefined
+): ExecutionGuardCheck {
+  if (request.operation !== "deploy") {
+    return {
+      name: "deploy_provider_policy",
+      status: "skipped",
+      detail: "not a deploy operation"
+    };
+  }
+  if (artifact.provider === undefined || artifact.environment === undefined) {
+    return {
+      name: "deploy_provider_policy",
+      status: request.mode === "execute" ? "failed" : "skipped",
+      detail: "legacy artifact has no provider binding"
+    };
+  }
+  if (request.provider !== undefined && request.provider !== artifact.provider) {
+    return {
+      name: "deploy_provider_policy",
+      status: "failed",
+      detail: `provider mismatch: artifact=${artifact.provider} requested=${request.provider}`
+    };
+  }
+  const errors = validateDeployPolicySelection(
+    policy!,
+    artifact.provider,
+    artifact.environment
+  );
+  return errors.length === 0
+    ? {
+        name: "deploy_provider_policy",
+        status: "passed",
+        detail: `provider=${artifact.provider} environment=${artifact.environment}`
+      }
+    : {
+        name: "deploy_provider_policy",
+        status: "failed",
+        detail: errors.join("; ")
+      };
+}
+
+function deployInputDigestCheck(
+  request: ExecutionGuardRequest,
+  artifact: DryRunArtifact
+): ExecutionGuardCheck {
+  if (request.operation !== "deploy") {
+    return {
+      name: "deploy_input_digest",
+      status: "skipped",
+      detail: "not a deploy operation"
+    };
+  }
+  if (
+    artifact.provider === undefined ||
+    artifact.environment === undefined ||
+    artifact.input_digest === undefined ||
+    artifact.approval_binding === undefined
+  ) {
+    return {
+      name: "deploy_input_digest",
+      status: request.mode === "execute" ? "failed" : "skipped",
+      detail: "legacy artifact has no digest binding"
+    };
+  }
+  const expected = computeDeployInputDigest({
+    targetBranch: artifact.target_branch,
+    environment: artifact.environment,
+    provider: artifact.provider,
+    commitRange: artifact.commit_range
+  });
+  const binding = artifact.approval_binding;
+  const valid =
+    artifact.input_digest === expected &&
+    binding.input_digest === expected &&
+    binding.approval_id === artifact.approval_id &&
+    binding.provider === artifact.provider &&
+    binding.environment === artifact.environment;
+  return valid
+    ? {
+        name: "deploy_input_digest",
+        status: "passed",
+        detail: expected
+      }
+    : {
+        name: "deploy_input_digest",
+        status: "failed",
+        detail: "artifact input or approval binding changed after dry-run"
+      };
+}
+
 function requiredApprovalsCheck(artifact: DryRunArtifact): ExecutionGuardCheck {
   const missing = artifact.required_approvals
     .filter((approval) => !approval.present)
@@ -412,7 +587,10 @@ function executionConfirmationCheck(
     };
   }
 
-  const expected = `EXECUTE ${artifact.operation.toUpperCase()} ${artifact.approval_id}`;
+  const expected =
+    artifact.operation === "deploy"
+      ? artifact.approval_id
+      : `EXECUTE ${artifact.operation.toUpperCase()} ${artifact.approval_id}`;
   if (request.confirm !== expected) {
     return {
       name: "local_confirmation",
@@ -426,6 +604,21 @@ function executionConfirmationCheck(
     status: "passed",
     detail: "confirmed"
   };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function sanitizeGuardDetail(value: string): string {
+  return value
+    .replace(
+      /(api[_-]?key|token|secret|password|authorization)\s*[:=]\s*[^\s,;]+/giu,
+      "$1=[redacted]"
+    )
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, 240);
 }
 
 function normalizeRequiredChecks(values: string[] | undefined): string[] {

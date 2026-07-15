@@ -10,6 +10,11 @@ import {
   type ExecutionGuardMode,
   type ExecutionGuardRequest
 } from "../../deploy/execution-guard.js";
+import {
+  executeDeployProvider,
+  formatDeployExecutionResult,
+  getDeployExecutionStatus
+} from "../../deploy/provider-execution.js";
 
 export type MergeDryRunCommandOptions = {
   candidateId?: string;
@@ -24,6 +29,7 @@ export type MergeDryRunCommandOptions = {
 export type DeployDryRunCommandOptions = {
   target?: string;
   environment?: string;
+  provider?: string;
   commitRange?: string;
   check?: string[];
   rollbackHint?: string;
@@ -39,6 +45,7 @@ export type ExecutionGuardCommandOptions = {
   requiredCheck?: string[];
   approvalId?: string;
   confirm?: string;
+  provider?: string;
 };
 
 export async function mergeDryRunCommand(
@@ -82,7 +89,8 @@ export async function deployDryRunCommand(
   const result = await createDryRunApproval(projectRoot, {
     operation: "deploy",
     targetBranch: requiredOption(options.target, "--target"),
-    environment: options.environment,
+    environment: options.environment ?? "local-sandbox",
+    provider: options.provider ?? "local-sandbox",
     commitRange: options.commitRange,
     checks: parseChecks(options.check),
     rollbackHint: options.rollbackHint,
@@ -96,6 +104,18 @@ export async function deployExecuteCommand(
   projectRoot: string,
   options: ExecutionGuardCommandOptions
 ): Promise<string> {
+  if (options.execute === true) {
+    const result = await executeDeployProvider(projectRoot, {
+      dryRunArtifact: requiredOption(options.dryRunArtifact, "--dry-run-artifact"),
+      provider: requiredOption(options.provider, "--provider"),
+      expectedHeadSha: options.expectedHeadSha,
+      actualHeadSha: options.actualHeadSha,
+      requiredChecks: options.requiredCheck,
+      approvalId: options.approvalId,
+      confirm: options.confirm
+    });
+    return formatDeployExecutionResult(result);
+  }
   return executeGuardCommand(projectRoot, {
     operation: "deploy",
     dryRunArtifact: requiredOption(options.dryRunArtifact, "--dry-run-artifact"),
@@ -104,8 +124,18 @@ export async function deployExecuteCommand(
     actualHeadSha: options.actualHeadSha,
     requiredChecks: options.requiredCheck,
     approvalId: options.approvalId,
-    confirm: options.confirm
+    confirm: options.confirm,
+    provider: options.provider
   });
+}
+
+export async function deployStatusCommand(
+  projectRoot: string,
+  executionId: string
+): Promise<string> {
+  return formatDeployExecutionResult(
+    await getDeployExecutionStatus(projectRoot, executionId)
+  );
 }
 
 function parseChecks(values: string[] | undefined): DryRunCheck[] {
