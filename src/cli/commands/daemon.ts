@@ -9,12 +9,28 @@ import {
   parseDaemonReportFormat,
   writeDaemonEvidenceReport
 } from "../../runtime/daemon-report.js";
+import {
+  createDaemonSoakCertification,
+  formatDaemonSoakCertification,
+  writeDaemonSoakCertification
+} from "../../runtime/daemon-certification.js";
 
 export type DaemonReportCommandOptions = {
   since?: string;
   format?: string;
   output?: string;
   heartbeatGapMs?: string;
+};
+
+export type DaemonCertifyCommandOptions = {
+  since?: string;
+  format?: string;
+  output?: string;
+  expectedIntervalMs?: string;
+  maxHeartbeatGapMs?: string;
+  maxRestartGapMs?: string;
+  maxFatalErrors?: string;
+  minimumTicks?: string;
 };
 
 export type DaemonTaskAction = "status" | "install" | "uninstall" | "restart";
@@ -62,6 +78,56 @@ export async function daemonReportCommand(
   }
 
   return formatDaemonEvidenceReport(report, format);
+}
+
+export async function daemonCertifyCommand(
+  projectRoot: string,
+  options: DaemonCertifyCommandOptions = {}
+): Promise<string> {
+  const format = parseDaemonReportFormat(options.format);
+  const certification = await createDaemonSoakCertification(projectRoot, {
+    since: options.since,
+    expectedIntervalMs: parseOptionalPositiveNumber(
+      options.expectedIntervalMs,
+      "expected-interval-ms"
+    ),
+    maxHeartbeatGapMs: parseOptionalPositiveNumber(
+      options.maxHeartbeatGapMs,
+      "max-heartbeat-gap-ms"
+    ),
+    maxRestartGapMs: parseOptionalPositiveNumber(
+      options.maxRestartGapMs,
+      "max-restart-gap-ms"
+    ),
+    maxFatalErrors: parseOptionalNonNegativeNumber(
+      options.maxFatalErrors,
+      "max-fatal-errors"
+    ),
+    minimumTicks: parseOptionalNonNegativeNumber(options.minimumTicks, "minimum-ticks")
+  });
+
+  if (options.output !== undefined) {
+    const certificationPath = await writeDaemonSoakCertification(
+      projectRoot,
+      options.output,
+      certification,
+      format
+    );
+    return [
+      "Kairon daemon soak certification written.",
+      `certification=${certificationPath}`,
+      `certification_id=${certification.certification_id}`,
+      `format=${format}`,
+      `status=${certification.status}`,
+      `window_complete=${certification.window.complete}`,
+      `ticks=${certification.metrics.ticks}`,
+      `fatal_errors=${certification.metrics.fatal_errors}`,
+      `heartbeat_gap_violations=${certification.metrics.heartbeat_gap_violations}`,
+      `unexpected_restarts=${certification.metrics.unexpected_restarts}`
+    ].join("\n");
+  }
+
+  return formatDaemonSoakCertification(certification, format);
 }
 
 export async function daemonTaskCommand(
@@ -194,6 +260,22 @@ function parsePositiveNumber(value: string, optionName: string): number {
     throw new Error(`Invalid ${optionName}: ${value}`);
   }
   return parsed;
+}
+
+function parseOptionalNonNegativeNumber(
+  value: string | undefined,
+  optionName: string
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed >= 0) {
+    return parsed;
+  }
+
+  throw new Error(`Invalid ${optionName}: ${value}`);
 }
 
 function redactDaemonTaskOutput(value: string): string {

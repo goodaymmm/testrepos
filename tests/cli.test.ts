@@ -148,11 +148,12 @@ describe("createProgram", () => {
     );
   });
 
-  it("registers daemon evidence report and Windows task commands", () => {
+  it("registers daemon evidence, certification, and Windows task commands", () => {
     const daemon = createProgram().commands.find(
       (command) => command.name() === "daemon"
     );
     const report = daemon?.commands.find((command) => command.name() === "report");
+    const certify = daemon?.commands.find((command) => command.name() === "certify");
     const task = daemon?.commands.find((command) => command.name() === "task");
     const taskCommands = task?.commands.map((command) => command.name());
 
@@ -164,6 +165,19 @@ describe("createProgram", () => {
         "--format",
         "--output",
         "--heartbeat-gap-ms"
+      ])
+    );
+    expect(certify?.description()).toContain("Certify daemon soak evidence");
+    expect(certify?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining([
+        "--since",
+        "--format",
+        "--output",
+        "--expected-interval-ms",
+        "--max-heartbeat-gap-ms",
+        "--max-restart-gap-ms",
+        "--max-fatal-errors",
+        "--minimum-ticks"
       ])
     );
     expect(task?.description()).toContain("Windows Task Scheduler");

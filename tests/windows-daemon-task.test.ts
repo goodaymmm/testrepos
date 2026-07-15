@@ -18,6 +18,8 @@ describe("kairon-daemon-task.ps1", () => {
     expect(script).toContain("Unregister-ScheduledTask");
     expect(script).toContain("start --daemon --interval-ms");
     expect(script).toContain("-RunLevel Limited");
+    expect(script).toContain("-ExecutionTimeLimit (New-TimeSpan -Seconds 0)");
+    expect(script).not.toContain("-ExecutionTimeLimit (New-TimeSpan -Days 1)");
     expect(script).not.toContain("LeastPrivilege");
     expect(script).toContain("Push-Location");
     expect(script).toContain("Pop-Location");
