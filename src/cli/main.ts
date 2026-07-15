@@ -83,6 +83,8 @@ import { runReviewLoopCommand } from "./commands/review.js";
 import { startRuntime } from "./commands/start.js";
 import {
   stateCheckCommand,
+  stateEventsCompactCommand,
+  stateEventsVerifyCommand,
   stateSnapshotCommand,
   stateSnapshotRestoreCommand
 } from "./commands/state.js";
@@ -655,6 +657,29 @@ export function createProgram(): Command {
         );
       }
     );
+
+  const stateEvents = state
+    .command("events")
+    .description("Plan, execute, and verify event log checkpoints and archives.");
+
+  stateEvents
+    .command("compact")
+    .description("Plan or execute compaction for closed daily event segments.")
+    .option("--dry-run", "Show the checkpoint and archive plan without changing state.")
+    .option("--confirm <checkpointId>", "Compact only when this value matches the planned checkpoint id.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: { dryRun?: boolean; confirm?: string; format?: string }) => {
+      console.log(await stateEventsCompactCommand(process.cwd(), options));
+    });
+
+  stateEvents
+    .command("verify")
+    .description("Verify one event checkpoint, archive, and source snapshot.")
+    .argument("<checkpoint-id>", "Event checkpoint id, for example ECP-EVT-000001-abcdef123456")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (checkpointId: string, options: { format?: string }) => {
+      console.log(await stateEventsVerifyCommand(process.cwd(), checkpointId, options));
+    });
 
   const git = program
     .command("git")

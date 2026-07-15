@@ -196,7 +196,7 @@ describe("createProgram", () => {
     ).toContain("--dry-run");
   });
 
-  it("registers state integrity and snapshot commands", () => {
+  it("registers state integrity, event compaction, and snapshot commands", () => {
     const state = createProgram().commands.find(
       (command) => command.name() === "state"
     );
@@ -207,10 +207,14 @@ describe("createProgram", () => {
     const restore = snapshot?.commands.find(
       (command) => command.name() === "restore"
     );
+    const events = state?.commands.find((command) => command.name() === "events");
+    const compact = events?.commands.find((command) => command.name() === "compact");
+    const verify = events?.commands.find((command) => command.name() === "verify");
 
     expect(state?.description()).toContain("file-based state integrity");
     expect(state?.commands.map((command) => command.name()).sort()).toEqual([
       "check",
+      "events",
       "snapshot"
     ]);
     expect(check?.options.map((option) => option.long)).toContain("--format");
@@ -222,6 +226,14 @@ describe("createProgram", () => {
     expect(restore?.options.map((option) => option.long)).toEqual(
       expect.arrayContaining(["--dry-run", "--confirm", "--format"])
     );
+    expect(events?.commands.map((command) => command.name()).sort()).toEqual([
+      "compact",
+      "verify"
+    ]);
+    expect(compact?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining(["--dry-run", "--confirm", "--format"])
+    );
+    expect(verify?.options.map((option) => option.long)).toContain("--format");
   });
 
   it("routes nested snapshot restore options to the restore action", async () => {

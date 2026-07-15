@@ -12,6 +12,14 @@ import {
   planStateSnapshotRestore,
   restoreStateSnapshot
 } from "../../state/snapshot.js";
+import {
+  compactEventLogs,
+  formatEventCompactionPlan,
+  formatEventCompactionResult,
+  formatEventCompactionVerification,
+  planEventCompaction,
+  verifyEventCompaction
+} from "../../state/event-compaction.js";
 
 export type StateCheckCommandOptions = {
   format?: string;
@@ -25,6 +33,16 @@ export type StateSnapshotCommandOptions = {
 export type StateSnapshotRestoreCommandOptions = {
   dryRun?: boolean;
   confirm?: string;
+  format?: string;
+};
+
+export type StateEventsCompactCommandOptions = {
+  dryRun?: boolean;
+  confirm?: string;
+  format?: string;
+};
+
+export type StateEventsVerifyCommandOptions = {
   format?: string;
 };
 
@@ -74,6 +92,43 @@ export async function stateSnapshotRestoreCommand(
     confirm: options.confirm
   });
   return formatStateSnapshotRestoreResult(result, { format });
+}
+
+export async function stateEventsCompactCommand(
+  projectRoot: string,
+  options: StateEventsCompactCommandOptions = {}
+): Promise<string> {
+  const format = parseStateOutputFormat(options.format);
+  if (options.dryRun === true && options.confirm !== undefined) {
+    throw new Error("Use either --dry-run or --confirm, not both.");
+  }
+  if (options.dryRun === true) {
+    return formatEventCompactionPlan(await planEventCompaction(projectRoot), {
+      format
+    });
+  }
+  if (options.confirm === undefined) {
+    throw new Error(
+      "Event compaction requires --dry-run or --confirm <checkpoint-id>."
+    );
+  }
+
+  return formatEventCompactionResult(
+    await compactEventLogs(projectRoot, { confirm: options.confirm }),
+    { format }
+  );
+}
+
+export async function stateEventsVerifyCommand(
+  projectRoot: string,
+  checkpointId: string,
+  options: StateEventsVerifyCommandOptions = {}
+): Promise<string> {
+  const format = parseStateOutputFormat(options.format);
+  return formatEventCompactionVerification(
+    await verifyEventCompaction(projectRoot, checkpointId),
+    { format }
+  );
 }
 
 function parseStateOutputFormat(value: string | undefined): "text" | "json" {

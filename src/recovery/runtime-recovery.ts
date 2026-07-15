@@ -60,6 +60,7 @@ export type RuntimeRecoveryResult = {
     approvals_requested: number;
     approvals_existing: number;
     git_transaction_issues: number;
+    state_compaction_issues: number;
   };
   actions: RuntimeRecoveryAction[];
 };
@@ -74,6 +75,7 @@ export type RuntimeRecoveryInspection = {
     run_issues: number;
     gateway_issues: number;
     git_transaction_issues: number;
+    state_compaction_issues: number;
     resolved_targets: number;
   };
   issues: RuntimeRecoveryIssue[];
@@ -122,14 +124,16 @@ export type RuntimeRecoveryIssue = {
     | "missing_outbox"
     | "partial_outbox"
     | "discord_gateway_starting"
-    | "git_transaction_mid_state";
+    | "git_transaction_mid_state"
+    | "state_compaction_mid_state";
   target_id: string;
   target_type:
     | "runtime_lock"
     | "queue_item"
     | "run"
     | "discord_gateway"
-    | "git_transaction";
+    | "git_transaction"
+    | "state_compaction";
   reason: string;
   severity: "medium" | "high";
   run_id?: string;
@@ -139,6 +143,11 @@ export type RuntimeRecoveryIssue = {
   gateway_path?: string;
   transaction_id?: string;
   transaction_status?: string;
+  checkpoint_id?: string;
+  compaction_status?: string;
+  compaction_marker_path?: string;
+  moved_segments?: number;
+  snapshot_id?: string;
 };
 
 type RuntimeRecoveryIssueInput = Omit<RuntimeRecoveryIssue, "fingerprint">;
@@ -269,6 +278,14 @@ export async function runRuntimeRecovery(
       }
       actions.push(await requestRecoveryApproval(projectRoot, issue));
     }
+
+    const compactionIssue = await findStateCompactionIssue(projectRoot);
+    if (
+      compactionIssue !== null &&
+      !resolvedFingerprints.has(compactionIssue.fingerprint)
+    ) {
+      actions.push(await requestRecoveryApproval(projectRoot, compactionIssue));
+    }
   }
 
   const result: RuntimeRecoveryResult = {
@@ -295,6 +312,11 @@ export async function runRuntimeRecovery(
         (action) =>
           (action.type === "approval_requested" || action.type === "approval_existing") &&
           action.issue.kind === "git_transaction_mid_state"
+      ).length,
+      state_compaction_issues: actions.filter(
+        (action) =>
+          (action.type === "approval_requested" || action.type === "approval_existing") &&
+          action.issue.kind === "state_compaction_mid_state"
       ).length
     },
     actions
@@ -317,7 +339,8 @@ export function formatRuntimeRecoveryResult(result: RuntimeRecoveryResult): stri
     `requeued_items=${result.summary.requeued_items}`,
     `approvals_requested=${result.summary.approvals_requested}`,
     `approvals_existing=${result.summary.approvals_existing}`,
-    `git_transaction_issues=${result.summary.git_transaction_issues}`
+    `git_transaction_issues=${result.summary.git_transaction_issues}`,
+    `state_compaction_issues=${result.summary.state_compaction_issues}`
   ].join("\n");
 }
 
@@ -374,6 +397,10 @@ export async function inspectRuntimeRecoveryTargets(
   }
 
   issues.push(...findStaleGitTransactionIssues(gitTransactions, now, options));
+  const compactionIssue = await findStateCompactionIssue(projectRoot);
+  if (compactionIssue !== null) {
+    issues.push(compactionIssue);
+  }
   const resolvedFingerprints = await readResolvedRecoveryFingerprints(projectRoot);
   const unresolvedIssues = issues.filter(
     (issue) => !resolvedFingerprints.has(issue.fingerprint)
@@ -395,6 +422,9 @@ export async function inspectRuntimeRecoveryTargets(
       ).length,
       git_transaction_issues: unresolvedIssues.filter(
         (issue) => issue.kind === "git_transaction_mid_state"
+      ).length,
+      state_compaction_issues: unresolvedIssues.filter(
+        (issue) => issue.kind === "state_compaction_mid_state"
       ).length,
       resolved_targets: resolvedTargets
     },
@@ -772,6 +802,58 @@ function findStaleGitTransactionIssues(
           "Git transaction stopped in a mid-state and requires manual recovery to avoid duplicate commit or push."
       })
     ];
+  });
+}
+
+async function findStateCompactionIssue(
+  projectRoot: string
+): Promise<RuntimeRecoveryIssue | null> {
+  const markerPath = resolveInside(
+    getKaironPaths(projectRoot).runtimeDir,
+    "state-compaction.json"
+  );
+  const marker = await readOptionalJson<Record<string, unknown>>(markerPath);
+  if (marker === null) {
+    return null;
+  }
+
+  const checkpointId =
+    typeof marker.checkpoint_id === "string" &&
+    /^ECP-EVT-\d+-[0-9a-f]{12}$/u.test(marker.checkpoint_id)
+      ? marker.checkpoint_id
+      : "unknown-checkpoint";
+  const status =
+    typeof marker.status === "string" &&
+    ["snapshot_created", "moving_segments", "archive_written"].includes(marker.status)
+      ? marker.status
+      : "unknown";
+  const snapshot =
+    marker.snapshot !== null &&
+    typeof marker.snapshot === "object" &&
+    !Array.isArray(marker.snapshot)
+      ? marker.snapshot as Record<string, unknown>
+      : {};
+  const movedSegments = Array.isArray(marker.moved_segments)
+    ? marker.moved_segments.filter((item) => typeof item === "string").length
+    : 0;
+  const markerProjectPath = toProjectPath(projectRoot, markerPath);
+
+  return createRecoveryIssue({
+    kind: "state_compaction_mid_state",
+    target_id: checkpointId,
+    target_type: "state_compaction",
+    checkpoint_id: checkpointId,
+    compaction_status: status,
+    compaction_marker_path: markerProjectPath,
+    moved_segments: movedSegments,
+    snapshot_id:
+      typeof snapshot.snapshot_id === "string" &&
+      /^SNP-[A-Z0-9][A-Z0-9_-]{2,80}$/u.test(snapshot.snapshot_id)
+        ? snapshot.snapshot_id
+        : undefined,
+    severity: "high",
+    reason:
+      "Event log compaction stopped before checkpoint completion. Verify the snapshot and moved segments, then choose manual roll-forward or rollback."
   });
 }
 
