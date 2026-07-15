@@ -16,6 +16,7 @@ export type GitPolicy = {
   auto_branch_prefixes: string[];
   protected_branches: string[];
   require_approval_for: string[];
+  allowed_merge_methods?: Array<"merge" | "squash" | "rebase">;
   require_clean_base_worktree: boolean;
   max_parallel_writers_per_path: number;
   rollback_strategy: {

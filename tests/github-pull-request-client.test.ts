@@ -4,6 +4,10 @@ import {
   GitHubPullRequestClientError,
   inspectGitHubPullRequestRefs
 } from "../src/github/pull-request-client.js";
+import {
+  inspectGitHubPullRequestForMerge,
+  mergeGitHubPullRequest
+} from "../src/github/pull-request-merge.js";
 
 describe("GitHub pull request client", () => {
   afterEach(() => {
@@ -93,6 +97,114 @@ describe("GitHub pull request client", () => {
     expect(error).toBeInstanceOf(GitHubPullRequestClientError);
     expect(error).toMatchObject({ kind, httpStatus: status });
     expect(String(error)).not.toContain("secret-token");
+  });
+
+  it("normalizes live PR, protection, check, and review evidence for merge", async () => {
+    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url.endsWith("/pulls/149")) {
+        return jsonResponse(200, {
+          number: 149,
+          html_url: "https://github.com/goodaymmm/Kairon/pull/149",
+          state: "open",
+          draft: false,
+          merged: false,
+          mergeable: true,
+          mergeable_state: "clean",
+          base: { ref: "main", sha: "base-sha" },
+          head: { ref: "codex/t149", sha: "head-sha" }
+        });
+      }
+      if (url.includes("/branches/main/protection")) {
+        return jsonResponse(200, {
+          required_status_checks: {
+            strict: true,
+            contexts: ["build"],
+            checks: [{ context: "test" }]
+          },
+          required_pull_request_reviews: {
+            required_approving_review_count: 1
+          }
+        });
+      }
+      if (url.includes("/reviews")) {
+        return jsonResponse(200, [
+          {
+            user: { login: "reviewer" },
+            state: "APPROVED",
+            commit_id: "head-sha"
+          }
+        ]);
+      }
+      if (url.endsWith("/status")) {
+        return jsonResponse(200, {
+          statuses: [{ context: "build", state: "success" }]
+        });
+      }
+      return jsonResponse(200, {
+        check_runs: [
+          {
+            name: "test",
+            head_sha: "head-sha",
+            status: "completed",
+            conclusion: "success"
+          }
+        ]
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await inspectGitHubPullRequestForMerge({
+      repository: "goodaymmm/Kairon",
+      number: 149,
+      token: "secret-token"
+    });
+
+    expect(result).toMatchObject({
+      number: 149,
+      state: "open",
+      draft: false,
+      merged: false,
+      mergeable: true,
+      mergeableState: "clean",
+      baseRef: "main",
+      baseSha: "base-sha",
+      headRef: "codex/t149",
+      headSha: "head-sha",
+      requiredStatusChecks: ["build", "test"],
+      requiredStatusChecksStrict: true,
+      requiredApprovingReviewCount: 1,
+      approvalsOnHead: 1
+    });
+    expect(result.checks).toEqual([
+      { context: "build", status: "success" },
+      { context: "test", status: "success" }
+    ]);
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+    expect(JSON.stringify(result)).not.toContain("secret-token");
+  });
+
+  it("merges with the expected head SHA and selected method", async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResponse(200, { merged: true, sha: "merged-sha" })
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await mergeGitHubPullRequest({
+      repository: "goodaymmm/Kairon",
+      number: 149,
+      expectedHeadSha: "head-sha",
+      method: "squash",
+      token: "secret-token"
+    });
+
+    expect(result).toEqual({ merged: true, sha: "merged-sha" });
+    const options = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(options.method).toBe("PUT");
+    expect(JSON.parse(String(options.body))).toEqual({
+      sha: "head-sha",
+      merge_method: "squash"
+    });
   });
 });
 

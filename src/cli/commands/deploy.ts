@@ -12,6 +12,7 @@ import {
 } from "../../deploy/execution-guard.js";
 
 export type MergeDryRunCommandOptions = {
+  candidateId?: string;
   source?: string;
   target?: string;
   commitRange?: string;
@@ -46,6 +47,7 @@ export async function mergeDryRunCommand(
 ): Promise<string> {
   const result = await createDryRunApproval(projectRoot, {
     operation: "merge",
+    candidateId: options.candidateId,
     sourceBranch: requiredOption(options.source, "--source"),
     targetBranch: requiredOption(options.target, "--target"),
     commitRange: options.commitRange,

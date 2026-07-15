@@ -45,6 +45,10 @@ const policiesConfigSchema = schemaVersion.extend({
     .object({
       allow_auto_push: z.boolean(),
       require_review_before_commit: z.literal(true),
+      allowed_merge_methods: z
+        .array(z.enum(["merge", "squash", "rebase"]))
+        .min(1)
+        .optional(),
       branch_protection: z
         .object({
           expected_status_checks: z.array(z.string().min(1)).optional()

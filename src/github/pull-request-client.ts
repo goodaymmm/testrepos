@@ -39,7 +39,11 @@ export type GitHubPullRequestClientErrorKind =
 export class GitHubPullRequestClientError extends Error {
   constructor(
     readonly kind: GitHubPullRequestClientErrorKind,
-    readonly operation: "inspect_refs" | "create_pull_request",
+    readonly operation:
+      | "inspect_refs"
+      | "create_pull_request"
+      | "inspect_merge"
+      | "merge_pull_request",
     readonly httpStatus?: number
   ) {
     super(

@@ -89,6 +89,25 @@ describe("createProgram", () => {
     expect(run?.description()).toContain("explicitly execute");
   });
 
+  it("registers guarded GitHub PR merge options", () => {
+    const git = createProgram().commands.find((command) => command.name() === "git");
+    const pr = git?.commands.find((command) => command.name() === "pr");
+    const merge = pr?.commands.find((command) => command.name() === "merge");
+
+    expect(merge?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining([
+        "--dry-run",
+        "--execute",
+        "--follow-up-id",
+        "--confirm",
+        "--repository",
+        "--method",
+        "--token-env"
+      ])
+    );
+    expect(merge?.description()).toContain("approved GitHub PR merge");
+  });
+
   it("maps Commander --no-interactive-agents to task run dispatch options", () => {
     expect(
       resolveAllowInteractiveAgents({ interactiveAgents: false })
@@ -595,6 +614,7 @@ describe("createProgram", () => {
     expect(pr?.commands.map((command) => command.name()).sort()).toEqual([
       "create",
       "list",
+      "merge",
       "show"
     ]);
     expect(
