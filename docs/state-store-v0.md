@@ -22,6 +22,12 @@ SQLite や外部 DB は Phase 2 以降に回す。
 .kairon/
   events/
     2026-05-24.jsonl
+    checkpoints/
+      ECP-EVT-000120-abcdef123456.json
+    archive/
+      ECP-EVT-000120-abcdef123456/
+        manifest.json
+        2026-05-23.jsonl
   tasks/
     TASK-0001/
       task.json
@@ -68,6 +74,38 @@ Event は append-only にする。
   "schema_version": "0.1"
 }
 ```
+
+### Checkpoint And Compaction
+
+終了済みの日別event segmentは、内容を書き換えずにarchiveへ移動できる。
+当日分のsegmentは常にactiveとして扱い、compaction対象にしない。
+
+```text
+kairon state events compact --dry-run
+kairon state events compact --confirm ECP-EVT-000120-abcdef123456
+kairon state events verify ECP-EVT-000120-abcdef123456
+```
+
+`--dry-run`はsegment hash、event IDの連続性、materialized state hashを検証し、入力から決定的なcheckpoint IDを生成する。
+実行時は同じcheckpoint IDの明示確認を必須とし、次の順序で処理する。
+
+```text
+create state snapshot
+  -> acquire events resource lock
+  -> revalidate source and materialized state hashes
+  -> write state-compaction marker
+  -> rename closed segments into archive
+  -> write archive manifest
+  -> write checkpoint
+  -> remove state-compaction marker
+```
+
+checkpointには最終event ID、source hash、materialized state hash、snapshot、archive manifestを記録する。
+`verify`はarchive内の各segment、event ID連続性、source hash、snapshot内の元segment、materialized state hashを再検証する。
+
+処理が途中で停止した場合、移動済みsegmentを自動削除・自動復元しない。
+`.kairon/runtime/state-compaction.json`を残し、`kairon recovery list` / `kairon recovery run`でmanual roll-forwardまたはrollbackの対象として扱う。
+event historyの読み取りはactive segmentとarchive segmentの両方を追跡する。
 
 ## Event Types
 
@@ -354,7 +392,8 @@ kairon state snapshot --dry-run --format json
 ```
 
 dry-run は `.kairon/` 配下の JSON / JSONL / MD state artifact を列挙し、category / file count / total bytes を出力する。
-MVP では restore 実行と snapshot archive 作成は未実装とし、対象確認のみを提供する。
+snapshotはhash付きmanifestとpayloadを `.kairon/snapshots/` に保存する。
+restoreは事前planとsnapshot IDの明示確認を必須とし、実行前のbackup snapshotを作成してから適用する。
 
 ## Recovery
 
