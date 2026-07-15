@@ -23,6 +23,7 @@ export type DryRunRequiredApproval = {
 
 export type DryRunRequest = {
   operation: DryRunOperation;
+  candidateId?: string;
   sourceBranch?: string;
   targetBranch: string;
   commitRange?: string;
@@ -38,6 +39,7 @@ export type DryRunArtifact = {
   dry_run: true;
   execution_allowed: false;
   approval_id: string;
+  candidate_id?: string;
   source_branch?: string;
   target_branch: string;
   commit_range?: string;
@@ -101,6 +103,7 @@ export async function createDryRunApproval(
     dry_run: true,
     execution_allowed: false,
     approval_id: approvalId,
+    candidate_id: request.candidateId,
     source_branch: request.sourceBranch,
     target_branch: request.targetBranch,
     commit_range: request.commitRange,
@@ -131,6 +134,8 @@ export async function createDryRunApproval(
         execution_allowed: false,
         approval_required_for: request.operation,
         operation: request.operation,
+        candidate_id: request.candidateId,
+        transaction_id: request.candidateId,
         source_branch: request.sourceBranch,
         target_branch: request.targetBranch,
         commit_range: request.commitRange,
@@ -194,6 +199,9 @@ export function formatDryRunApprovalResult(result: DryRunApprovalResult): string
     "dry_run=true",
     "execution_allowed=false",
     `approval_id=${result.approval_id}`,
+    ...(result.artifact.candidate_id
+      ? [`candidate_id=${result.artifact.candidate_id}`]
+      : []),
     `approval_path=${result.approval_path}`,
     `artifact=${result.artifact_path}`,
     `target_branch=${result.artifact.target_branch}`,

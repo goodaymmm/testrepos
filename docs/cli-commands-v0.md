@@ -28,7 +28,9 @@ kairon git pr list
 kairon git pr show <candidate-id>
 kairon git pr create <candidate-id> [--dry-run]
 kairon git pr create <candidate-id> --execute --approval-id <approval-id>
-kairon merge dry-run --source <branch> --target <branch>
+kairon git pr merge <candidate-id> --dry-run --follow-up-id <follow-up-id>
+kairon git pr merge <candidate-id> --execute --confirm <candidate-id> --follow-up-id <follow-up-id>
+kairon merge dry-run --candidate-id <candidate-id> --source <branch> --target <branch>
 kairon merge execute --dry-run-artifact <id> [--preflight]
 kairon deploy dry-run --target <branch> [--environment <name>]
 kairon deploy execute --dry-run-artifact <id> [--preflight]
@@ -355,13 +357,17 @@ MVPでは、`.mcp.json`、`.claude/**`、`.gemini/**`、`.antigravitycli/**` を
 
 ## kairon git pr
 
-Git transactionが出力した `.kairon/git/pr-candidates/*.json` を確認し、Pull Request作成のdry-runまたは実行を行う。
+Git transactionが出力した `.kairon/git/pr-candidates/*.json` を確認し、Pull Request作成と、承認済みPull Requestのmergeを行う。
 
 ```text
 kairon git pr list
 kairon git pr show GTX-0001
 kairon git pr create GTX-0001 --dry-run
 kairon git pr create GTX-0001 --execute --approval-id APR-0001
+kairon merge dry-run --candidate-id GTX-0001 --source codex/t149 --target main --check build:passed
+kairon approval decide APR-0002 --action approve
+kairon git pr merge GTX-0001 --dry-run --follow-up-id FUP-APR-0002-approve-merge.execute_preflight
+kairon git pr merge GTX-0001 --execute --confirm GTX-0001 --follow-up-id FUP-APR-0002-approve-merge.execute_preflight
 ```
 
 処理。
@@ -387,12 +393,14 @@ use GH_TOKEN first, then GITHUB_TOKEN
 
 PR本文は日本語テンプレートで生成し、raw diffやtokenは表示しない。実作成は `status=ready_for_pr` の候補だけを許可し、それ以外は候補artifactの `create_hint` を表示して停止する。
 
+`git pr merge` は、候補IDに紐付いたmerge dry-run approvalとfollow-upを必須とする。live GitHub APIからPR状態、base/head SHA、draft、merge conflict、branch protectionのstrict required status checks、最新head SHAへのrequired reviewsを再取得し、すべて一致した場合だけ許可されたmerge methodを実行する。既定methodは`squash`である。結果は候補artifactの`merge_execution`へ保存し、tokenやraw GitHub responseは保存しない。通信結果が不明な再実行ではPR状態を再取得し、merge済みならAPIを再送せず冪等に成功へ収束する。
+
 ## kairon merge / deploy
 
-merge / deploy は dry-run artifact と高リスクapprovalを作成し、実行前preflightで安全条件を確認する。現段階では実際のmerge / deployは実装せず、`execute` modeでも明示的に拒否する。
+top-levelのmerge / deploy commandはdry-run artifactと高リスクapprovalを作成し、実行前preflightで安全条件を確認する。top-levelの`merge execute`と`deploy execute`は実処理を行わず、`execute` modeでも明示的に拒否する。実際のGitHub Pull Request mergeは、より厳格なcandidate-bound契約を持つ`kairon git pr merge`だけが担当する。
 
 ```text
-kairon merge dry-run --source codex/t127 --target main --check build:passed
+kairon merge dry-run --candidate-id GTX-0001 --source codex/t149 --target main --check build:passed
 kairon merge execute --dry-run-artifact APR-0001 --preflight --required-check build
 kairon deploy dry-run --target main --environment staging --check smoke:passed
 kairon deploy execute --dry-run-artifact APR-0002 --preflight --required-check smoke

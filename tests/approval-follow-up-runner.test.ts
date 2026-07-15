@@ -2,6 +2,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ApprovalQueue } from "../src/approvals/approval-queue.js";
 import {
+  authorizeGitPrMergeWithFollowUp,
   authorizeGitPrWithFollowUp,
   listApprovalFollowUps,
   recordApprovalFollowUp,
@@ -260,6 +261,33 @@ describe("approval follow-up runner", () => {
     expect(authorizeGitPrWithFollowUp(followUp, "GTX-MOVED")).toEqual({
       ok: false,
       reason: "follow_up_candidate_mismatch"
+    });
+  });
+
+  it("authorizes only a candidate-bound approved merge follow-up", async () => {
+    const root = await createInitializedProject();
+    const followUp = await recordApprovalFollowUp(root, {
+      approval: {
+        id: "APR-MERGE",
+        type: "merge_dry_run",
+        candidate_id: "GTX-0149"
+      },
+      decision: "approve",
+      decidedAt: "2026-07-15T04:00:00.000Z"
+    });
+
+    expect(authorizeGitPrMergeWithFollowUp(followUp, "GTX-0149")).toEqual({
+      ok: true,
+      approval_id: "APR-MERGE",
+      follow_up_id: followUp.id
+    });
+    expect(authorizeGitPrMergeWithFollowUp(followUp, "GTX-MOVED")).toEqual({
+      ok: false,
+      reason: "follow_up_candidate_mismatch"
+    });
+    expect(authorizeGitPrWithFollowUp(followUp, "GTX-0149")).toEqual({
+      ok: false,
+      reason: "follow_up_action_not_supported"
     });
   });
 });

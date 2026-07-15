@@ -55,6 +55,7 @@ import {
   listGitPrCandidatesCommand,
   showGitPrCandidateCommand
 } from "./commands/git-pr.js";
+import { mergeGitPrCommand } from "../git/pr-merge.js";
 import { initializeProject } from "./commands/init.js";
 import { closeActiveWork } from "./commands/leave.js";
 import { runMaintenance } from "./commands/maintenance.js";
@@ -772,6 +773,21 @@ export function createProgram(): Command {
       console.log(await createGitPrCommand(process.cwd(), candidateId, options));
     });
 
+  gitPr
+    .command("merge")
+    .description("Dry-run or execute an approved GitHub PR merge from a PR candidate.")
+    .argument("<candidate-id>", "PR candidate id, for example GTX-0001")
+    .option("--dry-run", "Validate live GitHub merge conditions without merging. This is the default.")
+    .option("--execute", "Merge after approval, follow-up, live checks, and exact confirmation.")
+    .requiredOption("--follow-up-id <followUpId>", "Approved merge follow-up bound to this candidate.")
+    .option("--confirm <candidateId>", "Execute only when this value exactly matches candidate-id.")
+    .option("--repository <owner/repo>", "GitHub repository. Must match the PR creation artifact.")
+    .option("--method <method>", "Merge method: merge, squash, or rebase.", "squash")
+    .option("--token-env <envName>", "Token environment variable. Defaults to GH_TOKEN then GITHUB_TOKEN.")
+    .action(async (candidateId: string, options) => {
+      console.log(await mergeGitPrCommand(process.cwd(), candidateId, options));
+    });
+
   const merge = program
     .command("merge")
     .description("Prepare merge approvals without executing a merge.");
@@ -781,6 +797,7 @@ export function createProgram(): Command {
     .description("Create a high-risk approval artifact for a planned merge.")
     .requiredOption("--source <branch>", "Source branch to merge later.")
     .requiredOption("--target <branch>", "Target branch for the planned merge.")
+    .option("--candidate-id <candidateId>", "Git PR candidate id bound to this approval.")
     .option("--commit-range <range>", "Commit range reviewed for this dry-run.")
     .option("--check <check>", "Check summary as name:status[:detail]. Repeatable.", collectOption, [])
     .option("--rollback-hint <hint>", "Operator rollback hint recorded in the artifact.")
@@ -788,6 +805,7 @@ export function createProgram(): Command {
     .action(async (options: {
       source?: string;
       target?: string;
+      candidateId?: string;
       commitRange?: string;
       check?: string[];
       rollbackHint?: string;

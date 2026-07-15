@@ -297,6 +297,29 @@ export function authorizeGitPrWithFollowUp(
   return { ok: false, reason: "follow_up_not_ready" };
 }
 
+export function authorizeGitPrMergeWithFollowUp(
+  artifact: ApprovalFollowUpArtifact,
+  candidateId: string
+): GitPrFollowUpAuthorization {
+  if (artifact.decision !== "approve") {
+    return { ok: false, reason: "follow_up_decision_not_approved" };
+  }
+  if (artifact.transaction_id !== candidateId) {
+    return { ok: false, reason: "follow_up_candidate_mismatch" };
+  }
+  if (artifact.action_type !== "merge.execute_preflight") {
+    return { ok: false, reason: "follow_up_action_not_supported" };
+  }
+  if (!["pending", "running", "completed"].includes(artifact.status)) {
+    return { ok: false, reason: "follow_up_not_ready" };
+  }
+  return {
+    ok: true,
+    approval_id: artifact.approval_id,
+    follow_up_id: artifact.id
+  };
+}
+
 export async function runApprovalFollowUp(
   projectRoot: string,
   followUpId: string,

@@ -17,6 +17,7 @@ describe("merge/deploy dry-run approvals", () => {
     await initializeProject({ projectRoot: root });
 
     const text = await mergeDryRunCommand(root, {
+      candidateId: "GTX-0111",
       source: "codex/t111-merge",
       target: "main",
       commitRange: "main..codex/t111-merge",
@@ -29,6 +30,7 @@ describe("merge/deploy dry-run approvals", () => {
     expect(text).toContain("dry_run=true");
     expect(text).toContain("execution_allowed=false");
     expect(text).toContain("required_approvals=merge:present");
+    expect(text).toContain("candidate_id=GTX-0111");
 
     const approval = await readJsonFile<Record<string, unknown>>(
       path.join(root, ".kairon", "approvals", "APR-0001.json")
@@ -45,6 +47,8 @@ describe("merge/deploy dry-run approvals", () => {
       dry_run: true,
       execution_allowed: false,
       approval_required_for: "merge",
+      candidate_id: "GTX-0111",
+      transaction_id: "GTX-0111",
       source_branch: "codex/t111-merge",
       target_branch: "main"
     });
@@ -59,6 +63,7 @@ describe("merge/deploy dry-run approvals", () => {
       dry_run: true,
       execution_allowed: false,
       approval_id: "APR-0001",
+      candidate_id: "GTX-0111",
       source_branch: "codex/t111-merge",
       target_branch: "main",
       commit_range: "main..codex/t111-merge",

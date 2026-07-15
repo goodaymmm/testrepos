@@ -33,6 +33,43 @@ export type GitPrCandidateLiveExecution = {
   created_at: string;
 };
 
+export type GitPrMergeMethod = "merge" | "squash" | "rebase";
+
+export type GitPrCandidateMergeAttempt = {
+  attempt: number;
+  status: "merged" | "failed" | "outcome_unknown";
+  method: GitPrMergeMethod;
+  pull_request_number: number;
+  started_at: string;
+  finished_at: string;
+  observed_base_sha?: string;
+  observed_head_sha?: string;
+  merged_sha?: string;
+  error_code?: string;
+  reconciled: boolean;
+};
+
+export type GitPrCandidateMergeExecution = {
+  status: "merged" | "failed" | "outcome_unknown";
+  repository: string;
+  pull_request_number: number;
+  pull_request_url: string;
+  method: GitPrMergeMethod;
+  approval_id: string;
+  follow_up_id: string;
+  expected_base_sha?: string;
+  expected_head_sha: string;
+  observed_base_sha?: string;
+  observed_head_sha?: string;
+  attempts: number;
+  merged_sha?: string;
+  merged_at?: string;
+  reconciled: boolean;
+  last_error_code?: string;
+  history: GitPrCandidateMergeAttempt[];
+  updated_at: string;
+};
+
 export type GitPrCandidateArtifact = {
   schema_version: string;
   artifact_kind: "git_pr_candidate";
@@ -66,6 +103,7 @@ export type GitPrCandidateArtifact = {
     command_hint: string;
   };
   live_execution?: GitPrCandidateLiveExecution;
+  merge_execution?: GitPrCandidateMergeExecution;
   source_transaction_path: string;
   artifact_path: string;
   created_at: string;
@@ -83,6 +121,7 @@ export async function writePrCandidateArtifact(
   );
   if (canPreserveLiveExecution(existing, artifact)) {
     artifact.live_execution = existing.live_execution;
+    artifact.merge_execution = existing.merge_execution;
   }
   await writeJsonFileAtomic(
     prCandidateArtifactPath(projectRoot, record.transaction_id),

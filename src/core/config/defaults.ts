@@ -115,6 +115,7 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           "force_push",
           "branch_delete"
         ],
+        allowed_merge_methods: ["squash"],
         require_clean_base_worktree: true,
         branch_protection: {
           expected_status_checks: []

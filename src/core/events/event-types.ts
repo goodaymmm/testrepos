@@ -6,6 +6,8 @@ export type KaironEventType =
   | "approval.decided"
   | "approval.snoozed"
   | "approval.follow_up.updated"
+  | "git.pr.merge.completed"
+  | "git.pr.merge.failed"
   | "run.completed"
   | "schedule.override.created"
   | "active_work.closed";
@@ -18,6 +20,8 @@ export const kaironEventTypes = [
   "approval.decided",
   "approval.snoozed",
   "approval.follow_up.updated",
+  "git.pr.merge.completed",
+  "git.pr.merge.failed",
   "run.completed",
   "schedule.override.created",
   "active_work.closed"
