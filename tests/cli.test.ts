@@ -442,15 +442,19 @@ describe("createProgram", () => {
     );
   });
 
-  it("registers workflow runtime candidate command", () => {
+  it("registers production workflow and candidate commands", () => {
     const workflow = createProgram().commands.find(
       (command) => command.name() === "workflow"
     );
     const run = workflow?.commands.find((command) => command.name() === "run");
 
-    expect(workflow?.description()).toContain("workflow runtime candidates");
-    expect(workflow?.commands.map((command) => command.name())).toEqual(["run"]);
-    expect(run?.description()).toContain("feature-flagged");
+    expect(workflow?.description()).toContain("persistent Kairon workflows");
+    expect(workflow?.commands.map((command) => command.name())).toEqual([
+      "run",
+      "show",
+      "recover"
+    ]);
+    expect(run?.description()).toContain("production workflow");
     expect(run?.options.map((option) => option.long)).toEqual(
       expect.arrayContaining([
         "--candidate",
@@ -460,7 +464,10 @@ describe("createProgram", () => {
         "--task-id",
         "--queue-item-id",
         "--approval-id",
-        "--objective"
+        "--objective",
+        "--resource-lock",
+        "--retry-max-attempts",
+        "--retry-backoff-seconds"
       ])
     );
   });

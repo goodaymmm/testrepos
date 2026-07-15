@@ -219,4 +219,28 @@ describe("WorkQueue", () => {
       { id: failItem.id, status: "failed", error: { message: "failed" } }
     ]);
   });
+
+  it("reuses an existing item for the same idempotency key", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const queue = new WorkQueue(root);
+
+    const first = await queue.enqueueIdempotent({
+      type: "agent.run",
+      task_id: "TASK-0001",
+      idempotency_key: "WF-0001:task_TASK-0001:1"
+    });
+    const second = await queue.enqueueIdempotent({
+      type: "agent.run",
+      task_id: "TASK-0001",
+      idempotency_key: "WF-0001:task_TASK-0001:1"
+    });
+
+    expect(first.created).toBe(true);
+    expect(second).toMatchObject({
+      created: false,
+      item: { id: first.item.id, idempotency_key: "WF-0001:task_TASK-0001:1" }
+    });
+    await expect(queue.list()).resolves.toHaveLength(1);
+  });
 });

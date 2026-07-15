@@ -3,6 +3,7 @@ import { getKaironPaths } from "../core/fs/paths.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { acquireLockFile, releaseLockFile } from "../core/fs/lock-file.js";
 import { nextId } from "../core/ids/counter.js";
+import type { ProductionWorkflowQueueMetadata } from "../workflow/types.js";
 
 export type QueueItemType =
   | "agent.run"
@@ -50,6 +51,7 @@ export type WorkflowRuntimeQueueMetadata = {
 
 export type QueueMetadata = {
   workflow_runtime?: WorkflowRuntimeQueueMetadata;
+  production_workflow?: ProductionWorkflowQueueMetadata;
 };
 
 export type QueueItem = {
@@ -57,6 +59,7 @@ export type QueueItem = {
   type: QueueItemType;
   status: QueueStatus;
   priority: number;
+  idempotency_key?: string;
   task_id?: string;
   payload?: Record<string, unknown>;
   metadata?: QueueMetadata;
@@ -87,6 +90,7 @@ export type QueueState = {
 export type EnqueueInput = {
   type: QueueItemType;
   priority?: number;
+  idempotency_key?: string;
   task_id?: string;
   payload?: Record<string, unknown>;
   metadata?: QueueMetadata;
@@ -128,24 +132,31 @@ export class WorkQueue {
 
   async enqueue(input: EnqueueInput): Promise<QueueItem> {
     return this.withQueueLock(async (state) => {
-      const now = input.created_at ?? new Date().toISOString();
-      const item: QueueItem = {
-        id: await nextId(this.projectRoot, "job"),
-        type: input.type,
-        status: "ready",
-        priority: input.priority ?? 50,
-        task_id: input.task_id,
-        payload: input.payload,
-        metadata: input.metadata,
-        schedule_mode: input.schedule_mode,
-        test_scope: input.test_scope,
-        attempts: 0,
-        created_at: now,
-        updated_at: now
-      };
+      const item = await this.createItem(input);
 
       state.items.push(item);
       return item;
+    });
+  }
+
+  async enqueueIdempotent(
+    input: EnqueueInput & { idempotency_key: string }
+  ): Promise<{ item: QueueItem; created: boolean }> {
+    if (input.idempotency_key.trim().length === 0) {
+      throw new Error("Queue idempotency key must not be empty.");
+    }
+
+    return this.withQueueLock(async (state) => {
+      const existing = state.items.find(
+        (item) => item.idempotency_key === input.idempotency_key
+      );
+      if (existing !== undefined) {
+        return { item: { ...existing }, created: false };
+      }
+
+      const item = await this.createItem(input);
+      state.items.push(item);
+      return { item, created: true };
     });
   }
 
@@ -332,6 +343,25 @@ export class WorkQueue {
       update(item);
       return { ...item };
     });
+  }
+
+  private async createItem(input: EnqueueInput): Promise<QueueItem> {
+    const now = input.created_at ?? new Date().toISOString();
+    return {
+      id: await nextId(this.projectRoot, "job"),
+      type: input.type,
+      status: "ready",
+      priority: input.priority ?? 50,
+      idempotency_key: input.idempotency_key,
+      task_id: input.task_id,
+      payload: input.payload,
+      metadata: input.metadata,
+      schedule_mode: input.schedule_mode,
+      test_scope: input.test_scope,
+      attempts: 0,
+      created_at: now,
+      updated_at: now
+    };
   }
 
   private async withQueueLock<T>(
