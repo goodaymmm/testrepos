@@ -1,4 +1,16 @@
 import {
+  createStateBackup,
+  formatStateBackupCreate,
+  formatStateBackupDryRun,
+  formatStateBackupRehearsal,
+  formatStateBackupRestore,
+  formatStateBackupVerify,
+  planStateBackup,
+  rehearseStateBackup,
+  restoreStateBackup,
+  verifyStateBackup
+} from "../../state/backup.js";
+import {
   checkStateIntegrity,
   formatStateIntegrityCheck
 } from "../../state/integrity-check.js";
@@ -43,6 +55,23 @@ export type StateEventsCompactCommandOptions = {
 };
 
 export type StateEventsVerifyCommandOptions = {
+  format?: string;
+};
+
+export type StateBackupCreateCommandOptions = {
+  dryRun?: boolean;
+  output?: string;
+  format?: string;
+};
+
+export type StateBackupCommandOptions = {
+  source?: string;
+  format?: string;
+};
+
+export type StateBackupRestoreCommandOptions = {
+  confirm?: string;
+  source?: string;
   format?: string;
 };
 
@@ -127,6 +156,64 @@ export async function stateEventsVerifyCommand(
   const format = parseStateOutputFormat(options.format);
   return formatEventCompactionVerification(
     await verifyEventCompaction(projectRoot, checkpointId),
+    { format }
+  );
+}
+
+export async function stateBackupCreateCommand(
+  projectRoot: string,
+  options: StateBackupCreateCommandOptions = {}
+): Promise<string> {
+  const format = parseStateOutputFormat(options.format);
+  if (options.dryRun === true) {
+    return formatStateBackupDryRun(await planStateBackup(projectRoot), { format });
+  }
+
+  return formatStateBackupCreate(
+    await createStateBackup(projectRoot, { output: options.output }),
+    { format }
+  );
+}
+
+export async function stateBackupVerifyCommand(
+  projectRoot: string,
+  backupId: string,
+  options: StateBackupCommandOptions = {}
+): Promise<string> {
+  const format = parseStateOutputFormat(options.format);
+  return formatStateBackupVerify(
+    await verifyStateBackup(projectRoot, backupId, { source: options.source }),
+    { format }
+  );
+}
+
+export async function stateBackupRehearseCommand(
+  projectRoot: string,
+  backupId: string,
+  options: StateBackupCommandOptions = {}
+): Promise<string> {
+  const format = parseStateOutputFormat(options.format);
+  return formatStateBackupRehearsal(
+    await rehearseStateBackup(projectRoot, backupId, { source: options.source }),
+    { format }
+  );
+}
+
+export async function stateBackupRestoreCommand(
+  projectRoot: string,
+  backupId: string,
+  options: StateBackupRestoreCommandOptions = {}
+): Promise<string> {
+  if (options.confirm === undefined) {
+    throw new Error(`Backup restore requires --confirm ${backupId}.`);
+  }
+
+  const format = parseStateOutputFormat(options.format);
+  return formatStateBackupRestore(
+    await restoreStateBackup(projectRoot, backupId, {
+      confirm: options.confirm,
+      source: options.source
+    }),
     { format }
   );
 }

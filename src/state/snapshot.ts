@@ -126,6 +126,7 @@ const snapshotExtensions = new Set([".json", ".jsonl", ".md"]);
 const excludedSnapshotPaths = [
   ".kairon/runtime",
   ".kairon/snapshots",
+  ".kairon/backups",
   ".kairon/tmp",
   ".kairon/worktrees"
 ];
@@ -163,6 +164,13 @@ export async function createStateSnapshot(
   } finally {
     await releaseStateLock(lock);
   }
+}
+
+export async function createStateSnapshotWithExistingLock(
+  projectRoot: string,
+  options: StateSnapshotOptions = {}
+): Promise<StateSnapshotCreateResult> {
+  return createStateSnapshotWithoutLock(projectRoot, options);
 }
 
 export async function planStateSnapshotRestore(

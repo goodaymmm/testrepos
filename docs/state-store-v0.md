@@ -52,6 +52,13 @@ SQLite や外部 DB は Phase 2 以降に回す。
   state/
     queue.json
     schedule_override.json
+  backups/
+    index/
+      BKP-20260715000000000-abcdef123456.json
+    packages/
+      BKP-20260715000000000-abcdef123456/
+        manifest.json
+        files/
   runtime/
 ```
 
@@ -394,6 +401,46 @@ kairon state snapshot --dry-run --format json
 dry-run は `.kairon/` 配下の JSON / JSONL / MD state artifact を列挙し、category / file count / total bytes を出力する。
 snapshotはhash付きmanifestとpayloadを `.kairon/snapshots/` に保存する。
 restoreは事前planとsnapshot IDの明示確認を必須とし、実行前のbackup snapshotを作成してから適用する。
+
+## State Backup And Recovery Drill
+
+snapshotは同一project内の短期rollback用、backupは外部媒体を含むmanifest packageとして扱う。
+backup対象はcanonicalなJSON / JSONL / MD stateであり、次は既定で除外する。
+
+- `.kairon/runtime/`、`.kairon/tmp/`、`.kairon/worktrees/`
+- `.kairon/rag/`、`.kairon/board/`
+- `.kairon/snapshots/`、`.kairon/backups/`
+- `*.log`、symbolic link、未対応file type
+- path名にtoken、secret、credential、password、`.env`、秘密鍵拡張子を含むfile
+
+```text
+kairon state backup create --dry-run
+kairon state backup create --output D:\KaironBackups
+kairon state backup verify BKP-20260715000000000-abcdef123456
+kairon state backup rehearse BKP-20260715000000000-abcdef123456
+kairon state backup restore BKP-20260715000000000-abcdef123456 --confirm BKP-20260715000000000-abcdef123456
+```
+
+packageは`manifest.json`と`files/`からなり、manifestは各fileのpath、size、SHA-256、category、schema versionとpackage全体の決定的checksumを持つ。
+作成後のlocal registryは`.kairon/backups/index/`へ保存される。
+
+local registryが失われた災害復旧では、外部packageを明示する。
+
+```text
+kairon state backup verify <backup-id> --source D:\KaironBackups\<backup-id>
+kairon state backup rehearse <backup-id> --source D:\KaironBackups\<backup-id>
+kairon state backup restore <backup-id> --source D:\KaironBackups\<backup-id> --confirm <backup-id>
+```
+
+`verify`はmanifestとpayloadの欠損、余分なfile、size、hash、schema、危険pathを検証する。
+`rehearse`はOS temporary directoryへ展開してstate integrity checkを実行し、終了時に必ず隔離directoryを削除する。現在のproject stateは変更しない。
+
+`restore`はruntime停止とbackup IDの完全一致確認を必須とする。適用前に現行state snapshotを作成し、適用後にstate integrity checkを実行する。
+restoreが途中停止または失敗した場合は`.kairon/runtime/state-backup-restore.json`を残す。自動継続や自動rollbackは行わず、`kairon recovery list`で確認してからmarker内の`pre_restore_snapshot_id`を使用して明示的にrollbackする。
+
+```text
+kairon state snapshot restore <pre-restore-snapshot-id> --confirm <pre-restore-snapshot-id>
+```
 
 ## Recovery
 
