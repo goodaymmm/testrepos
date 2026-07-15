@@ -262,6 +262,8 @@ export const kaironDirectories = [
   "workflows",
   "workflows/runs",
   "workflows/checkpoints",
+  "workflows/events",
+  "workflows/compensations",
   "git",
   "git/branches",
   "git/transactions",

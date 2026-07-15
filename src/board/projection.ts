@@ -16,6 +16,10 @@ import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js"
 import { type QueueItem, WorkQueue } from "../queue/work-queue.js";
 import { getRuntimeStatus, type RuntimeStatus } from "../runtime/status.js";
 import type { TaskRecord } from "../tasks/task-runner.js";
+import type {
+  WorkflowControlEvent,
+  WorkflowRunArtifact
+} from "../workflow/types.js";
 import {
   sanitizeBoardProjection,
   type BoardSecretScanSummary
@@ -44,6 +48,12 @@ export type BoardProjection = {
   runs: {
     total: number;
     recent: BoardRunSummary[];
+  };
+  workflows: {
+    total: number;
+    by_status: Record<string, number>;
+    attention: number;
+    recent: BoardWorkflowSummary[];
   };
   approvals: {
     pending: number;
@@ -110,12 +120,19 @@ export type BoardOperationsSummary = {
   setup_required_runs: number;
   recovery_targets: number;
   git_transactions_requiring_approval: number;
+  workflow_attention: number;
   attention_total: number;
   priority: BoardOperationPriorityItem[];
 };
 
 export type BoardOperationPriorityItem = {
-  kind: "approval" | "follow_up" | "run" | "recovery" | "git_transaction";
+  kind:
+    | "approval"
+    | "follow_up"
+    | "run"
+    | "recovery"
+    | "git_transaction"
+    | "workflow";
   id: string;
   label: string;
   status: string;
@@ -171,6 +188,34 @@ export type BoardRunSummary = {
   finished_at?: string;
   outbox_status?: string;
   outbox_event_count?: number;
+};
+
+export type BoardWorkflowSummary = {
+  workflow_id: string;
+  status: string;
+  task_id: string;
+  current_node?: string;
+  progress_completed: number;
+  progress_total: number;
+  blocker?: string;
+  approval_id?: string;
+  retry_count: number;
+  control_mode: string;
+  last_event?: {
+    event_id: string;
+    action: string;
+    status_after: string;
+    node_id?: string;
+    created_at: string;
+  };
+  timeline: Array<{
+    event_id: string;
+    action: string;
+    status_after: string;
+    node_id?: string;
+    created_at: string;
+  }>;
+  updated_at: string;
 };
 
 export type BoardApprovalSummary = {
@@ -488,6 +533,7 @@ export async function createBoardProjection(
     queueItems,
     tasks,
     runs,
+    workflows,
     approvals,
     followUps,
     reviewLoops,
@@ -501,6 +547,7 @@ export async function createBoardProjection(
       new WorkQueue(projectRoot).list(),
       readTasks(projectRoot),
       readRuns(projectRoot),
+      readWorkflows(projectRoot),
       new ApprovalQueue(projectRoot).list({ status: "all" }),
       listApprovalFollowUps(projectRoot),
       readReviewLoops(projectRoot),
@@ -511,6 +558,9 @@ export async function createBoardProjection(
       readDiscordAudits(projectRoot)
     ]);
   const runSummaries = runs.sort(compareRunSummariesDesc);
+  const workflowSummaries = workflows
+    .map(({ artifact, events }) => summarizeWorkflow(artifact, events))
+    .sort(compareByUpdatedDesc);
   const followUpSummaries = followUps
     .sort(compareByUpdatedDesc)
     .map(summarizeApprovalFollowUp);
@@ -546,6 +596,7 @@ export async function createBoardProjection(
       runs: runSummaries,
       recoveryTargets: runtime.recovery.targets,
       gitTransactions: gitTransactionSummaries,
+      workflows: workflowSummaries,
       recentLimit
     }),
     tasks: {
@@ -559,6 +610,12 @@ export async function createBoardProjection(
     runs: {
       total: runs.length,
       recent: runSummaries.slice(0, recentLimit)
+    },
+    workflows: {
+      total: workflowSummaries.length,
+      by_status: countBy(workflowSummaries, (workflow) => workflow.status),
+      attention: workflowSummaries.filter(isWorkflowAttention).length,
+      recent: workflowSummaries.slice(0, recentLimit)
     },
     approvals: {
       pending: approvalSummaries.filter(isOpenApprovalSummary).length,
@@ -689,6 +746,84 @@ async function readRuns(projectRoot: string): Promise<BoardRunSummary[]> {
   );
 
   return runs.filter((run): run is BoardRunSummary => run !== null);
+}
+
+async function readWorkflows(projectRoot: string): Promise<Array<{
+  artifact: WorkflowRunArtifact;
+  events: WorkflowControlEvent[];
+}>> {
+  const workflowsDir = resolveInside(
+    getKaironPaths(projectRoot).kaironDir,
+    "workflows"
+  );
+  const runsDir = resolveInside(workflowsDir, "runs");
+  const eventsDir = resolveInside(workflowsDir, "events");
+  const entries = await readDirectoryEntries(runsDir);
+  const records = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map(async (entry) => {
+        const artifact = await readOptionalJson<WorkflowRunArtifact>(
+          path.join(runsDir, entry.name)
+        );
+        if (artifact === null) {
+          return null;
+        }
+        return {
+          artifact,
+          events: await readOptionalJsonLines<WorkflowControlEvent>(
+            path.join(eventsDir, `${artifact.workflow_id}.jsonl`)
+          )
+        };
+      })
+  );
+  return records.filter(
+    (record): record is { artifact: WorkflowRunArtifact; events: WorkflowControlEvent[] } =>
+      record !== null
+  );
+}
+
+function summarizeWorkflow(
+  artifact: WorkflowRunArtifact,
+  events: WorkflowControlEvent[]
+): BoardWorkflowSummary {
+  const currentNode = artifact.nodes.find((node) =>
+    ["running", "dispatched", "waiting_approval", "failed", "pending"].includes(
+      node.status
+    )
+  );
+  const timeline = events.slice(-5).map((event) =>
+    compact({
+      event_id: event.event_id,
+      action: event.action,
+      status_after: event.status_after,
+      node_id: event.node_id,
+      created_at: event.created_at
+    })
+  );
+  return compact({
+    workflow_id: artifact.workflow_id,
+    status: artifact.status,
+    task_id: artifact.task_id,
+    current_node: currentNode?.id,
+    progress_completed: artifact.nodes.filter((node) =>
+      ["completed", "skipped"].includes(node.status)
+    ).length,
+    progress_total: artifact.nodes.length,
+    blocker:
+      currentNode?.blocker ??
+      artifact.nodes.find((node) => node.blocker !== undefined)?.blocker ??
+      artifact.control?.reason,
+    approval_id: currentNode?.approval_id ?? artifact.approval_id,
+    retry_count: artifact.nodes.reduce(
+      (total, node) => total + Math.max(node.attempt - 1, 0),
+      0
+    ),
+    control_mode: artifact.control?.mode ?? "active",
+    last_event: timeline.at(-1),
+    timeline,
+    updated_at: artifact.updated_at
+  });
 }
 
 async function readReviewLoops(projectRoot: string): Promise<ReviewLoopArtifact[]> {
@@ -1177,6 +1312,7 @@ function summarizeOperations(input: {
   runs: BoardRunSummary[];
   recoveryTargets: number;
   gitTransactions: BoardGitTransactionSummary[];
+  workflows: BoardWorkflowSummary[];
   recentLimit: number;
 }): BoardOperationsSummary {
   const pendingApprovals = input.approvals.filter(isOpenApprovalSummary);
@@ -1192,6 +1328,7 @@ function summarizeOperations(input: {
   const approvalRequiredTransactions = input.gitTransactions.filter(
     (transaction) => transaction.status === "approval_required"
   );
+  const workflowAttention = input.workflows.filter(isWorkflowAttention);
   const priority: BoardOperationPriorityItem[] = [
     ...pendingApprovals.map((approval) =>
       compact({
@@ -1248,6 +1385,17 @@ function summarizeOperations(input: {
         detail: transaction.approval_id ?? transaction.reason
       })
     ),
+    ...workflowAttention.map((workflow) =>
+      compact({
+        kind: "workflow" as const,
+        id: workflow.workflow_id,
+        label: workflow.current_node ?? workflow.task_id,
+        status: workflow.status,
+        severity: workflow.status === "failed" ? ("high" as const) : ("medium" as const),
+        anchor: `#workflow-${workflow.workflow_id}`,
+        detail: workflow.blocker ?? workflow.last_event?.action
+      })
+    ),
     ...(input.recoveryTargets > 0
       ? [
           {
@@ -1270,15 +1418,25 @@ function summarizeOperations(input: {
     setup_required_runs: setupRequiredRuns.length,
     recovery_targets: input.recoveryTargets,
     git_transactions_requiring_approval: approvalRequiredTransactions.length,
+    workflow_attention: workflowAttention.length,
     attention_total:
       pendingApprovals.length +
       pendingFollowUps.length +
       failedRuns.length +
       setupRequiredRuns.length +
       input.recoveryTargets +
-      approvalRequiredTransactions.length,
+      approvalRequiredTransactions.length +
+      workflowAttention.length,
     priority: priority.slice(0, input.recentLimit)
   };
+}
+
+function isWorkflowAttention(workflow: BoardWorkflowSummary): boolean {
+  return (
+    workflow.status === "failed" ||
+    workflow.status === "paused" ||
+    workflow.control_mode === "cancellation_requested"
+  );
 }
 
 function isOpenApprovalSummary(approval: BoardApprovalSummary): boolean {

@@ -15,7 +15,8 @@ import type {
   BoardReviewLoopSummary,
   BoardReviewResultSummary,
   BoardRunSummary,
-  BoardTaskSummary
+  BoardTaskSummary,
+  BoardWorkflowSummary
 } from "./projection.js";
 
 export function renderBoardHtml(projection: BoardProjection): string {
@@ -107,6 +108,7 @@ export function renderBoardHtml(projection: BoardProjection): string {
       <a href="#follow-ups">Follow-ups</a>
       <a href="#queue">Queue</a>
       <a href="#runs">Runs</a>
+      <a href="#workflows">Workflows</a>
       <a href="#reviews">Reviews</a>
       <a href="#git">Git</a>
       <a href="#cleanup">Cleanup</a>
@@ -124,6 +126,7 @@ export function renderBoardHtml(projection: BoardProjection): string {
       ${stat("Recovery", String(projection.runtime.recovery.targets), "targets")}
       ${stat("Git Push", String(projection.git.transactions_requiring_approval), `approval required | pr=${projection.git.transactions_ready_for_pr}`)}
       ${stat("Discord", projection.discord.gateway?.status ?? "unknown", `audit=${projection.discord.notifications.total}/${projection.discord.decisions.total}`)}
+      ${stat("Workflows", String(projection.workflows.total), `attention=${projection.workflows.attention}`)}
     </div>
     ${renderOperations(projection.operations.priority)}
     <div class="section-group">
@@ -135,6 +138,7 @@ export function renderBoardHtml(projection: BoardProjection): string {
     ${renderApprovals(projection.approvals.recent)}
     ${renderFollowUps(projection.follow_ups.recent)}
     ${renderQueue(projection.queue.recent)}
+    ${renderWorkflows(projection.workflows.recent)}
     ${renderRuns(projection.runs.recent)}
     ${renderTasks(projection.tasks.recent)}
     ${renderReviews(projection.reviews.recent_loops, projection.reviews.recent_results)}
@@ -414,6 +418,48 @@ function renderQueue(items: BoardQueueItemSummary[]): string {
       text(item.updated_at ?? item.created_at)
     ]),
     "queue"
+  );
+}
+
+function renderWorkflows(workflows: BoardWorkflowSummary[]): string {
+  return section(
+    "Workflows",
+    [
+      "Workflow",
+      "Status",
+      "Current Node",
+      "Progress",
+      "Blocker",
+      "Approval",
+      "Retries",
+      "Last Event",
+      "Timeline",
+      "Updated"
+    ],
+    workflows.map((workflow) => [
+      `<a id="workflow-${escapeAttribute(workflow.workflow_id)}" href="#workflow-${escapeAttribute(workflow.workflow_id)}"><code>${escapeHtml(workflow.workflow_id)}</code></a>`,
+      text(`${workflow.status} / ${workflow.control_mode}`),
+      text(workflow.current_node),
+      text(`${workflow.progress_completed}/${workflow.progress_total}`),
+      text(workflow.blocker),
+      text(workflow.approval_id),
+      text(String(workflow.retry_count)),
+      text(
+        workflow.last_event === undefined
+          ? undefined
+          : `${workflow.last_event.action} (${workflow.last_event.status_after})`
+      ),
+      workflow.timeline.length === 0
+        ? text(undefined)
+        : workflow.timeline
+            .map(
+              (event) =>
+                `<div><code>${escapeHtml(event.event_id)}</code>: ${escapeHtml(event.action)} -> ${escapeHtml(event.status_after)}</div>`
+            )
+            .join(""),
+      text(workflow.updated_at)
+    ]),
+    "workflows"
   );
 }
 

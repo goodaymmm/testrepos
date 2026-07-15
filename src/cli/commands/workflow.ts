@@ -9,6 +9,10 @@ import {
   ProductionWorkflowRuntime,
   ProductionWorkflowRuntimeDisabledError
 } from "../../workflow/runtime.js";
+import {
+  formatWorkflowControlResult,
+  WorkflowControls
+} from "../../workflow/controls.js";
 
 export type WorkflowRunCommandOptions = {
   candidate?: boolean;
@@ -93,8 +97,92 @@ export async function workflowShowCommand(
   projectRoot: string,
   workflowId: string
 ): Promise<string> {
-  return formatProductionWorkflowResult(
-    await new ProductionWorkflowRuntime(projectRoot).show(workflowId)
+  const runtime = new ProductionWorkflowRuntime(projectRoot);
+  const [shown, events] = await Promise.all([
+    runtime.show(workflowId),
+    new WorkflowControls(projectRoot).events(workflowId)
+  ]);
+  return [
+    formatProductionWorkflowResult(shown),
+    `control.mode=${shown.artifact.control?.mode ?? "active"}`,
+    `control.reason=${shown.artifact.control?.reason ?? "none"}`,
+    `control.events=${events.length}`,
+    `control.last=${formatLastControlEvent(events.at(-1))}`,
+    ...events.map(
+      (event) =>
+        `control.event.${event.sequence}=action:${event.action};status:${event.status_after};node:${event.node_id ?? "none"};at:${event.created_at}`
+    )
+  ].join("\n");
+}
+
+export async function workflowListCommand(projectRoot: string): Promise<string> {
+  const artifacts = await new ProductionWorkflowRuntime(projectRoot).list();
+  return [
+    "Kairon production workflows:",
+    ...(artifacts.length === 0
+      ? ["(none)"]
+      : artifacts.map((artifact) => {
+          const completed = artifact.nodes.filter((node) =>
+            ["completed", "skipped"].includes(node.status)
+          ).length;
+          const blocker =
+            artifact.nodes.find((node) => node.blocker !== undefined)?.blocker ??
+            artifact.control?.reason;
+          return [
+            `workflow_id=${artifact.workflow_id}`,
+            `status=${artifact.status}`,
+            `progress=${completed}/${artifact.nodes.length}`,
+            `blocker=${blocker ?? "none"}`,
+            `retries=${artifact.nodes.reduce((sum, node) => sum + Math.max(node.attempt - 1, 0), 0)}`,
+            `last_event=${artifact.control?.last_event_action ?? "none"}`
+          ].join(" ");
+        }))
+  ].join("\n");
+}
+
+export async function workflowPauseCommand(
+  projectRoot: string,
+  workflowId: string,
+  reason: string,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
+  return formatWorkflowControlResult(
+    await new WorkflowControls(projectRoot, { env }).pause(workflowId, reason)
+  );
+}
+
+export async function workflowResumeCommand(
+  projectRoot: string,
+  workflowId: string,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
+  return formatWorkflowControlResult(
+    await new WorkflowControls(projectRoot, { env }).resume(workflowId)
+  );
+}
+
+export async function workflowCancelCommand(
+  projectRoot: string,
+  workflowId: string,
+  options: { reason: string; approvalId?: string },
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
+  return formatWorkflowControlResult(
+    await new WorkflowControls(projectRoot, { env }).cancel(workflowId, options)
+  );
+}
+
+export async function workflowRetryCommand(
+  projectRoot: string,
+  workflowId: string,
+  options: { node: string; reason?: string },
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
+  return formatWorkflowControlResult(
+    await new WorkflowControls(projectRoot, { env }).retry(workflowId, {
+      nodeId: options.node,
+      reason: options.reason
+    })
   );
 }
 
@@ -131,4 +219,19 @@ function parseOptionalInteger(
     throw new Error(`--${optionName} must be an integer.`);
   }
   return parsed;
+}
+
+function formatLastControlEvent(
+  event:
+    | {
+        action: string;
+        event_id: string;
+        status_after: string;
+        node_id?: string;
+      }
+    | undefined
+): string {
+  return event === undefined
+    ? "none"
+    : `${event.action};id:${event.event_id};status:${event.status_after};node:${event.node_id ?? "none"}`;
 }

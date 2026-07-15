@@ -16,9 +16,10 @@ import { experimentalWorkflowArtifactPath } from "../experimental/workflow-runti
 import { WorkQueue, type QueueItem } from "../queue/work-queue.js";
 import { TaskRunner, type TaskRecord } from "../tasks/task-runner.js";
 import {
-  deriveWorkflowStatus,
+  deriveControlledWorkflowStatus,
   transitionWorkflowNode,
   type ProductionWorkflowQueueMetadata,
+  type WorkflowControlState,
   type WorkflowNodeState,
   type WorkflowResourceLock,
   type WorkflowRunArtifact
@@ -49,6 +50,13 @@ export type ProductionWorkflowRuntimeOptions = {
   now?: () => Date;
   env?: NodeJS.ProcessEnv;
   resourceLockTtlMs?: number;
+};
+
+export type WorkflowExecutionContext = {
+  workflow_id: string;
+  node_id: string;
+  cancellation_token: string;
+  isCancellationRequested: () => Promise<boolean>;
 };
 
 export class ProductionWorkflowRuntimeDisabledError extends Error {
@@ -100,6 +108,43 @@ export class ProductionWorkflowRuntime {
     return { artifact, actions: [], dry_run: true };
   }
 
+  async list(): Promise<WorkflowRunArtifact[]> {
+    let entries: string[];
+    try {
+      entries = await readdir(workflowRunsDirectory(this.projectRoot));
+    } catch (error) {
+      if (String(error).includes("ENOENT")) {
+        return [];
+      }
+      throw error;
+    }
+
+    const artifacts = await Promise.all(
+      entries
+        .filter((name) => name.endsWith(".json"))
+        .map((name) => this.loadArtifact(name.slice(0, -5)))
+    );
+    return artifacts.sort(
+      (left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at)
+    );
+  }
+
+  async persistControlledArtifact(artifact: WorkflowRunArtifact): Promise<string> {
+    return this.persist(artifact, "control");
+  }
+
+  async releaseWorkflowResourceLocks(
+    artifact: WorkflowRunArtifact
+  ): Promise<WorkflowResourceLock[]> {
+    const locks = artifact.nodes.flatMap((node) => node.resource_locks);
+    await this.releaseResourceLocks(locks);
+    for (const node of artifact.nodes) {
+      node.resource_locks = [];
+      delete node.fencing_token;
+    }
+    return locks;
+  }
+
   async recover(
     workflowId: string,
     options: RecoverProductionWorkflowOptions = {}
@@ -114,7 +159,10 @@ export class ProductionWorkflowRuntime {
     await this.reconcile(artifact, actions);
 
     if (options.dryRun === true) {
-      artifact.status = deriveWorkflowStatus(artifact.nodes);
+      artifact.status = deriveControlledWorkflowStatus(
+        artifact.nodes,
+        artifact.control
+      );
       return { artifact, actions, dry_run: true };
     }
 
@@ -157,7 +205,7 @@ export class ProductionWorkflowRuntime {
 
   async executeQueueItem(
     item: QueueItem,
-    execute: () => Promise<Record<string, unknown>>
+    execute: (context?: WorkflowExecutionContext) => Promise<Record<string, unknown>>
   ): Promise<Record<string, unknown>> {
     const metadata = item.metadata?.production_workflow;
     if (metadata === undefined) {
@@ -182,6 +230,19 @@ export class ProductionWorkflowRuntime {
       };
     }
 
+    if (isCancellationRequested(artifact)) {
+      if (!isTerminalNodeStatus(node.status)) {
+        artifact.nodes[nodeIndex] = transitionWorkflowNode(node, {
+          type: "cancel",
+          at: this.now().toISOString()
+        });
+      }
+      artifact.control!.mode = "cancelled";
+      await this.releaseWorkflowResourceLocks(artifact);
+      await this.persist(artifact, "control");
+      return cancellationResult(metadata);
+    }
+
     if (node.status === "pending") {
       node = transitionWorkflowNode(node, {
         type: "dispatch",
@@ -203,27 +264,78 @@ export class ProductionWorkflowRuntime {
     await this.persist(artifact, "queue_started");
 
     try {
-      const result = await execute();
-      const completedAt = this.now().toISOString();
-      artifact.nodes[nodeIndex] = transitionWorkflowNode(node, {
-        type: "complete",
-        at: completedAt,
-        outputDigest: digest(result),
-        runId: readString(result.run_id)
+      const result = await execute({
+        workflow_id: metadata.workflow_id,
+        node_id: metadata.node_id,
+        cancellation_token:
+          metadata.cancellation_token ?? artifact.control!.cancellation_token,
+        isCancellationRequested: () =>
+          this.isWorkflowCancellationRequested(metadata.workflow_id)
       });
-      await this.releaseResourceLocks(metadata.resource_locks);
-      await this.persist(artifact, "queue_completed");
+      const latest = await this.loadArtifact(metadata.workflow_id);
+      const latestNodeIndex = latest.nodes.findIndex(
+        (candidate) => candidate.id === metadata.node_id
+      );
+      const latestNode = latest.nodes[latestNodeIndex];
+      if (isCancellationRequested(latest)) {
+        if (
+          latestNode !== undefined &&
+          !isTerminalNodeStatus(latestNode.status)
+        ) {
+          latest.nodes[latestNodeIndex] = transitionWorkflowNode(latestNode, {
+            type: "cancel",
+            at: this.now().toISOString()
+          });
+        }
+        latest.control!.mode = "cancelled";
+        await this.persist(latest, "control");
+        return cancellationResult(metadata);
+      }
+      const completedAt = this.now().toISOString();
+      latest.nodes[latestNodeIndex] = transitionWorkflowNode(
+        latestNode ?? node,
+        {
+          type: "complete",
+          at: completedAt,
+          outputDigest: digest(result),
+          runId: readString(result.run_id)
+        }
+      );
+      await this.persist(latest, "queue_completed");
       return result;
     } catch (error) {
-      artifact.nodes[nodeIndex] = transitionWorkflowNode(node, {
+      const latest = await this.loadArtifact(metadata.workflow_id);
+      const latestNodeIndex = latest.nodes.findIndex(
+        (candidate) => candidate.id === metadata.node_id
+      );
+      const latestNode = latest.nodes[latestNodeIndex] ?? node;
+      if (isCancellationRequested(latest)) {
+        if (!isTerminalNodeStatus(latestNode.status)) {
+          latest.nodes[latestNodeIndex] = transitionWorkflowNode(latestNode, {
+            type: "cancel",
+            at: this.now().toISOString()
+          });
+        }
+        latest.control!.mode = "cancelled";
+        await this.persist(latest, "control");
+        return cancellationResult(metadata);
+      }
+      latest.nodes[latestNodeIndex] = transitionWorkflowNode(latestNode, {
         type: "fail",
         at: this.now().toISOString(),
         error: String(error)
       });
-      await this.releaseResourceLocks(metadata.resource_locks);
-      await this.persist(artifact, "queue_failed");
+      await this.persist(latest, "queue_failed");
       throw error;
+    } finally {
+      await this.releaseResourceLocks(metadata.resource_locks);
     }
+  }
+
+  private async isWorkflowCancellationRequested(
+    workflowId: string
+  ): Promise<boolean> {
+    return isCancellationRequested(await this.loadArtifact(workflowId));
   }
 
   private async loadOrCreate(
@@ -260,8 +372,10 @@ export class ProductionWorkflowRuntime {
 
   private async loadArtifact(workflowId: string): Promise<WorkflowRunArtifact> {
     try {
-      return await readJsonFile<WorkflowRunArtifact>(
-        workflowRunArtifactPath(this.projectRoot, workflowId)
+      return normalizeWorkflowArtifact(
+        await readJsonFile<WorkflowRunArtifact>(
+          workflowRunArtifactPath(this.projectRoot, workflowId)
+        )
       );
     } catch (error) {
       if (!isMissingJsonFile(error)) {
@@ -379,7 +493,10 @@ export class ProductionWorkflowRuntime {
       };
     }
 
-    artifact.status = deriveWorkflowStatus(artifact.nodes);
+    artifact.status = deriveControlledWorkflowStatus(
+      artifact.nodes,
+      artifact.control
+    );
     return artifact;
   }
 
@@ -472,6 +589,7 @@ export class ProductionWorkflowRuntime {
         last_action: "created",
         reconciled_queue_item_ids: []
       },
+      control: createWorkflowControlState(),
       created_at: now,
       updated_at: now
     };
@@ -543,7 +661,10 @@ export class ProductionWorkflowRuntime {
     }
 
     artifact.recovery.reconciled_queue_item_ids = [...reconciled].sort();
-    artifact.status = deriveWorkflowStatus(artifact.nodes);
+    artifact.status = deriveControlledWorkflowStatus(
+      artifact.nodes,
+      artifact.control
+    );
   }
 
   private reconcileApprovalNode(
@@ -599,6 +720,13 @@ export class ProductionWorkflowRuntime {
     artifact: WorkflowRunArtifact,
     actions: string[]
   ): Promise<void> {
+    if (artifact.control?.mode !== "active") {
+      artifact.status = deriveControlledWorkflowStatus(
+        artifact.nodes,
+        artifact.control
+      );
+      return;
+    }
     for (let index = 0; index < artifact.nodes.length; index += 1) {
       const node = artifact.nodes[index];
       if (node.status !== "pending") {
@@ -623,7 +751,10 @@ export class ProductionWorkflowRuntime {
       break;
     }
 
-    artifact.status = deriveWorkflowStatus(artifact.nodes);
+    artifact.status = deriveControlledWorkflowStatus(
+      artifact.nodes,
+      artifact.control
+    );
   }
 
   private async dispatchTaskNode(
@@ -699,7 +830,9 @@ export class ProductionWorkflowRuntime {
         this.projectRoot,
         workflowRunArtifactPath(this.projectRoot, artifact.workflow_id)
       ),
-      feature_flag: "KAIRON_WORKFLOW_RUNTIME"
+      feature_flag: "KAIRON_WORKFLOW_RUNTIME",
+      cancellation_token: artifact.control?.cancellation_token,
+      control_generation: artifact.control?.generation
     };
     const enqueueResult = await new TaskRunner(this.projectRoot, {
       now: this.options.now
@@ -816,7 +949,10 @@ export class ProductionWorkflowRuntime {
     const now = this.now().toISOString();
     artifact.sequence += 1;
     artifact.updated_at = now;
-    artifact.status = deriveWorkflowStatus(artifact.nodes);
+    artifact.status = deriveControlledWorkflowStatus(
+      artifact.nodes,
+      artifact.control
+    );
     artifact.recovery.last_action = action;
     const checkpointPath = workflowCheckpointPath(
       this.projectRoot,
@@ -844,6 +980,47 @@ export class ProductionWorkflowRuntime {
       throw new ProductionWorkflowRuntimeDisabledError();
     }
   }
+}
+
+function createWorkflowControlState(): WorkflowControlState {
+  return {
+    mode: "active",
+    generation: 0,
+    cancellation_token: randomUUID()
+  };
+}
+
+function normalizeWorkflowArtifact(
+  artifact: WorkflowRunArtifact
+): WorkflowRunArtifact {
+  artifact.control ??= createWorkflowControlState();
+  artifact.status = deriveControlledWorkflowStatus(
+    artifact.nodes,
+    artifact.control
+  );
+  return artifact;
+}
+
+function isCancellationRequested(artifact: WorkflowRunArtifact): boolean {
+  return (
+    artifact.control?.mode === "cancellation_requested" ||
+    artifact.control?.mode === "cancelled"
+  );
+}
+
+function isTerminalNodeStatus(status: WorkflowNodeState["status"]): boolean {
+  return ["completed", "skipped", "cancelled"].includes(status);
+}
+
+function cancellationResult(
+  metadata: ProductionWorkflowQueueMetadata
+): Record<string, unknown> {
+  return {
+    workflow_id: metadata.workflow_id,
+    node_id: metadata.node_id,
+    status: "cancelled",
+    cooperative_cancellation: true
+  };
 }
 
 export function workflowRunArtifactPath(
