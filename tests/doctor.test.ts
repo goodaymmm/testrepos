@@ -210,6 +210,61 @@ describe("runDoctor", () => {
     );
   });
 
+  it("reports reverse-proxy HTTP setup requirements without exposing the public key", async () => {
+    const root = await createInitializedGitProject();
+    await enableDiscordProvider(root);
+    const notificationsPath = path.join(root, ".kairon", "config", "notifications.json");
+    const notifications = await readJsonFile<Record<string, unknown>>(notificationsPath);
+    notifications.http = {
+      profile: "reverse-proxy",
+      external_base_url: "https://discord.example.test/",
+      trusted_proxies: ["127.0.0.1/32"]
+    };
+    await writeJsonFileAtomic(notificationsPath, notifications);
+    const env = {
+      KAIRON_DISCORD_BOT_TOKEN: "secret-bot-token",
+      KAIRON_DISCORD_APPLICATION_ID: discordIds.application,
+      KAIRON_DISCORD_GUILD_ID: discordIds.guild,
+      KAIRON_DISCORD_APPROVAL_CHANNEL_ID: discordIds.channel,
+      KAIRON_DISCORD_OWNER_USER_ID: discordIds.owner,
+      KAIRON_DISCORD_ALLOWED_USER_IDS: discordIds.teammate
+    };
+
+    const missing = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env
+    });
+    expect(statusById(missing, "discord.config")).toBe("warning");
+    expect(checkById(missing, "discord.config")?.details).toEqual(
+      expect.arrayContaining([
+        "http_profile=reverse-proxy",
+        "http_status=setup_required",
+        "http_missing=KAIRON_DISCORD_PUBLIC_KEY"
+      ])
+    );
+
+    const ready = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {
+        ...env,
+        KAIRON_DISCORD_PUBLIC_KEY: "a".repeat(64)
+      }
+    });
+    const text = formatDoctorResult(ready);
+    expect(statusById(ready, "discord.config")).toBe("pass");
+    expect(checkById(ready, "discord.config")?.details).toEqual(
+      expect.arrayContaining([
+        "http_profile=reverse-proxy",
+        "http_status=ready",
+        "http_missing=none",
+        "http_invalid=none"
+      ])
+    );
+    expect(text).not.toContain("a".repeat(64));
+  });
+
   it("reports invalid Discord id env without leaking values", async () => {
     const root = await createInitializedGitProject();
     await enableDiscordProvider(root);

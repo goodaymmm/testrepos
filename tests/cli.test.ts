@@ -669,9 +669,14 @@ describe("createProgram", () => {
 
     expect(discord?.description()).toContain("Discord integration");
     expect(http?.description()).toContain("HTTP Interactions");
-    expect(start?.description()).toContain("loopback-only");
+    expect(http?.commands.map((command) => command.name()).sort()).toEqual([
+      "start",
+      "status"
+    ]);
+    expect(start?.description()).toContain("loopback-bound");
     expect(start?.options.map((option) => option.long)).toEqual(
       expect.arrayContaining([
+        "--profile",
         "--host",
         "--port",
         "--timestamp-tolerance-seconds",

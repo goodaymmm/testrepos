@@ -36,6 +36,7 @@ import { applyConfig, proposeConfig } from "./commands/config.js";
 import { analyzeDocking } from "./commands/docking.js";
 import {
   formatDiscordHttpServerResult,
+  getDiscordHttpStatusCommand,
   startDiscordHttpCommand
 } from "./commands/discord.js";
 import {
@@ -434,11 +435,15 @@ export function createProgram(): Command {
 
   const discordHttp = discord
     .command("http")
-    .description("Serve Discord HTTP Interactions over local loopback.");
+    .description("Serve and inspect Discord HTTP Interactions endpoints.");
 
   discordHttp
     .command("start")
-    .description("Start a loopback-only Discord HTTP Interactions endpoint.")
+    .description("Start a loopback-bound Discord HTTP Interactions endpoint.")
+    .option(
+      "--profile <profile>",
+      "HTTP profile: loopback or reverse-proxy. Defaults to notifications config."
+    )
     .option("--host <host>", "Loopback host. Defaults to 127.0.0.1.")
     .option("--port <port>", "Loopback port. Defaults to 18777.")
     .option(
@@ -451,14 +456,25 @@ export function createProgram(): Command {
     )
     .option("--max-seconds <seconds>", "Stop the HTTP server automatically after this many seconds.")
     .action(async (options: {
+      profile?: string;
       host?: string;
       port?: string;
       timestampToleranceSeconds?: string;
       replayTtlSeconds?: string;
       maxSeconds?: string;
     }) => {
+      if (
+        options.profile !== undefined &&
+        options.profile !== "loopback" &&
+        options.profile !== "reverse-proxy"
+      ) {
+        throw new Error(`Invalid Discord HTTP profile: ${options.profile}`);
+      }
       const maxSeconds = parseOptionalPositiveInteger(options.maxSeconds, "--max-seconds");
-      const server = await startDiscordHttpCommand(process.cwd(), options);
+      const server = await startDiscordHttpCommand(process.cwd(), {
+        ...options,
+        profile: options.profile
+      });
       let timer: ReturnType<typeof setTimeout> | undefined;
       const stop = () => {
         void server.stop();
@@ -484,6 +500,13 @@ export function createProgram(): Command {
         process.off("SIGINT", stop);
         process.off("SIGTERM", stop);
       }
+    });
+
+  discordHttp
+    .command("status")
+    .description("Show the latest Discord HTTP Interactions status artifact.")
+    .action(async () => {
+      console.log(await getDiscordHttpStatusCommand(process.cwd()));
     });
 
   program
