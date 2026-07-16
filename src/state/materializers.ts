@@ -10,6 +10,7 @@ import {
 } from "../core/fs/resource-lock.js";
 import type { KaironEvent } from "../core/events/event-types.js";
 import { recordApprovalFollowUp } from "../approvals/follow-up-runner.js";
+import { ensureApprovalCorrelation } from "../correlation/store.js";
 import { handleGitPushApprovalDecision } from "../git/transaction-approval.js";
 
 export async function materializeEvent(
@@ -120,6 +121,13 @@ async function materializeApprovalRequested(
       ...approval
     });
   });
+  await ensureApprovalCorrelation(projectRoot, {
+    ...approval,
+    id,
+    status: "pending",
+    created_at: event.created_at,
+    updated_at: event.created_at
+  });
 }
 
 async function materializeApprovalDecided(
@@ -171,6 +179,8 @@ async function materializeApprovalDecided(
     await writeJsonFileFenced(lock, approvalPath, updated);
   });
 
+  await ensureApprovalCorrelation(projectRoot, updated!);
+
   if (
     event.payload?.decision === "approve" ||
     event.payload?.decision === "reject" ||
@@ -204,6 +214,7 @@ async function materializeApprovalConfirmationRequested(
     `${approvalId}.json`
   );
 
+  let updated: Record<string, unknown>;
   await withStateResourceLock(projectRoot, approvalPath, async (lock) => {
     let current: Record<string, unknown> = {
       schema_version: "0.1",
@@ -217,7 +228,7 @@ async function materializeApprovalConfirmationRequested(
       // A missing file is materialized as a minimal confirmation-required approval.
     }
 
-    await writeJsonFileFenced(lock, approvalPath, {
+    updated = {
       ...current,
       status: "confirmation_required",
       confirmation: {
@@ -231,8 +242,10 @@ async function materializeApprovalConfirmationRequested(
         discord: event.payload?.discord
       },
       updated_at: event.created_at
-    });
+    };
+    await writeJsonFileFenced(lock, approvalPath, updated);
   });
+  await ensureApprovalCorrelation(projectRoot, updated!);
 }
 
 async function materializeApprovalSnoozed(
@@ -276,6 +289,8 @@ async function materializeApprovalSnoozed(
     };
     await writeJsonFileFenced(lock, approvalPath, updated);
   });
+
+  await ensureApprovalCorrelation(projectRoot, updated!);
 
   await recordApprovalFollowUp(projectRoot, {
     approval: updated!,

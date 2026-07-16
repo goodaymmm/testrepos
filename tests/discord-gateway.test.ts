@@ -5,6 +5,10 @@ import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { readJsonLines } from "../src/core/fs/jsonl-file.js";
 import { createDefaultSecretResolver } from "../src/core/secrets/secret-resolver.js";
 import {
+  correlationArtifactPath,
+  type CorrelationArtifact
+} from "../src/correlation/store.js";
+import {
   buildKaironSlashCommands,
   prepareDiscordGateway,
   prepareDiscordGatewayFromConfig,
@@ -942,13 +946,16 @@ describe("prepareDiscordGateway", () => {
 
     expect(interaction.deferredOptions).toEqual({ ephemeral: true });
     expect(interaction.editedReply).toBe("Kairon approval decided: APR-0001");
-    await expect(
-      readJsonFile(path.join(root, ".kairon", "approvals", "APR-0001.json"))
-    ).resolves.toMatchObject({
+    const approval = await readJsonFile<Record<string, unknown>>(
+      path.join(root, ".kairon", "approvals", "APR-0001.json")
+    );
+    expect(approval).toMatchObject({
       status: "decided",
       decision: "reject",
       reason: "Blocked by operation policy."
     });
+    expect(approval.correlation_id).toMatch(/^COR-\d{6}$/u);
+    const correlationId = String(approval.correlation_id);
     await expect(new CommandInbox(root).list("completed")).resolves.toMatchObject([
       {
         command: {
@@ -974,9 +981,25 @@ describe("prepareDiscordGateway", () => {
         command_status: "completed",
         message_update_status: "updated",
         message_id: "message-1",
-        decision_reason: "Blocked by operation policy."
+        decision_reason: "Blocked by operation policy.",
+        correlation_id: correlationId
       })
     ]);
+    const correlation = await readJsonFile<CorrelationArtifact>(
+      correlationArtifactPath(root, correlationId)
+    );
+    expect(correlation.members).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "approval", id: "APR-0001", status: "decided" }),
+        expect.objectContaining({ kind: "discord_message", id: "message-1", status: "decided" }),
+        expect.objectContaining({
+          kind: "discord_interaction",
+          id: "reject-submit-1",
+          status: "applied"
+        }),
+        expect.objectContaining({ kind: "follow_up" })
+      ])
+    );
     expect(JSON.stringify(audit)).not.toContain(discordIds.owner);
 
     await handle.stop();

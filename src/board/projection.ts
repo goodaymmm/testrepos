@@ -10,6 +10,11 @@ import {
   listApprovalFollowUps,
   type ApprovalFollowUpArtifact
 } from "../approvals/follow-up-runner.js";
+import {
+  inspectCorrelationIntegrity,
+  listCorrelations,
+  type CorrelationArtifact
+} from "../correlation/store.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { readJsonLines } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
@@ -89,6 +94,14 @@ export type BoardProjection = {
     gateway?: RuntimeStatus["discordGateway"];
     notifications: BoardDiscordAuditSummary;
     decisions: BoardDiscordDecisionAuditSummary;
+  };
+  correlations: {
+    total: number;
+    attention: number;
+    missing_artifacts: number;
+    stale_messages: number;
+    orphan_follow_ups: number;
+    recent: BoardCorrelationSummary[];
   };
 };
 
@@ -192,6 +205,7 @@ export type BoardRunSummary = {
 
 export type BoardWorkflowSummary = {
   workflow_id: string;
+  correlation_id?: string;
   status: string;
   task_id: string;
   current_node?: string;
@@ -220,6 +234,7 @@ export type BoardWorkflowSummary = {
 
 export type BoardApprovalSummary = {
   id: string;
+  correlation_id?: string;
   status: string;
   type?: string;
   title?: string;
@@ -274,6 +289,7 @@ export type BoardApprovalRelatedArtifact = {
 
 export type BoardApprovalFollowUpSummary = {
   id: string;
+  correlation_id?: string;
   approval_id: string;
   approval_type?: string;
   decision: string;
@@ -406,6 +422,24 @@ export type BoardDiscordDecisionAuditRecordSummary = {
   message_update_status?: string;
   message_update_reason?: string;
   recorded_at?: string;
+};
+
+export type BoardCorrelationSummary = {
+  correlation_id: string;
+  status: string;
+  approval_id?: string;
+  workflow_id?: string;
+  discord_message_id?: string;
+  follow_up_id?: string;
+  member_count: number;
+  timeline: Array<{
+    kind: string;
+    member_id: string;
+    action: string;
+    status: string;
+    created_at: string;
+  }>;
+  updated_at: string;
 };
 
 type ReviewLoopArtifact = {
@@ -557,6 +591,8 @@ export async function createBoardProjection(
       readDailyReports(projectRoot),
       readDiscordAudits(projectRoot)
     ]);
+  const correlations = await listCorrelations(projectRoot);
+  const correlationIntegrity = await inspectCorrelationIntegrity(projectRoot);
   const runSummaries = runs.sort(compareRunSummariesDesc);
   const workflowSummaries = workflows
     .map(({ artifact, events }) => summarizeWorkflow(artifact, events))
@@ -671,6 +707,18 @@ export async function createBoardProjection(
         recentLimit
       ),
       decisions: summarizeDiscordDecisionAudits(discordAudits.decisions, recentLimit)
+    },
+    correlations: {
+      total: correlations.length,
+      attention:
+        correlationIntegrity.missing_artifacts +
+        correlationIntegrity.stale_messages +
+        correlationIntegrity.orphan_follow_ups +
+        correlationIntegrity.duplicate_members,
+      missing_artifacts: correlationIntegrity.missing_artifacts,
+      stale_messages: correlationIntegrity.stale_messages,
+      orphan_follow_ups: correlationIntegrity.orphan_follow_ups,
+      recent: correlations.slice(0, recentLimit).map(summarizeCorrelation)
     }
   };
   const sanitized = sanitizeBoardProjection(candidate);
@@ -680,6 +728,28 @@ export async function createBoardProjection(
     meta: {
       secret_scan: sanitized.summary
     }
+  };
+}
+
+function summarizeCorrelation(artifact: CorrelationArtifact): BoardCorrelationSummary {
+  const memberId = (kind: CorrelationArtifact["members"][number]["kind"]): string | undefined =>
+    artifact.members.find((member) => member.kind === kind)?.id;
+  return {
+    correlation_id: artifact.correlation_id,
+    status: artifact.status,
+    approval_id: memberId("approval"),
+    workflow_id: memberId("workflow"),
+    discord_message_id: memberId("discord_message"),
+    follow_up_id: memberId("follow_up"),
+    member_count: artifact.members.length,
+    timeline: artifact.timeline.slice(-12).map((event) => ({
+      kind: event.kind,
+      member_id: event.member_id,
+      action: event.action,
+      status: event.status,
+      created_at: event.created_at
+    })),
+    updated_at: artifact.updated_at
   };
 }
 
@@ -803,6 +873,7 @@ function summarizeWorkflow(
   );
   return compact({
     workflow_id: artifact.workflow_id,
+    correlation_id: artifact.correlation_id,
     status: artifact.status,
     task_id: artifact.task_id,
     current_node: currentNode?.id,
@@ -988,6 +1059,7 @@ function summarizeApproval(
 
   return compact({
     id: approval.id,
+    correlation_id: readString(approval.correlation_id),
     status: approval.status,
     type: readString(approval.type),
     title: title === undefined ? undefined : sanitizeInline(title),
@@ -1214,6 +1286,7 @@ function summarizeApprovalFollowUp(
 ): BoardApprovalFollowUpSummary {
   return compact({
     id: followUp.id,
+    correlation_id: followUp.correlation_id,
     approval_id: followUp.approval_id,
     approval_type: followUp.approval_type,
     decision: followUp.decision,

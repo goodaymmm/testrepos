@@ -11,6 +11,7 @@ import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { createDefaultSecretResolver } from "../src/core/secrets/secret-resolver.js";
 import { exportBoardProjection } from "../src/board/projection.js";
 import { issuePersistentBoardAccess } from "../src/board/access-token.js";
+import { trackCorrelationMember } from "../src/correlation/store.js";
 import { createTempProject } from "./test-utils.js";
 
 const discordIds = {
@@ -886,6 +887,35 @@ describe("runDoctor", () => {
       ])
     );
     expect(formatDoctorResult(ready)).not.toContain(token);
+  });
+
+  it("warns when a correlation member points to a missing artifact", async () => {
+    const root = await createInitializedGitProject();
+    await trackCorrelationMember(root, {
+      kind: "workflow",
+      id: "WF-T155-MISSING",
+      status: "running",
+      artifactPath: ".kairon/workflows/production/WF-T155-MISSING.json",
+      createdAt: "2026-07-16T02:00:00.000Z"
+    });
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+    const check = checkById(result, "correlation.integrity");
+
+    expect(result.ok).toBe(true);
+    expect(check?.status).toBe("warning");
+    expect(check?.details).toEqual(
+      expect.arrayContaining([
+        "missing_artifacts=1",
+        "stale_messages=0",
+        "orphan_follow_ups=0"
+      ])
+    );
+    expect(check?.next_action).toContain(".kairon/correlations");
   });
 });
 

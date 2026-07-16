@@ -70,6 +70,47 @@ describe("Board workflow observability", () => {
     expect(html).toContain('id="workflow-WF-0152-BOARD"');
     expect(html).toContain("pause (paused)");
   });
+
+  it("renders a secret-free approval and Discord correlation timeline", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeJsonFileAtomic(path.join(root, ".kairon", "approvals", "APR-T155.json"), {
+      schema_version: "0.1",
+      id: "APR-T155",
+      status: "pending",
+      type: "git_push",
+      title: "Correlation token=SHOULD-NOT-LEAK",
+      actions: ["approve", "reject"],
+      discord: {
+        channel_id: "333333333333333333",
+        message_id: "discord-message-t155"
+      },
+      created_at: "2026-07-16T01:00:00.000Z",
+      updated_at: "2026-07-16T01:00:00.000Z"
+    });
+
+    const projection = await createBoardProjection(root);
+    const html = renderBoardHtml(projection);
+
+    expect(projection.correlations).toMatchObject({
+      total: 1,
+      attention: 0,
+      recent: [
+        expect.objectContaining({
+          status: "pending",
+          approval_id: "APR-T155",
+          member_count: 1
+        })
+      ]
+    });
+    const correlationId = projection.correlations.recent[0]?.correlation_id;
+    expect(correlationId).toMatch(/^COR-\d{6}$/u);
+    expect(html).toContain('href="#correlations"');
+    expect(html).toContain('id="correlations"');
+    expect(html).toContain(String(correlationId));
+    expect(JSON.stringify(projection)).not.toContain("SHOULD-NOT-LEAK");
+    expect(html).not.toContain("SHOULD-NOT-LEAK");
+  });
 });
 
 describe("remote read-only Board", () => {

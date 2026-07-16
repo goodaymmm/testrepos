@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
+import { ApprovalQueue, ApprovalNotFoundError } from "../approvals/approval-queue.js";
+import {
+  ensureApprovalCorrelation,
+  trackCorrelationMember
+} from "../correlation/store.js";
 import { appendJsonLine } from "../core/fs/jsonl-file.js";
 import { getKaironPaths } from "../core/fs/paths.js";
 import {
@@ -31,6 +36,7 @@ export type DiscordDecisionAuditSideEffect = {
 
 export type DiscordDecisionAuditRecord = {
   schema_version: "0.1";
+  correlation_id?: string;
   interaction_id: string;
   approval_id: string;
   decision: string;
@@ -80,9 +86,25 @@ export async function auditDiscordDecisionInteraction(
     (input.result.accepted ? undefined : input.result.reason);
   const status = resolveAuditStatus(input.result, input.sideEffect);
   const messageId = input.sideEffect?.message_id ?? input.interaction.message_id;
+  let correlationId: string | undefined;
+  let approvalStatus: string | undefined;
+  try {
+    const approval = await new ApprovalQueue(projectRoot).show(parsed.approval_id);
+    approvalStatus = approval.status;
+    correlationId = (
+      await ensureApprovalCorrelation(projectRoot, approval, {
+        migrated: approval.correlation_id === undefined
+      })
+    ).correlation_id;
+  } catch (error) {
+    if (!(error instanceof ApprovalNotFoundError)) {
+      throw error;
+    }
+  }
 
   await appendJsonLine(discordDecisionAuditPath(projectRoot), {
     schema_version: "0.1",
+    correlation_id: correlationId,
     interaction_id: input.interaction.interaction_id,
     approval_id: parsed.approval_id,
     decision: parsed.action,
@@ -108,6 +130,29 @@ export async function auditDiscordDecisionInteraction(
     received_at: input.interaction.received_at,
     recorded_at: input.recordedAt.toISOString()
   } satisfies DiscordDecisionAuditRecord);
+  if (correlationId !== undefined) {
+    const auditPath = toProjectPath(projectRoot, discordDecisionAuditPath(projectRoot));
+    await trackCorrelationMember(projectRoot, {
+      correlationId,
+      approvalId: parsed.approval_id,
+      kind: "discord_interaction",
+      id: input.interaction.interaction_id,
+      status,
+      artifactPath: auditPath,
+      createdAt: input.recordedAt.toISOString()
+    });
+    if (messageId !== undefined) {
+      await trackCorrelationMember(projectRoot, {
+        correlationId,
+        approvalId: parsed.approval_id,
+        kind: "discord_message",
+        id: messageId,
+        status: approvalStatus ?? input.sideEffect?.message_update_status ?? status,
+        artifactPath: auditPath,
+        createdAt: input.recordedAt.toISOString()
+      });
+    }
+  }
 }
 
 export function discordDecisionAuditPath(projectRoot: string): string {
@@ -135,6 +180,10 @@ function resolveAuditStatus(
 
 function hashActor(userId: string): string {
   return createHash("sha256").update(userId).digest("hex").slice(0, 16);
+}
+
+function toProjectPath(projectRoot: string, absolutePath: string): string {
+  return path.relative(projectRoot, absolutePath).split(path.sep).join("/");
 }
 
 export function sanitizeDiscordAuditText(value: string | undefined): string | undefined {
