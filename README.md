@@ -250,6 +250,8 @@ approval、queue、run、review、recovery、cleanup、Discord decision auditを
 
 `--require-token`または`--access-token-ttl-seconds`を指定すると、起動時に短時間有効な`board.read` Bearer tokenを1回だけ表示します。requestには`Authorization: Bearer <token>`を付けます。`.kairon/runtime/board/server.json`にはtoken本体ではなくSHA-256 hash、`expires_at`、scopeだけを保存し、期限切れtokenやread-only以外のscopeは拒否します。認証を有効にしてもBoardはGET/HEAD専用で、approval、merge、deploy操作は実行できません。
 
+外部PC・mobileから確認する場合は、既定のloopbackを維持したまま認証済みHTTPS reverse proxyの背後で`kairon board serve --profile remote-readonly`を使用します。`kairon board access issue --ttl-minutes 15`で短期tokenを発行し、利用後は`kairon board access revoke <access-id>`で失効します。remote profileはtrusted proxy、Origin allowlist、verified identity header、rate limitを必須とし、remote表示から実行・rollback用command hintを除外します。設定と安全境界は[docs/board-public-safety-v0.md](docs/board-public-safety-v0.md)を参照してください。
+
 projectionは出力直前にsecret-like field、Bearer token、GitHub/OpenAI形式のcredentialを再検査し、redaction結果を`meta.secret_scan`へ記録します。BoardへのGET/HEADと拒否されたrequestは`.kairon/runtime/board/access.jsonl`へ記録しますが、raw token、IP、User-Agentは保存しません。`kairon doctor`の`board.secret_scan`で保存済みprojectionの再検査結果を確認できます。
 
 ### Cleanup proposal

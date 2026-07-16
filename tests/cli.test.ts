@@ -320,10 +320,11 @@ describe("createProgram", () => {
     expect(captured).toMatchObject({ version: "0.2.0", dryRun: true });
   });
 
-  it("registers board export and serve commands", () => {
+  it("registers board export, serve, and remote access commands", () => {
     const board = createProgram().commands.find((command) => command.name() === "board");
 
     expect(board?.commands.map((command) => command.name()).sort()).toEqual([
+      "access",
       "export",
       "serve"
     ]);
@@ -333,6 +334,7 @@ describe("createProgram", () => {
         ?.options.map((option) => option.long)
     ).toEqual(
       expect.arrayContaining([
+        "--profile",
         "--host",
         "--port",
         "--recent",
@@ -341,6 +343,16 @@ describe("createProgram", () => {
         "--max-seconds"
       ])
     );
+    const access = board?.commands.find((command) => command.name() === "access");
+    expect(access?.commands.map((command) => command.name()).sort()).toEqual([
+      "issue",
+      "revoke"
+    ]);
+    expect(
+      access?.commands
+        .find((command) => command.name() === "issue")
+        ?.options.map((option) => option.long)
+    ).toContain("--ttl-minutes");
   });
 
   it("registers agent session commands", () => {

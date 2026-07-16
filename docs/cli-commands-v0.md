@@ -17,6 +17,8 @@ kairon approval decide APR-0001 --action approve|reject|request_changes|snooze
 kairon approval seed APR-MANUAL-0001 --actions approve,reject
 kairon board export
 kairon board serve
+kairon board access issue --ttl-minutes 15
+kairon board access revoke <access-id>
 kairon cleanup list
 kairon cleanup show <proposal-id>
 kairon cleanup apply <proposal-id> [--dry-run]
@@ -452,6 +454,9 @@ read-only Board projectionを出力またはloopback HTTPで表示する。
 kairon board export
 kairon board export --output .kairon/board/projection.json --recent 20
 kairon board serve --host 127.0.0.1 --port 8787 --recent 20
+kairon board access issue --ttl-minutes 15
+kairon board serve --profile remote-readonly --host 127.0.0.1 --port 18778
+kairon board access revoke <access-id>
 ```
 
 処理。
@@ -462,12 +467,15 @@ redact large output and secret-like fields
 summarize approvals, queue, runs, reviews, recovery, cleanup, Discord decision audit
 write .kairon/board/projection.json
 serve HTML and projection.json on loopback only when requested
+serve an authenticated remote-readonly profile behind a trusted HTTPS reverse proxy
 ```
 
 `serve` は `127.0.0.1` または `localhost` のようなloopback hostだけを許可する。
 Discord approval messageからBoardを開く場合も、MVPではこのloopback URLを在宅時の詳細確認導線として扱う。
 Boardはread-onlyであり、approval action、merge、deploy、protected branch pushは実行しない。
 public Board公開やスマートフォン最適化の安全要件は `docs/board-public-safety-v0.md` に固定し、認証なし公開やpublic bindは対象外とする。
+
+`remote-readonly`はKairon自体をpublic bindせず、`notifications.json`の`board`にHTTPS `external_base_url`、`trusted_proxies`、`allowed_origins`、`identity_header`、`rate_limit_per_minute`を設定して使う。reverse proxyはTLSと外部認証を担当し、`X-Forwarded-Proto`、`X-Forwarded-Host`、設定したverified identity header、`Authorization: Bearer <token>`をloopback backendへ渡す。tokenは`board access issue`で一度だけ表示され、hashだけが`.kairon/runtime/board/access/<access-id>.json`へ保存される。remote access auditは`.kairon/audit/board-access.jsonl`へ保存され、token、cookie、Authorization header、raw identityは含めない。
 
 ## kairon cleanup
 

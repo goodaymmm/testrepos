@@ -2,7 +2,7 @@
 
 ## 目的
 
-Kairon Board は `.kairon/` の運用状態を集約する read-only view である。現時点の実装は loopback-only のローカル確認用途に限定し、public endpoint や mobile 外部公開は有効化しない。
+Kairon Board は `.kairon/` の運用状態を集約する read-only view である。既定はloopback-onlyであり、明示的な`remote-readonly` profileだけを認証済みHTTPS reverse proxyの背後で利用できる。Kairon自体のpublic bindや認証なし公開は有効化しない。
 
 この文書は、将来 Board を外部公開またはスマートフォンから確認できる導線に拡張する前に満たすべき安全要件を固定する。
 
@@ -18,6 +18,39 @@ Kairon Board は `.kairon/` の運用状態を集約する read-only view であ
 - Board から approval action、merge、deploy、protected branch push を直接実行しない。
 - Board projection は raw diff、stdout/stderr、secret-like key、非local Board URLを表示しない。
 - Discord approval message に載せる Board URL も local loopback URL のみを扱う。
+
+## Remote read-only access
+
+`remote-readonly`は次の設定と外部構成がすべて揃った場合だけ起動する。
+
+```json
+{
+  "board": {
+    "enabled": true,
+    "profile": "remote-readonly",
+    "external_base_url": "https://board.example.com/",
+    "trusted_proxies": ["127.0.0.1/32"],
+    "allowed_origins": ["https://board.example.com"],
+    "identity_header": "x-kairon-verified-identity",
+    "rate_limit_per_minute": 60
+  }
+}
+```
+
+```powershell
+kairon board access issue --ttl-minutes 15
+kairon board serve --profile remote-readonly --host 127.0.0.1 --port 18778
+kairon board access revoke BOARD-ACCESS-...
+```
+
+- reverse proxyがTLSと外部identity認証を担当し、Kaironへverified identity headerを渡す。
+- Kaironは接続元socketを`trusted_proxies`と照合し、HTTPS forwarded header、Origin、identity、Bearer tokenを順に検証する。
+- tokenはURL queryへ入れず、proxyから`Authorization` headerとして渡す。raw tokenは発行時だけ表示し、artifactにはSHA-256 hashだけを保存する。
+- token metadataは`.kairon/runtime/board/access/<access-id>.json`へ保存し、期限切れまたはrevoke済みtokenを拒否する。
+- remote routeは`/`、`/index.html`、`/projection.json`のGET/HEADだけに限定する。
+- remote HTMLとprojectionからlocal command、rollback、PR作成用hintを除外する。
+- identity単位のrate limitを適用する。
+- remote auditは`.kairon/audit/board-access.jsonl`へ保存し、raw identity、IP、Origin値、token、cookie、Authorization headerを保存しない。
 
 ## 機密情報分類
 

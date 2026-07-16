@@ -23,6 +23,8 @@ import {
 import {
   exportBoard,
   formatBoardServeResult,
+  issueBoardAccessCommand,
+  revokeBoardAccessCommand,
   serveBoard
 } from "./commands/board.js";
 import {
@@ -335,6 +337,10 @@ export function createProgram(): Command {
   board
     .command("serve")
     .description("Serve a read-only local Kairon board over loopback HTTP.")
+    .option(
+      "--profile <profile>",
+      "Board profile: loopback or remote-readonly. Defaults to configured profile."
+    )
     .option("--host <host>", "Loopback host. Defaults to 127.0.0.1.")
     .option("--port <port>", "Loopback port. Defaults to 8787.")
     .option("--recent <count>", "Number of recent items to include per section.")
@@ -348,6 +354,7 @@ export function createProgram(): Command {
     )
     .option("--max-seconds <seconds>", "Stop the board server automatically after this many seconds.")
     .action(async (options: {
+      profile?: string;
       host?: string;
       port?: string;
       recent?: string;
@@ -378,6 +385,26 @@ export function createProgram(): Command {
         process.off("SIGINT", stop);
         process.off("SIGTERM", stop);
       }
+    });
+
+  const boardAccess = board
+    .command("access")
+    .description("Issue and revoke short-lived remote Board access.");
+
+  boardAccess
+    .command("issue")
+    .description("Issue a short-lived Board Bearer token. The raw token is shown once.")
+    .option("--ttl-minutes <minutes>", "Token lifetime in minutes. Defaults to 15.")
+    .action(async (options: { ttlMinutes?: string }) => {
+      console.log(await issueBoardAccessCommand(process.cwd(), options));
+    });
+
+  boardAccess
+    .command("revoke")
+    .description("Revoke a previously issued Board access token.")
+    .argument("<access-id>", "Board access id returned by board access issue.")
+    .action(async (accessId: string) => {
+      console.log(await revokeBoardAccessCommand(process.cwd(), accessId));
     });
 
   const cleanup = program
