@@ -2,8 +2,14 @@ import { createHash } from "node:crypto";
 import { access, mkdir, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { loadConfigFile } from "../core/config/load-config.js";
-import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
+import { readJsonFile } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
+import {
+  withResourceLock,
+  writeJsonFileFenced,
+  type ResourceLockHandle
+} from "../core/fs/resource-lock.js";
+import { createRagIndexManifest, type RagIndexManifest } from "./manifest.js";
 
 export type RagSourceType =
   | "rule"
@@ -84,6 +90,7 @@ export type RagIndex = {
   updated_at: string;
   source_count: number;
   chunk_count: number;
+  manifest?: RagIndexManifest;
   last_compacted_at?: string;
   compaction?: RagCompactionSummary;
   refresh?: RagRefreshSummary;
@@ -183,6 +190,8 @@ export type BuildRagIndexOptions = {
   prune?: boolean;
   compact?: boolean;
   maxArtifactAgeDays?: number;
+  fullRebuild?: boolean;
+  writeIndex?: boolean;
 };
 
 export type CompactRagIndexOptions = {
@@ -351,6 +360,21 @@ export async function buildRagIndex(
   projectRoot: string,
   options: BuildRagIndexOptions = {}
 ): Promise<BuildRagIndexResult> {
+  const config = await loadConfigFile<RagConfig>(projectRoot, "rag.json");
+  const indexPath = ragIndexPath(projectRoot, config);
+  return withResourceLock(
+    projectRoot,
+    indexPath,
+    { owner: "rag-index-refresh", ttlMs: 120_000 },
+    (lock) => buildRagIndexUnlocked(projectRoot, options, lock)
+  );
+}
+
+async function buildRagIndexUnlocked(
+  projectRoot: string,
+  options: BuildRagIndexOptions,
+  lock: ResourceLockHandle
+): Promise<BuildRagIndexResult> {
   const nowDate = options.now?.() ?? new Date();
   const now = nowDate.toISOString();
   const config = await loadConfigFile<RagConfig>(projectRoot, "rag.json");
@@ -363,7 +387,9 @@ export async function buildRagIndex(
     nowDate
   );
   const scoped = isScopedRefresh(options);
-  const existingIndex = await readExistingIndex(indexPath);
+  const existingIndex = options.fullRebuild === true
+    ? undefined
+    : await readExistingIndex(indexPath);
   const existingSources = mapExistingSourcesByIdentity(existingIndex);
   const existingChunks = mapExistingChunksBySourceId(existingIndex);
   const builtSources: BuiltSource[] = [];
@@ -449,9 +475,12 @@ export async function buildRagIndex(
     sources: merged.sources,
     chunks: merged.chunks
   };
+  index.manifest = createRagIndexManifest(index, now);
 
-  await mkdir(path.dirname(indexPath), { recursive: true });
-  await writeJsonFileAtomic(indexPath, index);
+  if (options.writeIndex !== false) {
+    await mkdir(path.dirname(indexPath), { recursive: true });
+    await writeJsonFileFenced(lock, indexPath, index);
+  }
 
   return {
     schema_version: "0.1",
@@ -479,6 +508,21 @@ export async function buildRagIndex(
 export async function compactRagIndex(
   projectRoot: string,
   options: CompactRagIndexOptions = {}
+): Promise<CompactRagIndexResult> {
+  const config = await loadConfigFile<RagConfig>(projectRoot, "rag.json");
+  const indexPath = ragIndexPath(projectRoot, config);
+  return withResourceLock(
+    projectRoot,
+    indexPath,
+    { owner: "rag-index-compact", ttlMs: 120_000 },
+    (lock) => compactRagIndexUnlocked(projectRoot, options, lock)
+  );
+}
+
+async function compactRagIndexUnlocked(
+  projectRoot: string,
+  options: CompactRagIndexOptions,
+  lock: ResourceLockHandle
 ): Promise<CompactRagIndexResult> {
   const nowDate = options.now?.() ?? new Date();
   const now = nowDate.toISOString();
@@ -533,8 +577,9 @@ export async function compactRagIndex(
     sources,
     chunks
   };
+  index.manifest = createRagIndexManifest(index, now);
 
-  await writeJsonFileAtomic(indexPath, index);
+  await writeJsonFileFenced(lock, indexPath, index);
 
   return {
     schema_version: "0.1",
@@ -551,12 +596,20 @@ export async function searchRagIndex(
   projectRoot: string,
   request: RagSearchRequest
 ): Promise<RagSearchResult[]> {
+  const index = await loadOrBuildIndex(projectRoot);
+  return searchRagIndexData(index, request, { projectRoot });
+}
+
+export async function searchRagIndexData(
+  index: RagIndex,
+  request: RagSearchRequest,
+  options: { projectRoot?: string } = {}
+): Promise<RagSearchResult[]> {
   const queryTerms = tokenize(request.query);
   if (queryTerms.length === 0) {
     return [];
   }
 
-  const index = await loadOrBuildIndex(projectRoot);
   const topK = request.topK ?? 5;
   const sourceById = new Map(index.sources.map((source) => [source.source_id, source]));
   const now = request.now?.() ?? new Date();
@@ -582,8 +635,11 @@ export async function searchRagIndex(
       };
 
       if (request.explain === true) {
+        if (options.projectRoot === undefined) {
+          throw new Error("RAG explain requires a project root.");
+        }
         result.explain = await buildSearchExplain({
-          projectRoot,
+          projectRoot: options.projectRoot,
           source: sourceById.get(chunk.source_id),
           scoring,
           now

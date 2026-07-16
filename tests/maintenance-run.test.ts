@@ -6,6 +6,7 @@ import { runMaintenance } from "../src/cli/commands/maintenance.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { runDailyMaintenance } from "../src/maintenance/run.js";
 import { WorkQueue } from "../src/queue/work-queue.js";
+import { buildRagIndex } from "../src/rag/lexical-index.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("runDailyMaintenance", () => {
@@ -183,6 +184,23 @@ describe("runDailyMaintenance", () => {
       pruned_ephemeral_source_count: expect.any(Number)
     });
     expect(result.rag_index_skipped).toBeUndefined();
+    expect(result.rag_integrity).toMatchObject({
+      status: "PASS",
+      issue_count: 0,
+      index_checksum: expect.stringMatching(/^sha256:/u)
+    });
+    expect(result.rag_stats).toMatchObject({
+      duplicate_chunk_count: expect.any(Number),
+      estimated_total_tokens: expect.any(Number),
+      context_budget_tokens: 12000,
+      rebuild_due: false
+    });
+    expect(result.daily_report.rag).toMatchObject({
+      integrity_status: "PASS",
+      integrity_issues: 0,
+      index_exists: true,
+      context_budget_tokens: 12000
+    });
     await expect(
       readJsonFile(path.join(root, ".kairon", "rag", "index.json"))
     ).resolves.toMatchObject({
@@ -209,6 +227,11 @@ describe("runDailyMaintenance", () => {
     expect(output).toContain("rag_pruned_sources=");
     expect(output).toContain("rag_pruned_reason.missing=");
     expect(output).toContain("rag_pruned_ephemeral_sources=");
+    expect(output).toContain("rag_integrity=PASS");
+    expect(output).toContain("rag_integrity_issues=0");
+    expect(output).toContain("rag_duplicate_ratio=");
+    expect(output).toContain("rag_context_budget_tokens=12000");
+    expect(output).toContain("rag_rebuild_due=false");
   });
 
   it("refreshes the RAG index during maintenance when enabled", async () => {
@@ -252,5 +275,43 @@ describe("runDailyMaintenance", () => {
     const output = await runMaintenance(root);
     expect(output).toContain("recovery_artifact=.kairon/recovery/REC-");
     expect(output).toContain("rag_index=.kairon/rag/index.json");
+  });
+
+  it("creates a compared rebuild candidate when the full index is due", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const configPath = path.join(root, ".kairon", "config", "rag.json");
+    const config = await readJsonFile<Record<string, any>>(configPath);
+    config.enabled = true;
+    config.rebuild.interval_days = 1;
+    await writeJsonFileAtomic(configPath, config);
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    await writeFile(path.join(root, "docs", "due.md"), "RAG rebuild due evidence.", "utf8");
+    await buildRagIndex(root, {
+      now: () => new Date("2026-07-10T00:00:00.000Z")
+    });
+
+    const result = await runDailyMaintenance(root, {
+      date: "2026-07-12",
+      now: new Date("2026-07-12T00:00:00.000Z")
+    });
+
+    expect(result.rag_stats?.rebuild_due).toBe(true);
+    expect(result.rag_rebuild_candidate).toMatchObject({
+      rebuild_id: "RAG-REBUILD-20260712T000000000Z",
+      status: "ready",
+      comparison_status: "passed"
+    });
+    await expect(
+      readJsonFile(
+        path.join(
+          root,
+          ".kairon",
+          "rag",
+          "rebuilds",
+          "RAG-REBUILD-20260712T000000000Z.json"
+        )
+      )
+    ).resolves.toMatchObject({ status: "ready" });
   });
 });

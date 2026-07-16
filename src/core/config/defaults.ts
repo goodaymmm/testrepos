@@ -251,6 +251,16 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
         lexical: "placeholder"
       },
       embedding_profile: "local_default",
+      integrity: {
+        query_samples: ["approval routing", "runtime recovery", "review findings"],
+        context_budget_tokens: 12000,
+        max_duplicate_ratio: 0.25
+      },
+      rebuild: {
+        interval_days: 30,
+        retention_days: 90,
+        max_artifacts: 20
+      },
       security: {
         exclude_paths: [".env*", "**/*.pem", "**/*secret*", "**/*token*"]
       }
@@ -296,6 +306,8 @@ export const kaironDirectories = [
   "recovery/resolutions",
   "state",
   "rag",
+  "rag/integrity",
+  "rag/rebuilds",
   "board",
   "reports",
   "reports/daily",

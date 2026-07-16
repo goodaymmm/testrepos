@@ -138,6 +138,7 @@ describe("createDailyReport", () => {
       pending_approvals: 1,
       failed_notifications: 1,
       correlation_issues: 0,
+      rag_integrity_issues: 0,
       recovery_approvals_requested: 2,
       git_transactions_by_status: { approval_required: 1 },
       git_transactions_ready_for_pr: 1,
@@ -190,6 +191,14 @@ describe("createDailyReport", () => {
       stale_messages: 0,
       orphan_follow_ups: 0,
       duplicate_members: 0
+    });
+    expect(report.rag).toMatchObject({
+      integrity_status: "SETUP_REQUIRED",
+      integrity_issues: 0,
+      index_exists: false,
+      duplicate_chunk_count: 0,
+      context_budget_tokens: 12000,
+      rebuild_due: false
     });
     const persistedReport = await readJsonFile(
       path.join(root, ".kairon", "reports", "daily", "2026-05-25.json")

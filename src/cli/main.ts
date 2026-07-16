@@ -67,8 +67,11 @@ import { runMigrations } from "./commands/migrate.js";
 import {
   compactRagIndexCommand,
   queryRagIndexCommand,
+  rebuildRagIndexCommand,
   refreshRagIndexCommand,
-  statusRagIndexCommand
+  statsRagIndexCommand,
+  statusRagIndexCommand,
+  verifyRagIndexCommand
 } from "./commands/rag.js";
 import {
   acknowledgeRecoveryTarget,
@@ -1345,6 +1348,38 @@ export function createProgram(): Command {
     .description("Show local RAG index status.")
     .action(async () => {
       console.log(await statusRagIndexCommand(process.cwd()));
+    });
+
+  rag
+    .command("verify")
+    .description("Verify the RAG index manifest, references, and source freshness.")
+    .action(async () => {
+      console.log(await verifyRagIndexCommand(process.cwd()));
+    });
+
+  rag
+    .command("stats")
+    .description("Show RAG duplicate, context budget, rebuild, and retention statistics.")
+    .option("--duplicates", "Include duplicate statistics (enabled by default).")
+    .option("--context-budget", "Include context budget statistics (enabled by default).")
+    .action(async () => {
+      console.log(await statsRagIndexCommand(process.cwd()));
+    });
+
+  rag
+    .command("rebuild")
+    .description("Plan or execute a verified full RAG index rebuild.")
+    .option("--dry-run", "Build and compare a candidate without replacing the index.")
+    .option("--compare", "Compare configured query samples.")
+    .option("--execute", "Execute a previously planned rebuild.")
+    .option("--confirm <rebuildId>", "Exact rebuild id from the dry-run plan.")
+    .action(async (options: {
+      dryRun?: boolean;
+      compare?: boolean;
+      execute?: boolean;
+      confirm?: string;
+    }) => {
+      console.log(await rebuildRagIndexCommand(process.cwd(), options));
     });
 
   rag

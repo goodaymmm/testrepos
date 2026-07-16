@@ -9,6 +9,12 @@ import {
   searchRagIndex,
   type RagSourceType
 } from "../../rag/lexical-index.js";
+import {
+  executeRagRebuild,
+  getRagStats,
+  planRagRebuild,
+  verifyRagIndex
+} from "../../rag/integrity.js";
 
 export type RagRefreshCommandOptions = {
   since?: string;
@@ -35,6 +41,13 @@ export type RagQueryCommandOptions = {
   date?: string;
   severity?: string;
   explain?: boolean;
+};
+
+export type RagRebuildCommandOptions = {
+  dryRun?: boolean;
+  compare?: boolean;
+  execute?: boolean;
+  confirm?: string;
 };
 
 const sourceTypes: RagSourceType[] = [
@@ -220,6 +233,98 @@ export async function queryRagIndexCommand(
   }
 
   return lines.join("\n");
+}
+
+export async function verifyRagIndexCommand(projectRoot: string): Promise<string> {
+  const result = await verifyRagIndex(projectRoot);
+  return [
+    "Kairon RAG integrity verified.",
+    `status=${result.status}`,
+    `index=${result.index_path}`,
+    `sources=${result.source_count}`,
+    `chunks=${result.chunk_count}`,
+    `issues=${result.issue_count}`,
+    ...(result.index_checksum === undefined
+      ? []
+      : [`index_checksum=${result.index_checksum}`]),
+    ...(result.source_manifest_checksum === undefined
+      ? []
+      : [`source_manifest_checksum=${result.source_manifest_checksum}`]),
+    ...result.issues.map(
+      (issue) =>
+        `issue=${issue.code}:${issue.member_id ?? "none"}:${issue.path ?? "none"}`
+    ),
+    `checked_at=${result.checked_at}`
+  ].join("\n");
+}
+
+export async function statsRagIndexCommand(projectRoot: string): Promise<string> {
+  const result = await getRagStats(projectRoot);
+  return [
+    "Kairon RAG statistics.",
+    `index=${result.index_path}`,
+    `exists=${result.exists}`,
+    `sources=${result.source_count}`,
+    `chunks=${result.chunk_count}`,
+    `duplicate_chunks=${result.duplicate_chunk_count}`,
+    `duplicate_ratio=${result.duplicate_ratio.toFixed(4)}`,
+    `total_characters=${result.total_characters}`,
+    `estimated_total_tokens=${result.estimated_total_tokens}`,
+    `largest_chunk_estimated_tokens=${result.largest_chunk_estimated_tokens}`,
+    `context_budget_tokens=${result.context_budget_tokens}`,
+    `chunks_exceeding_context_budget=${result.chunks_exceeding_context_budget}`,
+    `rebuild_interval_days=${result.rebuild_interval_days}`,
+    `rebuild_due=${result.rebuild_due}`,
+    `retention_candidates=${result.retention_candidate_count}`,
+    `checked_at=${result.checked_at}`
+  ].join("\n");
+}
+
+export async function rebuildRagIndexCommand(
+  projectRoot: string,
+  options: RagRebuildCommandOptions
+): Promise<string> {
+  if (options.execute === true) {
+    if (options.dryRun === true) {
+      throw new Error("RAG rebuild cannot combine --dry-run and --execute.");
+    }
+    if (options.confirm === undefined) {
+      throw new Error("RAG rebuild --execute requires --confirm <rebuild-id>.");
+    }
+    const result = await executeRagRebuild(projectRoot, options.confirm, {
+      confirm: options.confirm
+    });
+    return formatRagRebuild(result, "executed");
+  }
+  if (options.dryRun !== true) {
+    throw new Error("RAG rebuild requires --dry-run or --execute.");
+  }
+  const result = await planRagRebuild(projectRoot);
+  return formatRagRebuild(result, options.compare === true ? "compared" : "planned");
+}
+
+function formatRagRebuild(
+  result: Awaited<ReturnType<typeof planRagRebuild>>,
+  action: "planned" | "compared" | "executed"
+): string {
+  return [
+    `Kairon RAG rebuild ${action}.`,
+    `rebuild_id=${result.rebuild_id}`,
+    `status=${result.status}`,
+    `index=${result.index_path}`,
+    `current_checksum=${result.current.checksum ?? "none"}`,
+    `candidate_checksum=${result.candidate.checksum}`,
+    `current_sources=${result.current.source_count}`,
+    `candidate_sources=${result.candidate.source_count}`,
+    `current_chunks=${result.current.chunk_count}`,
+    `candidate_chunks=${result.candidate.chunk_count}`,
+    `comparison=${result.comparison.status}`,
+    `source_delta=${result.comparison.source_delta}`,
+    `chunk_delta=${result.comparison.chunk_delta}`,
+    `query_regressions=${result.comparison.query_samples.filter((sample) => sample.regression).length}`,
+    `reasons=${result.comparison.reasons.join(",") || "none"}`,
+    ...(result.executed_at === undefined ? [] : [`executed_at=${result.executed_at}`])
+  ].join("\n");
 }
 
 function buildFilters(options: RagQueryCommandOptions): RagSearchRequest["filters"] {

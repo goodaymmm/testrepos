@@ -5,8 +5,11 @@ import { initializeProject } from "../src/cli/commands/init.js";
 import {
   compactRagIndexCommand,
   queryRagIndexCommand,
+  rebuildRagIndexCommand,
   refreshRagIndexCommand,
-  statusRagIndexCommand
+  statsRagIndexCommand,
+  statusRagIndexCommand,
+  verifyRagIndexCommand
 } from "../src/cli/commands/rag.js";
 import { readJsonFile } from "../src/core/fs/json-file.js";
 import type { RagIndex } from "../src/rag/lexical-index.js";
@@ -211,5 +214,45 @@ describe("RAG CLI commands", () => {
     await expect(
       queryRagIndexCommand(root, "anything", { type: "unknown" })
     ).rejects.toThrow("Invalid RAG source type");
+  });
+
+  it("verifies, summarizes, plans, and executes a full rebuild", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    await writeFile(
+      path.join(root, "docs", "rebuild.md"),
+      "Approval routing runtime recovery review findings.",
+      "utf8"
+    );
+    await refreshRagIndexCommand(root);
+
+    const verifyOutput = await verifyRagIndexCommand(root);
+    expect(verifyOutput).toContain("status=PASS");
+    expect(verifyOutput).toMatch(/index_checksum=sha256:[0-9a-f]{64}/u);
+    const statsOutput = await statsRagIndexCommand(root);
+    expect(statsOutput).toContain("duplicate_ratio=");
+    expect(statsOutput).toContain("context_budget_tokens=12000");
+    expect(statsOutput).toContain("rebuild_due=false");
+
+    const planOutput = await rebuildRagIndexCommand(root, {
+      dryRun: true,
+      compare: true
+    });
+    expect(planOutput).toContain("Kairon RAG rebuild compared.");
+    expect(planOutput).toContain("status=ready");
+    expect(planOutput).toContain("comparison=passed");
+    const rebuildId = /^rebuild_id=(.+)$/mu.exec(planOutput)?.[1];
+    expect(rebuildId).toMatch(/^RAG-REBUILD-/u);
+
+    const executeOutput = await rebuildRagIndexCommand(root, {
+      execute: true,
+      confirm: rebuildId
+    });
+    expect(executeOutput).toContain("Kairon RAG rebuild executed.");
+    expect(executeOutput).toContain("status=executed");
+    await expect(
+      rebuildRagIndexCommand(root, { execute: true })
+    ).rejects.toThrow("requires --confirm");
   });
 });

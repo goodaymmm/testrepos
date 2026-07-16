@@ -27,6 +27,7 @@ import {
 import { listBoardAccessRecords } from "../board/access-token.js";
 import { prepareBoardProfile, type BoardProfileConfig } from "../board/profile.js";
 import { inspectCorrelationIntegrity } from "../correlation/store.js";
+import { getRagStats, verifyRagIndex } from "../rag/integrity.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -94,12 +95,9 @@ type RagConfig = {
   storage?: {
     base_dir?: string;
   };
-};
-
-type RagIndexSummary = {
-  source_count?: unknown;
-  chunk_count?: unknown;
-  updated_at?: unknown;
+  integrity?: {
+    max_duplicate_ratio?: number;
+  };
 };
 
 type DiscordSecretKey =
@@ -1031,7 +1029,6 @@ async function checkRagStatus(projectRoot: string): Promise<DoctorCheck> {
   const config = await loadConfigFile<RagConfig>(projectRoot, "rag.json");
   const baseDir = config.storage?.base_dir ?? ".kairon/rag";
   const relativeIndexPath = `${baseDir.replaceAll("\\", "/").replace(/\/$/, "")}/index.json`;
-  const indexPath = resolveInside(projectRoot, baseDir, "index.json");
   const enabled = config.enabled === true;
 
   if (!enabled) {
@@ -1042,49 +1039,38 @@ async function checkRagStatus(projectRoot: string): Promise<DoctorCheck> {
     ]);
   }
 
-  try {
-    const index = await readJsonFile<RagIndexSummary>(indexPath);
-    if (
-      !isFiniteNumber(index.source_count) ||
-      !isFiniteNumber(index.chunk_count)
-    ) {
-      return warning(
-        "rag.status",
-        "RAG index",
-        [
-          "enabled=true",
-          "status=setup_required",
-          `index=${relativeIndexPath}`,
-          "index_validation=invalid"
-        ],
-        "Run kairon rag refresh to rebuild the index, then run kairon doctor. Guide: docs/rag-memory-v0.md."
-      );
-    }
-
-    return pass("rag.status", "RAG index", [
-      "enabled=true",
-      "status=ready",
-      `index=${relativeIndexPath}`,
-      `source_count=${index.source_count}`,
-      `chunk_count=${index.chunk_count}`,
-      `updated_at=${typeof index.updated_at === "string" ? index.updated_at : "unknown"}`
-    ]);
-  } catch (readError) {
-    const missing =
-      (readError as NodeJS.ErrnoException).code === "ENOENT" ||
-      String(readError).includes("ENOENT");
-    return warning(
-      "rag.status",
-      "RAG index",
-      [
-        "enabled=true",
-        "status=setup_required",
-        `index=${relativeIndexPath}`,
-        `index_validation=${missing ? "missing" : "unreadable"}`
-      ],
-      "Run kairon rag refresh, then run kairon doctor. Guide: docs/rag-memory-v0.md."
-    );
+  const [integrity, stats] = await Promise.all([
+    verifyRagIndex(projectRoot, { writeArtifact: false }),
+    getRagStats(projectRoot)
+  ]);
+  const duplicateThreshold = config.integrity?.max_duplicate_ratio ?? 0.25;
+  const details = [
+    "enabled=true",
+    `status=${integrity.status === "PASS" ? "ready" : integrity.status.toLowerCase()}`,
+    `index=${relativeIndexPath}`,
+    `index_validation=${integrity.status === "SETUP_REQUIRED" ? "missing" : integrity.status.toLowerCase()}`,
+    `source_count=${integrity.source_count}`,
+    `chunk_count=${integrity.chunk_count}`,
+    `integrity_issues=${integrity.issue_count}`,
+    `duplicate_ratio=${stats.duplicate_ratio.toFixed(4)}`,
+    `context_budget_tokens=${stats.context_budget_tokens}`,
+    `chunks_exceeding_context_budget=${stats.chunks_exceeding_context_budget}`,
+    `rebuild_due=${stats.rebuild_due}`,
+    ...integrity.issues.slice(0, 5).map(
+      (issue) => `issue=${issue.code}:${issue.member_id ?? "none"}:${issue.path ?? "none"}`
+    )
+  ];
+  if (integrity.status === "PASS" && stats.duplicate_ratio <= duplicateThreshold) {
+    return pass("rag.status", "RAG index", details);
   }
+  return warning(
+    "rag.status",
+    "RAG index",
+    details,
+    integrity.status === "SETUP_REQUIRED"
+      ? "Run kairon rag refresh, then run kairon rag verify. Guide: docs/rag-memory-v0.md."
+      : "Run kairon rag verify and kairon rag rebuild --dry-run --compare. Guide: docs/rag-memory-v0.md."
+  );
 }
 
 function sanitizeDoctorCheck(check: DoctorCheck): DoctorCheck {

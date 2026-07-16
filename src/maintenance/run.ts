@@ -6,6 +6,11 @@ import {
   type BuildRagIndexResult
 } from "../rag/lexical-index.js";
 import {
+  getRagStats,
+  planRagRebuild,
+  verifyRagIndex
+} from "../rag/integrity.js";
+import {
   runRuntimeRecovery,
   type RuntimeRecoveryResult
 } from "../recovery/runtime-recovery.js";
@@ -73,6 +78,24 @@ export type DailyMaintenanceResult = {
     | "pruned_reason_counts"
   >;
   rag_index_skipped?: RagIndexSkipped;
+  rag_integrity?: {
+    status: string;
+    issue_count: number;
+    index_checksum?: string;
+  };
+  rag_stats?: {
+    duplicate_chunk_count: number;
+    duplicate_ratio: number;
+    estimated_total_tokens: number;
+    context_budget_tokens: number;
+    rebuild_due: boolean;
+    retention_candidate_count: number;
+  };
+  rag_rebuild_candidate?: {
+    rebuild_id: string;
+    status: string;
+    comparison_status: string;
+  };
 };
 
 type ScheduleConfig = {
@@ -87,6 +110,24 @@ export async function runDailyMaintenance(
   const date = request.date ?? (await resolveDate(projectRoot, now));
   const expiredTestItems = await new WorkQueue(projectRoot).expireStaleTestItems(now);
   const recovery = await runRuntimeRecovery(projectRoot, { now });
+  const ragEnabled = await isRagEnabled(projectRoot);
+  const shouldBuildRag = request.forceRagIndex === true || ragEnabled;
+  const ragIndex = shouldBuildRag
+    ? await buildRagIndex(projectRoot, {
+        now: () => now,
+        prune: true,
+        compact: true
+      })
+    : undefined;
+  const ragIntegrity = shouldBuildRag
+    ? await verifyRagIndex(projectRoot, { now })
+    : undefined;
+  const ragStats = shouldBuildRag
+    ? await getRagStats(projectRoot, { now })
+    : undefined;
+  const ragRebuildCandidate = ragStats?.rebuild_due === true
+    ? await planRagRebuild(projectRoot, { now })
+    : undefined;
   const cleanupProposal = await createCleanupProposals(projectRoot, { date, now });
   const dailyReport = await createDailyReport(projectRoot, { date });
   const nextDayPlan = await createNextDayPlan(projectRoot, {
@@ -98,16 +139,6 @@ export async function runDailyMaintenance(
     date,
     dailyReport
   });
-  const ragEnabled = await isRagEnabled(projectRoot);
-  const shouldBuildRag = request.forceRagIndex === true || ragEnabled;
-  const ragIndex = shouldBuildRag
-    ? await buildRagIndex(projectRoot, {
-        now: () => now,
-        prune: true,
-        compact: true
-      })
-    : undefined;
-
   return {
     schema_version: "0.1",
     date,
@@ -157,7 +188,34 @@ export async function runDailyMaintenance(
         ? {
             reason: "disabled"
           }
-        : undefined
+        : undefined,
+    rag_integrity:
+      ragIntegrity === undefined
+        ? undefined
+        : {
+            status: ragIntegrity.status,
+            issue_count: ragIntegrity.issue_count,
+            index_checksum: ragIntegrity.index_checksum
+          },
+    rag_stats:
+      ragStats === undefined
+        ? undefined
+        : {
+            duplicate_chunk_count: ragStats.duplicate_chunk_count,
+            duplicate_ratio: ragStats.duplicate_ratio,
+            estimated_total_tokens: ragStats.estimated_total_tokens,
+            context_budget_tokens: ragStats.context_budget_tokens,
+            rebuild_due: ragStats.rebuild_due,
+            retention_candidate_count: ragStats.retention_candidate_count
+          },
+    rag_rebuild_candidate:
+      ragRebuildCandidate === undefined
+        ? undefined
+        : {
+            rebuild_id: ragRebuildCandidate.rebuild_id,
+            status: ragRebuildCandidate.status,
+            comparison_status: ragRebuildCandidate.comparison.status
+          }
   };
 }
 

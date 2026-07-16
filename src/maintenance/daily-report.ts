@@ -5,6 +5,7 @@ import { readJsonLines } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import type { AgentId } from "../agents/types.js";
 import { inspectCorrelationIntegrity } from "../correlation/store.js";
+import { getRagStats, verifyRagIndex } from "../rag/integrity.js";
 
 export type DailyRunSummary = {
   run_id: string;
@@ -52,6 +53,7 @@ export type DailyReport = {
     git_transactions_requiring_approval: number;
     recovery_approvals_requested: number;
     correlation_issues: number;
+    rag_integrity_issues: number;
   };
   runs: {
     total: number;
@@ -99,6 +101,19 @@ export type DailyReport = {
     orphan_follow_ups: number;
     duplicate_members: number;
   };
+  rag: {
+    integrity_status: string;
+    integrity_issues: number;
+    index_exists: boolean;
+    duplicate_chunk_count: number;
+    duplicate_ratio: number;
+    estimated_total_tokens: number;
+    largest_chunk_estimated_tokens: number;
+    context_budget_tokens: number;
+    chunks_exceeding_context_budget: number;
+    rebuild_due: boolean;
+    retention_candidate_count: number;
+  };
   created_at: string;
 };
 
@@ -112,14 +127,16 @@ export async function createDailyReport(
 ): Promise<DailyReport> {
   const paths = getKaironPaths(projectRoot);
   const reportPath = resolveInside(paths.reportsDir, "daily", `${request.date}.json`);
-  const [runs, approvals, reviews, git, recovery, notifications, correlations] = await Promise.all([
+  const [runs, approvals, reviews, git, recovery, notifications, correlations, ragIntegrity, ragStats] = await Promise.all([
     collectRuns(projectRoot, request.date),
     collectApprovals(projectRoot, request.date),
     collectReviews(projectRoot, request.date),
     collectGit(projectRoot, request.date),
     collectRecovery(projectRoot, request.date),
     collectNotifications(projectRoot, request.date),
-    inspectCorrelationIntegrity(projectRoot)
+    inspectCorrelationIntegrity(projectRoot),
+    verifyRagIndex(projectRoot, { writeArtifact: false }),
+    getRagStats(projectRoot)
   ]);
   const runStatusCounts = countBy(runs, (run) => run.status);
   const reviewLoopStatusCounts = countBy(
@@ -156,7 +173,8 @@ export async function createDailyReport(
         correlations.missing_artifacts +
         correlations.stale_messages +
         correlations.orphan_follow_ups +
-        correlations.duplicate_members
+        correlations.duplicate_members,
+      rag_integrity_issues: ragIntegrity.issue_count
     },
     runs: {
       total: runs.length,
@@ -194,6 +212,19 @@ export async function createDailyReport(
       stale_messages: correlations.stale_messages,
       orphan_follow_ups: correlations.orphan_follow_ups,
       duplicate_members: correlations.duplicate_members
+    },
+    rag: {
+      integrity_status: ragIntegrity.status,
+      integrity_issues: ragIntegrity.issue_count,
+      index_exists: ragStats.exists,
+      duplicate_chunk_count: ragStats.duplicate_chunk_count,
+      duplicate_ratio: ragStats.duplicate_ratio,
+      estimated_total_tokens: ragStats.estimated_total_tokens,
+      largest_chunk_estimated_tokens: ragStats.largest_chunk_estimated_tokens,
+      context_budget_tokens: ragStats.context_budget_tokens,
+      chunks_exceeding_context_budget: ragStats.chunks_exceeding_context_budget,
+      rebuild_due: ragStats.rebuild_due,
+      retention_candidate_count: ragStats.retention_candidate_count
     },
     created_at: new Date().toISOString()
   };
