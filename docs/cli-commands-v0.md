@@ -36,6 +36,8 @@ kairon deploy dry-run --target <branch> [--environment <name>] [--provider <name
 kairon deploy execute --dry-run-artifact <id> [--preflight]
 kairon deploy execute --dry-run-artifact <id> --provider local-sandbox --execute --confirm <id>
 kairon deploy status <execution-id>
+kairon discord http start [--profile loopback|reverse-proxy] [--host 127.0.0.1] [--port 18777]
+kairon discord http status
 kairon start
 kairon start --daemon [--interval-ms <ms>] [--max-ticks <count>] [--max-idle-ticks <count>]
 kairon daemon task status [--task-name <name>] [--project-root <path>]
@@ -492,6 +494,22 @@ block protected paths
 ```
 
 直接削除は行わない。apply対象はreview済み候補とし、protected pathは常に拒否する。
+
+## kairon discord http
+
+Discord HTTP Interactions endpointをloopbackにbindして起動し、最新status artifactを確認する。
+
+```text
+kairon discord http start --profile loopback --host 127.0.0.1 --port 18777
+kairon discord http start --profile reverse-proxy --host 127.0.0.1 --port 18777
+kairon discord http status
+```
+
+- `loopback`は既定profileであり、公開URLやforwarded headerを必要としない。
+- `reverse-proxy`もpublic addressへbindせず、TLS終端reverse proxyからの接続だけを受ける。
+- `reverse-proxy`にはHTTPS `external_base_url`、`trusted_proxies` CIDR、Discord public key secretが必要。
+- `/health`はliveness、`/ready`はreadinessを返す。
+- forwarded headerはtrusted proxyから届いた場合だけ採用する。
 
 ## kairon start
 

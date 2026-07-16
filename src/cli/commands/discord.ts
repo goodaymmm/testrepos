@@ -1,5 +1,7 @@
 import {
+  formatDiscordHttpStatus,
   formatDiscordHttpServerResult,
+  getDiscordHttpServerStatus,
   startDiscordHttpInteractionsServer,
   type DiscordHttpServerHandle
 } from "../../discord/http-server.js";
@@ -7,6 +9,7 @@ import {
 export async function startDiscordHttpCommand(
   projectRoot: string,
   options: {
+    profile?: "loopback" | "reverse-proxy";
     host?: string;
     port?: string;
     timestampToleranceSeconds?: string;
@@ -14,6 +17,7 @@ export async function startDiscordHttpCommand(
   } = {}
 ): Promise<DiscordHttpServerHandle> {
   return startDiscordHttpInteractionsServer(projectRoot, {
+    profile: options.profile,
     host: options.host,
     port: parseOptionalInteger(options.port),
     timestampToleranceSeconds: parseOptionalPositiveInteger(
@@ -24,6 +28,12 @@ export async function startDiscordHttpCommand(
 }
 
 export { formatDiscordHttpServerResult };
+
+export async function getDiscordHttpStatusCommand(
+  projectRoot: string
+): Promise<string> {
+  return formatDiscordHttpStatus(await getDiscordHttpServerStatus(projectRoot));
+}
 
 function parseOptionalInteger(value: string | undefined): number | undefined {
   if (value === undefined) {

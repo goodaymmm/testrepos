@@ -43,7 +43,7 @@ MVP は Discord Gateway を優先する。
 | Mode | 採用 | 理由 |
 | --- | --- | --- |
 | Discord Gateway | MVP | public callback endpoint 不要。個人PC常駐と相性が良い |
-| Discord HTTP Interactions Endpoint | 将来 | serverless / cloud 化しやすいが endpoint 公開と署名検証が必要 |
+| Discord HTTP Interactions Endpoint | T153 | TLS終端reverse proxy経由で利用する。Kairon本体はloopback bindを維持する |
 | Loopback Board UI | MVP | 在宅時の詳細確認用。外部公開せず `127.0.0.1` / `localhost` で提供する |
 | Board Mobile UI | 将来 | 詳細確認には有効だが、外部公開と認証設計が必要 |
 
@@ -53,7 +53,7 @@ Gateway で interaction を受けた場合も、Discord への interaction respo
 ### HTTP Interactions Endpoint
 
 HTTP Interactions は Gateway を使わず、Discord Developer Portal の Interactions Endpoint URL から POST を受ける構成で使う。
-Kairon の初期実装では、公開 HTTP server や cloud deploy は含めず、以下を満たす handler 境界を提供する。
+Kairon は以下を満たすhandler境界と、loopback bindを維持したHTTP server adapterを提供する。
 
 - signature verification は `X-Signature-Ed25519`、`X-Signature-Timestamp`、Discord public key を使って実施する。
 - `X-Signature-Ed25519` と `X-Signature-Timestamp` を Discord public key で検証する。
@@ -61,17 +61,20 @@ Kairon の初期実装では、公開 HTTP server や cloud deploy は含めず�
 - `type=1` の PING には PONG を返す。
 - approval button / modal / `/kairon status` / `/kairon leave` は Gateway と同じ正規化関数へ渡す。
 - actor allowlist、guild、channel、nonce、idempotency、high-risk policy は Gateway と同じ判定を使う。
-- public endpoint 公開、TLS、reverse proxy、serverless adapter、secret manager 連携は後続 phase とする。
+- public endpointとTLS終端はreverse proxyまたはserverless platformが担当し、Kairon自身はTLS証明書を管理しない。
+- `reverse-proxy` profileはHTTPS external URL、trusted proxy CIDR、Discord public key secretが揃うまで`SETUP_REQUIRED`とする。
+- forwarded headerは接続元IPが`trusted_proxies`に一致する場合だけ採用する。
 
 HTTP Interactions を本番運用する場合は `KAIRON_DISCORD_PUBLIC_KEY` 相当の値を secret として渡し、request body を middleware で加工しないこと。
 Express などを使う場合も、署名検証前に JSON body parser で raw body を失わないようにする。
 
-### Local HTTP Interactions Server
+### HTTP Interactions Server
 
-Operation test / local検証用に、loopback-onlyのHTTP server adapterを提供する。
+既定のlocal検証には`loopback` profileを使う。
 
 ```powershell
-kairon discord http start --host 127.0.0.1 --port 18777 --max-seconds 30
+kairon discord http start --profile loopback --host 127.0.0.1 --port 18777 --max-seconds 30
+kairon discord http status
 ```
 
 - 既定hostは `127.0.0.1`。
@@ -79,7 +82,20 @@ kairon discord http start --host 127.0.0.1 --port 18777 --max-seconds 30
 - `/` または `/interactions` へのPOSTを受け付ける。
 - raw bodyをBufferのまま保持し、`X-Signature-Ed25519` / `X-Signature-Timestamp` の検証に使う。
 - public keyは `public_key_env`、既定では `KAIRON_DISCORD_PUBLIC_KEY` から取得する。
-- TLS終端、reverse proxy、public internet公開、cloud deploymentはこのadapterの対象外。
+- `/health`はliveness、`/ready`は署名検証を含むreadinessを返す。
+- `kairon discord http status`は最新のstatus artifactを表示する。
+
+公開HTTPS endpointへ接続する場合は`reverse-proxy` profileを使う。
+
+```powershell
+kairon discord http start --profile reverse-proxy --host 127.0.0.1 --port 18777
+```
+
+- Kaironのbind先は`reverse-proxy`でも`127.0.0.1`のままにする。
+- reverse proxyはTLSを終端し、`X-Forwarded-Proto: https`と`X-Forwarded-Host`を付与する。
+- reverse proxyの接続元CIDRは`notifications.json`の`http.trusted_proxies`へ明示する。
+- `external_base_url`はHTTPS URLに限定する。
+- request bodyは署名検証前に変更しない。
 
 ## Discord Message Design
 
@@ -224,6 +240,11 @@ Board linkはloopback URLを前提にし、スマートフォン用Boardやpubli
       "use_dm": false,
       "register_commands_on_start": true
     }
+  },
+  "http": {
+    "profile": "reverse-proxy",
+    "external_base_url": "https://discord.example.com/kairon/",
+    "trusted_proxies": ["127.0.0.1/32", "::1/128"]
   },
   "approval_policy": {
     "default_actions": ["approve", "reject", "request_changes", "snooze"],

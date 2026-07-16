@@ -226,6 +226,11 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           max_backoff_seconds: 60
         }
       },
+      http: {
+        profile: "loopback",
+        external_base_url: null,
+        trusted_proxies: ["127.0.0.1/32", "::1/128"]
+      },
       board: {
         enabled: false,
         base_url: "http://127.0.0.1:8787"

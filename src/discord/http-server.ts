@@ -9,7 +9,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
 import { loadConfigFile } from "../core/config/load-config.js";
-import { writeJsonFileAtomic } from "../core/fs/json-file.js";
+import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
 import {
   resolveSecret,
@@ -32,8 +32,14 @@ import {
   type DiscordHttpInteractionResponse
 } from "./http-interactions.js";
 import { discordHttpSecurityAuditPath } from "./http-security-audit.js";
+import {
+  prepareDiscordHttpProfile,
+  validateForwardedHeaders,
+  type DiscordHttpProfile
+} from "./http-profile.js";
 
 export type DiscordHttpServerOptions = {
+  profile?: DiscordHttpProfile;
   host?: string;
   port?: number;
   env?: NodeJS.ProcessEnv;
@@ -42,6 +48,7 @@ export type DiscordHttpServerOptions = {
   maxBodyBytes?: number;
   timestampToleranceSeconds?: number;
   replayTtlSeconds?: number;
+  requestTimeoutMs?: number;
 };
 
 export type DiscordHttpServerRuntimeStatus =
@@ -57,6 +64,7 @@ export type DiscordHttpServerRuntimeStatus =
       schema_version: "0.1";
       status: "setup_required";
       mode: "http_interactions";
+      profile: DiscordHttpProfile;
       reason: string;
       missing_env: string[];
       invalid_env: string[];
@@ -66,6 +74,7 @@ export type DiscordHttpServerRuntimeStatus =
       schema_version: "0.1";
       status: "ready" | "stopped";
       mode: "http_interactions";
+      profile: DiscordHttpProfile;
       application_id: string;
       guild_id: string;
       approval_channel_id: string;
@@ -73,6 +82,11 @@ export type DiscordHttpServerRuntimeStatus =
       port: number;
       url: string;
       health_url: string;
+      readiness_url: string;
+      external_url?: string;
+      external_health_url?: string;
+      external_readiness_url?: string;
+      trusted_proxies: string[];
       security: {
         timestamp_tolerance_seconds: number;
         replay_ttl_seconds: number;
@@ -85,10 +99,13 @@ export type DiscordHttpServerHandle = {
   schema_version: "0.1";
   status: DiscordHttpServerRuntimeStatus["status"];
   status_path: string;
+  profile?: DiscordHttpProfile;
   host?: string;
   port?: number;
   url?: string;
   health_url?: string;
+  readiness_url?: string;
+  external_url?: string;
   reason?: string;
   missing_env?: string[];
   invalid_env?: string[];
@@ -105,6 +122,7 @@ type PreparedDiscordHttpServer =
     }
   | {
       status: "setup_required";
+      profile: DiscordHttpProfile;
       reason: string;
       missing_env: string[];
       invalid_env: string[];
@@ -113,10 +131,14 @@ type PreparedDiscordHttpServer =
       status: "ready";
       gateway: PreparedDiscordGateway & { status: "ready" };
       publicKey: string;
+      profile: DiscordHttpProfile;
+      externalBaseUrl?: string;
+      trustedProxies: string[];
     };
 
 const defaultPublicKeyEnv = "KAIRON_DISCORD_PUBLIC_KEY";
 const defaultMaxBodyBytes = 1024 * 1024;
+const defaultRequestTimeoutMs = 10_000;
 
 export async function startDiscordHttpInteractionsServer(
   projectRoot: string,
@@ -135,6 +157,8 @@ export async function startDiscordHttpInteractionsServer(
     "Discord timestamp tolerance"
   );
   assertPositiveInteger(replayTtlSeconds, "Discord replay TTL");
+  const requestTimeoutMs = options.requestTimeoutMs ?? defaultRequestTimeoutMs;
+  assertPositiveInteger(requestTimeoutMs, "Discord HTTP request timeout");
   const statusPath = discordHttpServerStatusPath(projectRoot);
   const prepared = await prepareDiscordHttpServer(projectRoot, options);
 
@@ -155,6 +179,7 @@ export async function startDiscordHttpInteractionsServer(
       schema_version: "0.1",
       status: "setup_required",
       mode: "http_interactions",
+      profile: prepared.profile,
       reason: prepared.reason,
       missing_env: prepared.missing_env,
       invalid_env: prepared.invalid_env,
@@ -184,6 +209,24 @@ export async function startDiscordHttpInteractionsServer(
         return;
       }
 
+      if (requestUrl.pathname === "/ready") {
+        if ((request.method ?? "GET").toUpperCase() !== "GET") {
+          send(response, 405, { "content-type": "application/json" }, {
+            error: "method_not_allowed"
+          });
+          return;
+        }
+
+        send(response, 200, { "content-type": "application/json" }, {
+          schema_version: "0.1",
+          status: "ready",
+          mode: "http_interactions",
+          profile: prepared.profile,
+          signature_verification: "ready"
+        });
+        return;
+      }
+
       if (requestUrl.pathname !== "/" && requestUrl.pathname !== "/interactions") {
         send(response, 404, { "content-type": "application/json" }, {
           error: "not_found"
@@ -191,7 +234,32 @@ export async function startDiscordHttpInteractionsServer(
         return;
       }
 
-      const body = await readRawBody(request, maxBodyBytes);
+      if (!isJsonContentType(request.headers["content-type"])) {
+        send(response, 415, { "content-type": "application/json" }, {
+          error: "unsupported_media_type"
+        });
+        return;
+      }
+
+      if (prepared.profile === "reverse-proxy") {
+        const forwarded = validateForwardedHeaders({
+          headers: request.headers,
+          remoteAddress: request.socket.remoteAddress,
+          trustedProxies: prepared.trustedProxies,
+          externalBaseUrl: prepared.externalBaseUrl!
+        });
+        if (forwarded !== "ok") {
+          send(
+            response,
+            forwarded === "untrusted_proxy" ? 403 : 400,
+            { "content-type": "application/json" },
+            { error: forwarded }
+          );
+          return;
+        }
+      }
+
+      const body = await readRawBody(request, maxBodyBytes, requestTimeoutMs);
       const result = await handleDiscordHttpInteraction(
         {
           projectRoot,
@@ -210,9 +278,18 @@ export async function startDiscordHttpInteractionsServer(
       sendInteractionResponse(response, result);
     } catch (error) {
       const message = String(error);
-      const status = message.includes("request body is too large") ? 413 : 500;
+      const status = message.includes("request body is too large")
+        ? 413
+        : message.includes("request body timed out")
+          ? 408
+          : 500;
       send(response, status, { "content-type": "application/json" }, {
-        error: status === 413 ? "request_body_too_large" : "internal_error"
+        error:
+          status === 413
+            ? "request_body_too_large"
+            : status === 408
+              ? "request_timeout"
+              : "internal_error"
       });
     }
   });
@@ -223,6 +300,16 @@ export async function startDiscordHttpInteractionsServer(
   const actualPort = readActualPort(server);
   const url = `http://${host}:${actualPort}/`;
   const healthUrl = `${url}health`;
+  const readinessUrl = `${url}ready`;
+  const externalUrl = prepared.externalBaseUrl === undefined
+    ? undefined
+    : new URL("interactions", prepared.externalBaseUrl).toString();
+  const externalHealthUrl = prepared.externalBaseUrl === undefined
+    ? undefined
+    : new URL("health", prepared.externalBaseUrl).toString();
+  const externalReadinessUrl = prepared.externalBaseUrl === undefined
+    ? undefined
+    : new URL("ready", prepared.externalBaseUrl).toString();
   const security = {
     timestamp_tolerance_seconds: timestampToleranceSeconds,
     replay_ttl_seconds: replayTtlSeconds,
@@ -240,6 +327,7 @@ export async function startDiscordHttpInteractionsServer(
     schema_version: "0.1",
     status: "ready",
     mode: "http_interactions",
+    profile: prepared.profile,
     application_id: prepared.gateway.application_id,
     guild_id: prepared.gateway.guild_id,
     approval_channel_id: prepared.gateway.approval_channel_id,
@@ -247,6 +335,11 @@ export async function startDiscordHttpInteractionsServer(
     port: actualPort,
     url,
     health_url: healthUrl,
+    readiness_url: readinessUrl,
+    external_url: externalUrl,
+    external_health_url: externalHealthUrl,
+    external_readiness_url: externalReadinessUrl,
+    trusted_proxies: prepared.trustedProxies,
     security,
     updated_at: now().toISOString()
   });
@@ -255,10 +348,13 @@ export async function startDiscordHttpInteractionsServer(
     schema_version: "0.1",
     status: "ready",
     status_path: toProjectPath(projectRoot, statusPath),
+    profile: prepared.profile,
     host,
     port: actualPort,
     url,
     health_url: healthUrl,
+    readiness_url: readinessUrl,
+    external_url: externalUrl,
     stop: async () => {
       if (closed) {
         return;
@@ -269,6 +365,7 @@ export async function startDiscordHttpInteractionsServer(
         schema_version: "0.1",
         status: "stopped",
         mode: "http_interactions",
+        profile: prepared.profile,
         application_id: prepared.gateway.application_id,
         guild_id: prepared.gateway.guild_id,
         approval_channel_id: prepared.gateway.approval_channel_id,
@@ -276,6 +373,11 @@ export async function startDiscordHttpInteractionsServer(
         port: actualPort,
         url,
         health_url: healthUrl,
+        readiness_url: readinessUrl,
+        external_url: externalUrl,
+        external_health_url: externalHealthUrl,
+        external_readiness_url: externalReadinessUrl,
+        trusted_proxies: prepared.trustedProxies,
         security,
         updated_at: now().toISOString()
       });
@@ -290,8 +392,11 @@ export function formatDiscordHttpServerResult(
   if (result.status === "ready") {
     return [
       "Kairon Discord HTTP interactions server started.",
+      `profile=${result.profile}`,
       `discord.http.url=${result.url}`,
       `discord.http.health_url=${result.health_url}`,
+      `discord.http.readiness_url=${result.readiness_url}`,
+      `discord.http.external_url=${result.external_url ?? "none"}`,
       `status_path=${result.status_path}`,
       `host=${result.host}`,
       `port=${result.port}`
@@ -302,6 +407,7 @@ export function formatDiscordHttpServerResult(
     return [
       "Kairon Discord HTTP interactions server setup required.",
       "status=setup_required",
+      `profile=${result.profile}`,
       `status_path=${result.status_path}`,
       `reason=${result.reason}`,
       `missing_env=${(result.missing_env ?? []).join(",") || "none"}`,
@@ -326,12 +432,26 @@ async function prepareDiscordHttpServer(
     "notifications.json"
   );
   const provider = config.providers.discord;
+  const httpProfile = prepareDiscordHttpProfile(config.http, options.profile);
 
   if (!provider.enabled) {
     return {
       status: "disabled",
       reason: "discord provider is disabled",
       missing_env: []
+    };
+  }
+
+  if (
+    httpProfile.missingConfig.length > 0 ||
+    httpProfile.invalidConfig.length > 0
+  ) {
+    return {
+      status: "setup_required",
+      profile: httpProfile.profile,
+      reason: "discord http profile config is incomplete or invalid",
+      missing_env: httpProfile.missingConfig,
+      invalid_env: httpProfile.invalidConfig
     };
   }
 
@@ -393,6 +513,7 @@ async function prepareDiscordHttpServer(
   if (missingEnv.length > 0 || invalidEnv.length > 0) {
     return {
       status: "setup_required",
+      profile: httpProfile.profile,
       reason: "discord http interactions env is incomplete or invalid",
       missing_env: uniqueStrings(missingEnv),
       invalid_env: uniqueStrings(invalidEnv)
@@ -412,6 +533,9 @@ async function prepareDiscordHttpServer(
   return {
     status: "ready",
     publicKey,
+    profile: httpProfile.profile,
+    externalBaseUrl: httpProfile.externalBaseUrl,
+    trustedProxies: httpProfile.trustedProxies,
     gateway: {
       status: "ready",
       mode: "gateway",
@@ -461,25 +585,53 @@ function isDiscordPublicKey(value: string): boolean {
   return /^[0-9a-f]{64}$/i.test(value.trim());
 }
 
-function readRawBody(request: IncomingMessage, maxBodyBytes: number): Promise<Buffer> {
+function readRawBody(
+  request: IncomingMessage,
+  maxBodyBytes: number,
+  timeoutMs: number
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let total = 0;
+    let settled = false;
+    const finish = (callback: () => void) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
+      callback();
+    };
+    const timer = setTimeout(() => {
+      finish(() => reject(new Error("request body timed out")));
+    }, timeoutMs);
+    timer.unref();
 
     request.on?.("data", (chunk: Buffer | Uint8Array | string) => {
+      if (settled) {
+        return;
+      }
       const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       total += buffer.length;
       if (total > maxBodyBytes) {
-        reject(new Error("request body is too large"));
+        finish(() => reject(new Error("request body is too large")));
         return;
       }
       chunks.push(buffer);
     });
-    request.on?.("error", reject);
+    request.on?.("error", (error) => finish(() => reject(error)));
     request.on?.("end", () => {
-      resolve(Buffer.concat(chunks));
+      finish(() => resolve(Buffer.concat(chunks)));
     });
   });
+}
+
+function isJsonContentType(value: string | string[] | undefined): boolean {
+  const contentType = (Array.isArray(value) ? value[0] : value)
+    ?.split(";", 1)[0]
+    ?.trim()
+    .toLowerCase();
+  return contentType === "application/json";
 }
 
 function sendInteractionResponse(
@@ -556,11 +708,58 @@ function closedHandle(
     status: prepared.status,
     status_path: toProjectPath(projectRoot, statusPath),
     reason: prepared.reason,
+    ...(prepared.status === "setup_required" ? { profile: prepared.profile } : {}),
     missing_env: prepared.missing_env,
     invalid_env: prepared.invalid_env,
     stop: async () => undefined,
     waitUntilClosed: async () => undefined
   };
+}
+
+export async function getDiscordHttpServerStatus(
+  projectRoot: string
+): Promise<DiscordHttpServerRuntimeStatus | undefined> {
+  try {
+    return await readJsonFile<DiscordHttpServerRuntimeStatus>(
+      discordHttpServerStatusPath(projectRoot)
+    );
+  } catch (error) {
+    if (String(error).includes("ENOENT")) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+export function formatDiscordHttpStatus(
+  status: DiscordHttpServerRuntimeStatus | undefined
+): string {
+  if (status === undefined) {
+    return [
+      "Kairon Discord HTTP interactions server status.",
+      "status=not_started"
+    ].join("\n");
+  }
+
+  const lines = [
+    "Kairon Discord HTTP interactions server status.",
+    `status=${status.status}`
+  ];
+  if ("profile" in status) {
+    lines.push(`profile=${status.profile}`);
+  }
+  if ("url" in status) {
+    lines.push(
+      `url=${status.url}`,
+      `health_url=${status.health_url}`,
+      `readiness_url=${status.readiness_url}`,
+      `external_url=${status.external_url ?? "none"}`
+    );
+  }
+  if ("reason" in status) {
+    lines.push(`reason=${status.reason}`);
+  }
+  return lines.join("\n");
 }
 
 async function writeHttpServerStatus(

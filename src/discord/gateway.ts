@@ -36,6 +36,7 @@ import {
   sanitizeDiscordAuditText,
   type DiscordDecisionAuditSideEffect
 } from "./decision-audit.js";
+import type { DiscordHttpProfileConfig } from "./http-profile.js";
 
 export type DiscordProviderConfig = {
   enabled: boolean;
@@ -80,6 +81,7 @@ export type DiscordGatewayConfig = {
       max_backoff_seconds?: number;
     };
   };
+  http?: DiscordHttpProfileConfig;
   board?: {
     enabled?: boolean;
     base_url?: string;

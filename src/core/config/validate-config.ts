@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  isValidCidr,
+  isValidDiscordExternalBaseUrl
+} from "../../discord/http-profile.js";
 
 export type ValidationResult = {
   ok: boolean;
@@ -79,6 +83,50 @@ const policiesConfigSchema = schemaVersion.extend({
     .passthrough()
 });
 
+const notificationsConfigSchema = schemaVersion.extend({
+  primary_provider: z.literal("discord"),
+  providers: z.object({
+    discord: z.object({
+      enabled: z.boolean(),
+      mode: z.literal("gateway"),
+      public_key_env: z.string().min(1).optional()
+    }).passthrough()
+  }),
+  http: z
+    .object({
+      profile: z.enum(["loopback", "reverse-proxy"]),
+      external_base_url: z
+        .string()
+        .refine(isValidDiscordExternalBaseUrl)
+        .nullable()
+        .optional(),
+      trusted_proxies: z.array(z.string().refine(isValidCidr)).min(1)
+    })
+    .superRefine((http, context) => {
+      if (http.profile !== "reverse-proxy") {
+        return;
+      }
+
+      if (http.external_base_url == null) {
+        context.addIssue({
+          code: "custom",
+          path: ["external_base_url"],
+          message: "reverse-proxy profile requires external_base_url"
+        });
+        return;
+      }
+
+      if (!isValidDiscordExternalBaseUrl(http.external_base_url)) {
+        context.addIssue({
+          code: "custom",
+          path: ["external_base_url"],
+          message: "reverse-proxy external_base_url must use HTTPS"
+        });
+      }
+    })
+    .optional()
+});
+
 export function validateConfigFile(fileName: string, value: unknown): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -105,6 +153,15 @@ export function validateConfigFile(fileName: string, value: unknown): Validation
       );
     } else if (result.data.git.allow_auto_push) {
       warnings.push(`${fileName}: allow_auto_push=true should be used only after review`);
+    }
+  }
+
+  if (fileName === "notifications.json") {
+    const result = notificationsConfigSchema.safeParse(value);
+    if (!result.success) {
+      errors.push(
+        `${fileName}: Discord notification and HTTP profile settings are invalid`
+      );
     }
   }
 

@@ -17,6 +17,7 @@ import {
   type SecretResolver
 } from "../core/secrets/secret-resolver.js";
 import { validateDiscordEnvValues } from "../discord/env-validation.js";
+import { prepareDiscordHttpProfile } from "../discord/http-profile.js";
 import { inspectRuntimeRecoveryTargets } from "../recovery/runtime-recovery.js";
 import { getRuntimeStatus } from "../runtime/status.js";
 import {
@@ -61,6 +62,11 @@ type AgentsConfig = {
 
 type NotificationsConfig = {
   primary_provider?: string;
+  http?: {
+    profile?: "loopback" | "reverse-proxy";
+    external_base_url?: string | null;
+    trusted_proxies?: string[];
+  };
   board?: {
     enabled?: boolean;
   };
@@ -69,6 +75,7 @@ type NotificationsConfig = {
       enabled?: boolean;
       mode?: string;
       bot_token_env?: string;
+      public_key_env?: string;
       application_id_env?: string;
       guild_id_env?: string;
       approval_channel_id_env?: string;
@@ -94,6 +101,7 @@ type RagIndexSummary = {
 
 type DiscordSecretKey =
   | "bot_token"
+  | "public_key"
   | "application_id"
   | "guild_id"
   | "approval_channel_id"
@@ -442,6 +450,7 @@ async function checkDiscordConfig(
     discord.approval_channel_id_env,
     discord.owner_user_id_env
   ].filter((value): value is string => value !== undefined && value.length > 0);
+  const publicKeyEnv = discord.public_key_env ?? "KAIRON_DISCORD_PUBLIC_KEY";
   const secretResolutions = await resolveDiscordSecrets(discord, env, secretResolver);
   const resolvedEnv = { ...env };
   for (const [name, resolution] of secretResolutions.entries()) {
@@ -464,6 +473,34 @@ async function checkDiscordConfig(
   });
   const gatewayInvalid = envValidation.gateway_invalid_env;
   const liveInvalid = envValidation.live_invalid_env;
+  const httpProfile = prepareDiscordHttpProfile(config.http);
+  const publicKeyResolution = secretResolutions.get(publicKeyEnv);
+  const publicKeyPresent = publicKeyResolution?.status === "present";
+  const publicKeyInvalid =
+    publicKeyResolution?.status === "present" &&
+    !/^[0-9a-f]{64}$/i.test(publicKeyResolution.value.trim());
+  const httpMissing = [
+    ...httpProfile.missingConfig,
+    ...(httpProfile.profile === "reverse-proxy" && !publicKeyPresent
+      ? [publicKeyEnv]
+      : [])
+  ];
+  const httpInvalid = [
+    ...httpProfile.invalidConfig,
+    ...(httpProfile.profile === "reverse-proxy" && publicKeyInvalid
+      ? [publicKeyEnv]
+      : [])
+  ];
+  const httpStatus =
+    discord.enabled !== true
+      ? "not_configured"
+      : httpProfile.profile === "loopback"
+        ? publicKeyPresent && !publicKeyInvalid
+          ? "ready"
+          : "not_configured"
+        : httpMissing.length === 0 && httpInvalid.length === 0
+          ? "ready"
+          : "setup_required";
   const gatewayReady = gatewayMissing.length === 0 && gatewayInvalid.length === 0;
   const liveReady =
     discord.enabled === true && missing.length === 0 && liveInvalid.length === 0;
@@ -484,6 +521,10 @@ async function checkDiscordConfig(
     `mode=${discord.mode ?? "unknown"}`,
     `gateway_status=${gatewayStatus}`,
     `live_status=${liveStatus}`,
+    `http_profile=${httpProfile.profile}`,
+    `http_status=${httpStatus}`,
+    `http_missing=${httpMissing.length === 0 ? "none" : httpMissing.join(",")}`,
+    `http_invalid=${httpInvalid.length === 0 ? "none" : httpInvalid.join(",")}`,
     `live_missing_env=${missing.length === 0 ? "none" : missing.join(",")}`,
     `gateway_invalid_env=${gatewayInvalid.length === 0 ? "none" : gatewayInvalid.join(",")}`,
     `live_invalid_env=${liveInvalid.length === 0 ? "none" : liveInvalid.join(",")}`,
@@ -524,6 +565,19 @@ async function checkDiscordConfig(
       "Discord notification config",
       details,
       `Fix invalid Discord live env vars: ${liveInvalid.join(", ")}. Then run kairon doctor. Guide: docs/discord-approval-v0.md.`
+    );
+  }
+
+  if (
+    discord.enabled === true &&
+    httpProfile.profile === "reverse-proxy" &&
+    (httpMissing.length > 0 || httpInvalid.length > 0)
+  ) {
+    return warning(
+      "discord.config",
+      "Discord notification config",
+      details,
+      "Configure an HTTPS external_base_url, trusted proxy CIDRs, and the Discord public key secret before starting the reverse-proxy HTTP profile."
     );
   }
 
@@ -1079,6 +1133,10 @@ async function resolveDiscordSecrets(
 ): Promise<Map<string, ResolvedSecret>> {
   const fields: Array<{ key: DiscordSecretKey; envName?: string }> = [
     { key: "bot_token", envName: discord.bot_token_env },
+    {
+      key: "public_key",
+      envName: discord.public_key_env ?? "KAIRON_DISCORD_PUBLIC_KEY"
+    },
     { key: "application_id", envName: discord.application_id_env },
     { key: "guild_id", envName: discord.guild_id_env },
     { key: "approval_channel_id", envName: discord.approval_channel_id_env },
