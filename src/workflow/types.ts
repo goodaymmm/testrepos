@@ -25,6 +25,42 @@ export type WorkflowResourceLock = {
   fencing_token: string;
 };
 
+export type WorkflowControlMode =
+  | "active"
+  | "paused"
+  | "cancellation_requested"
+  | "cancelled";
+
+export type WorkflowControlState = {
+  mode: WorkflowControlMode;
+  generation: number;
+  cancellation_token: string;
+  reason?: string;
+  approval_id?: string;
+  requested_at?: string;
+  last_event_id?: string;
+  last_event_sequence?: number;
+  last_event_action?: WorkflowControlAction;
+};
+
+export type WorkflowControlAction = "pause" | "resume" | "cancel" | "retry";
+
+export type WorkflowControlEvent = {
+  schema_version: "0.1";
+  event_id: string;
+  workflow_id: string;
+  sequence: number;
+  action: WorkflowControlAction;
+  status_before: WorkflowStatus;
+  status_after: WorkflowStatus;
+  reason?: string;
+  approval_id?: string;
+  node_id?: string;
+  attempt?: number;
+  compensation_path?: string;
+  created_at: string;
+};
+
 export type WorkflowNodeState = {
   id: string;
   kind: WorkflowNodeKind;
@@ -76,10 +112,18 @@ export type WorkflowRunArtifact = {
     artifact_path?: string;
   };
   recovery: {
-    last_action: "created" | "run" | "recover" | "queue_started" | "queue_completed" | "queue_failed";
+    last_action:
+      | "created"
+      | "run"
+      | "recover"
+      | "queue_started"
+      | "queue_completed"
+      | "queue_failed"
+      | "control";
     last_checkpoint_path?: string;
     reconciled_queue_item_ids: string[];
   };
+  control?: WorkflowControlState;
   created_at: string;
   updated_at: string;
 };
@@ -93,6 +137,8 @@ export type ProductionWorkflowQueueMetadata = {
   resource_locks: WorkflowResourceLock[];
   run_artifact_path: string;
   feature_flag: "KAIRON_WORKFLOW_RUNTIME";
+  cancellation_token?: string;
+  control_generation?: number;
 };
 
 export type WorkflowNodeTransition =
@@ -216,6 +262,22 @@ export function deriveWorkflowStatus(nodes: WorkflowNodeState[]): WorkflowStatus
     return "running";
   }
   return "ready";
+}
+
+export function deriveControlledWorkflowStatus(
+  nodes: WorkflowNodeState[],
+  control: WorkflowControlState | undefined
+): WorkflowStatus {
+  if (control?.mode === "paused") {
+    return "paused";
+  }
+  if (
+    control?.mode === "cancellation_requested" ||
+    control?.mode === "cancelled"
+  ) {
+    return "cancelled";
+  }
+  return deriveWorkflowStatus(nodes);
 }
 
 function assertNodeStatus(

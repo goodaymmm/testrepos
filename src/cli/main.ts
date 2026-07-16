@@ -107,7 +107,12 @@ import {
 } from "./commands/test-commands.js";
 import { summarizeOperationTestsCommand } from "./commands/test-summary.js";
 import {
+  workflowCancelCommand,
+  workflowListCommand,
+  workflowPauseCommand,
   workflowRecoverCommand,
+  workflowResumeCommand,
+  workflowRetryCommand,
   workflowRunCommand,
   workflowShowCommand
 } from "./commands/workflow.js";
@@ -938,6 +943,13 @@ export function createProgram(): Command {
     .description("Run and inspect persistent Kairon workflows.");
 
   workflow
+    .command("list")
+    .description("List persistent workflows with progress and blockers.")
+    .action(async () => {
+      console.log(await workflowListCommand(process.cwd()));
+    });
+
+  workflow
     .command("run")
     .description("Run a production workflow or an experimental candidate.")
     .argument("[workflowId]", "Production workflow id, for example WF-0001.")
@@ -990,6 +1002,54 @@ export function createProgram(): Command {
       console.log(
         await workflowRecoverCommand(process.cwd(), workflowId, options)
       );
+    });
+
+  workflow
+    .command("pause")
+    .description("Pause new workflow node dispatch without killing a running process.")
+    .argument("<workflowId>", "Workflow id.")
+    .requiredOption("--reason <text>", "Reason recorded in the control event.")
+    .action(async (workflowId: string, options: { reason: string }) => {
+      console.log(
+        await workflowPauseCommand(process.cwd(), workflowId, options.reason)
+      );
+    });
+
+  workflow
+    .command("resume")
+    .description("Resume dispatch for a paused workflow.")
+    .argument("<workflowId>", "Workflow id.")
+    .action(async (workflowId: string) => {
+      console.log(await workflowResumeCommand(process.cwd(), workflowId));
+    });
+
+  workflow
+    .command("cancel")
+    .description("Cooperatively cancel a workflow using an approved decision.")
+    .argument("<workflowId>", "Workflow id.")
+    .requiredOption("--reason <text>", "Reason recorded in the control event.")
+    .option(
+      "--approval-id <approvalId>",
+      "Approved control decision; defaults to the workflow approval."
+    )
+    .action(async (
+      workflowId: string,
+      options: { reason: string; approvalId?: string }
+    ) => {
+      console.log(await workflowCancelCommand(process.cwd(), workflowId, options));
+    });
+
+  workflow
+    .command("retry")
+    .description("Retry one failed workflow node with a new idempotency key.")
+    .argument("<workflowId>", "Workflow id.")
+    .requiredOption("--node <nodeId>", "Failed workflow node id.")
+    .option("--reason <text>", "Optional retry reason recorded in the event.")
+    .action(async (
+      workflowId: string,
+      options: { node: string; reason?: string }
+    ) => {
+      console.log(await workflowRetryCommand(process.cwd(), workflowId, options));
     });
 
   const operationTest = program

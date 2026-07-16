@@ -449,10 +449,15 @@ describe("createProgram", () => {
     const run = workflow?.commands.find((command) => command.name() === "run");
 
     expect(workflow?.description()).toContain("persistent Kairon workflows");
-    expect(workflow?.commands.map((command) => command.name())).toEqual([
+    expect(workflow?.commands.map((command) => command.name()).sort()).toEqual([
+      "cancel",
+      "list",
+      "pause",
+      "recover",
+      "resume",
+      "retry",
       "run",
-      "show",
-      "recover"
+      "show"
     ]);
     expect(run?.description()).toContain("production workflow");
     expect(run?.options.map((option) => option.long)).toEqual(
@@ -470,6 +475,16 @@ describe("createProgram", () => {
         "--retry-backoff-seconds"
       ])
     );
+    expect(
+      workflow?.commands
+        .find((command) => command.name() === "cancel")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--reason", "--approval-id"]));
+    expect(
+      workflow?.commands
+        .find((command) => command.name() === "retry")
+        ?.options.map((option) => option.long)
+    ).toContain("--node");
   });
 
   it("registers RAG index commands and query filters", () => {
