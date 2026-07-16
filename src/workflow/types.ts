@@ -95,6 +95,7 @@ export type WorkflowRunArtifact = {
   artifact_kind: "workflow_run";
   runtime: "kairon_workflow_runtime";
   workflow_id: string;
+  correlation_id?: string;
   status: WorkflowStatus;
   sequence: number;
   objective: string;

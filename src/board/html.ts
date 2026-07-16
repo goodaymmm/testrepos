@@ -5,6 +5,7 @@ import type {
   BoardApprovalRequiredApprovalSummary,
   BoardApprovalSummary,
   BoardCleanupProposalSummary,
+  BoardCorrelationSummary,
   BoardDailyReportSummary,
   BoardDiscordAuditSummary,
   BoardDiscordDecisionAuditSummary,
@@ -106,6 +107,7 @@ export function renderBoardHtml(
       <a href="#runtime">Runtime</a>
       <a href="#recovery">Recovery</a>
       <a href="#discord">Discord</a>
+      <a href="#correlations">Correlations</a>
       <a href="#maintenance">Maintenance</a>
       <a href="#approvals">Approvals</a>
       <a href="#follow-ups">Follow-ups</a>
@@ -130,6 +132,7 @@ export function renderBoardHtml(
       ${stat("Git Push", String(projection.git.transactions_requiring_approval), `approval required | pr=${projection.git.transactions_ready_for_pr}`)}
       ${stat("Discord", projection.discord.gateway?.status ?? "unknown", `audit=${projection.discord.notifications.total}/${projection.discord.decisions.total}`)}
       ${stat("Workflows", String(projection.workflows.total), `attention=${projection.workflows.attention}`)}
+      ${stat("Correlations", String(projection.correlations.total), `attention=${projection.correlations.attention}`)}
     </div>
     ${renderOperations(projection.operations.priority)}
     <div class="section-group">
@@ -138,6 +141,7 @@ export function renderBoardHtml(
       ${renderMaintenance(projection.maintenance.latest_daily_report)}
     </div>
     ${renderDiscord(projection.discord.notifications, projection.discord.decisions)}
+    ${renderCorrelations(projection.correlations.recent)}
     ${renderApprovals(projection.approvals.recent, options.remoteReadOnly === true)}
     ${renderFollowUps(projection.follow_ups.recent, options.remoteReadOnly === true)}
     ${renderQueue(projection.queue.recent)}
@@ -150,6 +154,32 @@ export function renderBoardHtml(
   </main>
 </body>
 </html>`;
+}
+
+function renderCorrelations(correlations: BoardCorrelationSummary[]): string {
+  return section(
+    "Correlation Timeline",
+    ["Correlation", "Status", "Approval", "Discord", "Follow-up", "Workflow", "Members", "Timeline", "Updated"],
+    correlations.map((correlation) => [
+      `<a id="correlation-${escapeAttribute(correlation.correlation_id)}" href="#correlation-${escapeAttribute(correlation.correlation_id)}"><code>${escapeHtml(correlation.correlation_id)}</code></a>`,
+      text(correlation.status),
+      code(correlation.approval_id),
+      code(correlation.discord_message_id),
+      code(correlation.follow_up_id),
+      code(correlation.workflow_id),
+      text(String(correlation.member_count)),
+      correlation.timeline.length === 0
+        ? text(undefined)
+        : correlation.timeline
+            .map(
+              (event) =>
+                `<div>${escapeHtml(event.kind)} <code>${escapeHtml(event.member_id)}</code>: ${escapeHtml(event.action)} -> ${escapeHtml(event.status)}</div>`
+            )
+            .join(""),
+      text(correlation.updated_at)
+    ]),
+    "correlations"
+  );
 }
 
 function stat(label: string, value: string, subvalue?: string): string {

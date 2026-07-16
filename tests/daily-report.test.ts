@@ -4,6 +4,7 @@ import { writeFile } from "node:fs/promises";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { writeJsonFileAtomic, readJsonFile } from "../src/core/fs/json-file.js";
 import { createDailyReport } from "../src/maintenance/daily-report.js";
+import { ensureApprovalCorrelation } from "../src/correlation/store.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("createDailyReport", () => {
@@ -61,6 +62,12 @@ describe("createDailyReport", () => {
       stderr: "SHOULD_BE_OMITTED",
       api_token: "SHOULD_BE_REDACTED",
       password: "SHOULD_NOT_LEAK",
+      created_at: "2026-05-25T02:00:00.000Z",
+      updated_at: "2026-05-25T02:00:00.000Z"
+    });
+    await ensureApprovalCorrelation(root, {
+      id: "APR-0001",
+      status: "pending",
       created_at: "2026-05-25T02:00:00.000Z",
       updated_at: "2026-05-25T02:00:00.000Z"
     });
@@ -130,6 +137,7 @@ describe("createDailyReport", () => {
       setup_required_runs: 1,
       pending_approvals: 1,
       failed_notifications: 1,
+      correlation_issues: 0,
       recovery_approvals_requested: 2,
       git_transactions_by_status: { approval_required: 1 },
       git_transactions_ready_for_pr: 1,
@@ -174,6 +182,14 @@ describe("createDailyReport", () => {
       failed: 1,
       gateway_status: "setup_required",
       last_error_code: "discord_missing_access"
+    });
+    expect(report.correlations).toMatchObject({
+      total: 1,
+      healthy: 1,
+      missing_artifacts: 0,
+      stale_messages: 0,
+      orphan_follow_ups: 0,
+      duplicate_members: 0
     });
     const persistedReport = await readJsonFile(
       path.join(root, ".kairon", "reports", "daily", "2026-05-25.json")

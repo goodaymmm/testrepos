@@ -1,6 +1,10 @@
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { appendEvent } from "../core/events/event-log.js";
+import {
+  ensureApprovalCorrelation,
+  trackCorrelationMember
+} from "../correlation/store.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import {
@@ -46,6 +50,7 @@ export type ApprovalFollowUpArtifact = {
   artifact_kind: "approval_follow_up";
   id: string;
   idempotency_key: string;
+  correlation_id: string;
   approval_id: string;
   approval_type?: string;
   decision: ApprovalFollowUpDecision;
@@ -175,6 +180,7 @@ export async function recordApprovalFollowUp(
   }
 
   const approvalType = readString(input.approval.type);
+  const correlation = await ensureApprovalCorrelation(projectRoot, input.approval);
   const plan = planApprovalFollowUp(input.approval, input.decision);
   const idempotencyKey = `${approvalId}:${input.decision}:${plan.action_type}`;
   const id = `FUP-${safeId(approvalId)}-${safeId(input.decision)}-${safeId(plan.action_type)}`;
@@ -190,6 +196,7 @@ export async function recordApprovalFollowUp(
     artifact_kind: "approval_follow_up",
     id,
     idempotency_key: idempotencyKey,
+    correlation_id: correlation.correlation_id,
     approval_id: approvalId,
     approval_type: approvalType,
     decision: input.decision,
@@ -215,6 +222,15 @@ export async function recordApprovalFollowUp(
   };
 
   await writeJsonFileAtomic(followUpPath, artifact);
+  await trackCorrelationMember(projectRoot, {
+    correlationId: artifact.correlation_id,
+    approvalId,
+    kind: "follow_up",
+    id: artifact.id,
+    status: artifact.status,
+    artifactPath: toProjectPath(projectRoot, followUpPath),
+    createdAt: artifact.updated_at
+  });
   return artifact;
 }
 
@@ -241,8 +257,13 @@ export async function listApprovalFollowUps(
       .map((entry) => readJsonFile<ApprovalFollowUpArtifact>(resolveInside(dir, entry)))
   );
 
-  return artifacts
-    .filter((artifact) => artifact.artifact_kind === "approval_follow_up")
+  const correlated = await Promise.all(
+    artifacts
+      .filter((artifact) => artifact.artifact_kind === "approval_follow_up")
+      .map((artifact) => ensureFollowUpCorrelation(projectRoot, artifact))
+  );
+
+  return correlated
     .filter(
       (artifact) => options.status === undefined || artifact.status === options.status
     )
@@ -255,9 +276,10 @@ export async function showApprovalFollowUp(
 ): Promise<ApprovalFollowUpArtifact> {
   assertFollowUpId(followUpId);
   try {
-    return await readJsonFile<ApprovalFollowUpArtifact>(
+    const artifact = await readJsonFile<ApprovalFollowUpArtifact>(
       approvalFollowUpPath(projectRoot, followUpId)
     );
+    return ensureFollowUpCorrelation(projectRoot, artifact);
   } catch (error) {
     if (String(error).includes("ENOENT")) {
       throw new ApprovalFollowUpNotFoundError(followUpId);
@@ -425,6 +447,15 @@ export async function runApprovalFollowUp(
   }
 
   const eventId = await appendFollowUpEvent(projectRoot, execution.artifact);
+  await trackCorrelationMember(projectRoot, {
+    correlationId: execution.artifact.correlation_id,
+    approvalId: execution.artifact.approval_id,
+    kind: "follow_up",
+    id: execution.artifact.id,
+    status: execution.artifact.status,
+    artifactPath: toProjectPath(projectRoot, approvalFollowUpPath(projectRoot, followUpId)),
+    createdAt: execution.artifact.updated_at
+  });
   return { ...execution.result, event_id: eventId };
 }
 
@@ -802,6 +833,28 @@ async function readExistingFollowUp(
 
     throw error;
   }
+}
+
+async function ensureFollowUpCorrelation(
+  projectRoot: string,
+  artifact: ApprovalFollowUpArtifact
+): Promise<ApprovalFollowUpArtifact> {
+  const correlation = await trackCorrelationMember(projectRoot, {
+    correlationId: readString(artifact.correlation_id),
+    approvalId: artifact.approval_id,
+    kind: "follow_up",
+    id: artifact.id,
+    status: artifact.status,
+    artifactPath: toProjectPath(projectRoot, approvalFollowUpPath(projectRoot, artifact.id)),
+    createdAt: artifact.updated_at,
+    action: artifact.correlation_id === undefined ? "migrated" : undefined
+  });
+  if (artifact.correlation_id === correlation.correlation_id) {
+    return artifact;
+  }
+  const updated = { ...artifact, correlation_id: correlation.correlation_id };
+  await writeJsonFileAtomic(approvalFollowUpPath(projectRoot, artifact.id), updated);
+  return updated;
 }
 
 function planApprovalFollowUp(

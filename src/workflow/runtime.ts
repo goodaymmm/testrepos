@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { readdir } from "node:fs/promises";
 import path from "node:path";
 import { ApprovalQueue, type ApprovalRecord } from "../approvals/approval-queue.js";
+import { ensureWorkflowCorrelation } from "../correlation/store.js";
 import {
   acquireResourceLock,
   assertResourceLockFencingToken,
@@ -27,6 +28,7 @@ import {
 
 export type RunProductionWorkflowRequest = {
   workflowId: string;
+  correlationId?: string;
   taskId?: string;
   approvalId?: string;
   objective?: string;
@@ -78,6 +80,9 @@ export class ProductionWorkflowRuntime {
     const actions: string[] = [];
     const loaded = await this.loadOrCreate(request);
     const artifact = loaded.artifact;
+    if (request.correlationId !== undefined) {
+      artifact.correlation_id = request.correlationId;
+    }
 
     if (request.approvalId !== undefined) {
       const approvalNode = artifact.nodes.find((node) => node.kind === "approval_gate");
@@ -86,6 +91,7 @@ export class ProductionWorkflowRuntime {
         artifact.approval_id = request.approvalId;
       }
     }
+    await this.ensureCorrelation(artifact);
 
     await this.reconcile(artifact, actions);
     await this.advance(artifact, actions);
@@ -105,6 +111,7 @@ export class ProductionWorkflowRuntime {
   async show(workflowId: string): Promise<WorkflowRuntimeResult> {
     assertWorkflowId(workflowId);
     const artifact = await this.loadArtifact(workflowId);
+    await this.ensureCorrelation(artifact);
     return { artifact, actions: [], dry_run: true };
   }
 
@@ -122,7 +129,11 @@ export class ProductionWorkflowRuntime {
     const artifacts = await Promise.all(
       entries
         .filter((name) => name.endsWith(".json"))
-        .map((name) => this.loadArtifact(name.slice(0, -5)))
+        .map(async (name) => {
+          const artifact = await this.loadArtifact(name.slice(0, -5));
+          await this.ensureCorrelation(artifact);
+          return artifact;
+        })
     );
     return artifacts.sort(
       (left, right) => Date.parse(right.updated_at) - Date.parse(left.updated_at)
@@ -358,6 +369,7 @@ export class ProductionWorkflowRuntime {
     return {
       artifact: await this.createArtifact({
         workflowId: request.workflowId,
+        correlationId: request.correlationId,
         taskId: request.taskId,
         approvalId: request.approvalId,
         objective: request.objective,
@@ -502,6 +514,7 @@ export class ProductionWorkflowRuntime {
 
   private async createArtifact(input: {
     workflowId: string;
+    correlationId?: string;
     taskId: string;
     approvalId?: string;
     objective?: string;
@@ -572,6 +585,7 @@ export class ProductionWorkflowRuntime {
       artifact_kind: "workflow_run",
       runtime: "kairon_workflow_runtime",
       workflow_id: input.workflowId,
+      correlation_id: input.correlationId,
       status: "ready",
       sequence: 0,
       objective: input.objective ?? task?.title ?? `Legacy workflow ${input.workflowId}`,
@@ -963,12 +977,38 @@ export class ProductionWorkflowRuntime {
       this.projectRoot,
       checkpointPath
     );
+    await this.ensureCorrelation(artifact);
     await writeJsonFileAtomic(checkpointPath, artifact);
     await writeJsonFileAtomic(
       workflowRunArtifactPath(this.projectRoot, artifact.workflow_id),
       artifact
     );
     return artifact.recovery.last_checkpoint_path;
+  }
+
+  private async ensureCorrelation(artifact: WorkflowRunArtifact): Promise<void> {
+    const previousCorrelationId = artifact.correlation_id;
+    const correlation = await ensureWorkflowCorrelation(this.projectRoot, {
+      workflowId: artifact.workflow_id,
+      status: artifact.status,
+      artifactPath:
+        artifact.source.kind === "new" || artifact.source.artifact_path === undefined
+          ? toProjectPath(
+              this.projectRoot,
+              workflowRunArtifactPath(this.projectRoot, artifact.workflow_id)
+            )
+          : artifact.source.artifact_path,
+      correlationId: artifact.correlation_id,
+      approvalId: artifact.approval_id,
+      createdAt: artifact.updated_at
+    });
+    artifact.correlation_id = correlation.correlation_id;
+    if (previousCorrelationId === undefined && artifact.source.kind === "new") {
+      await writeJsonFileAtomic(
+        workflowRunArtifactPath(this.projectRoot, artifact.workflow_id),
+        artifact
+      );
+    }
   }
 
   private now(): Date {

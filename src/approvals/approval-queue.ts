@@ -1,4 +1,5 @@
 import { readdir } from "node:fs/promises";
+import { ensureApprovalCorrelation } from "../correlation/store.js";
 import { readJsonFile } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside } from "../core/fs/paths.js";
 import { StateApplier } from "../state/state-applier.js";
@@ -131,14 +132,27 @@ export class ApprovalQueue {
         .map((entry) => readJsonFile<ApprovalRecord>(resolveInside(approvalsDir, entry)))
     );
 
-    return approvals.filter((approval) => typeof approval.id === "string");
+    return Promise.all(
+      approvals
+        .filter((approval) => typeof approval.id === "string")
+        .map(async (approval) => {
+          const correlation = await ensureApprovalCorrelation(this.projectRoot, approval, {
+            migrated: approval.correlation_id === undefined
+          });
+          return { ...approval, correlation_id: correlation.correlation_id };
+        })
+    );
   }
 
   private async readApproval(approvalId: string): Promise<ApprovalRecord> {
     try {
-      return await readJsonFile<ApprovalRecord>(
+      const approval = await readJsonFile<ApprovalRecord>(
         resolveInside(getKaironPaths(this.projectRoot).approvalsDir, `${approvalId}.json`)
       );
+      const correlation = await ensureApprovalCorrelation(this.projectRoot, approval, {
+        migrated: approval.correlation_id === undefined
+      });
+      return { ...approval, correlation_id: correlation.correlation_id };
     } catch (error) {
       if (String(error).includes("ENOENT")) {
         throw new ApprovalNotFoundError(approvalId);

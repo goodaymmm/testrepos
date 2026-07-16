@@ -3,6 +3,10 @@ import { readdir } from "node:fs/promises";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { appendJsonLine } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
+import {
+  ensureApprovalCorrelation,
+  trackCorrelationMember
+} from "../correlation/store.js";
 import type { ApprovalAction } from "./interactions.js";
 import type { PreparedDiscordGateway } from "./gateway.js";
 import { sanitizeDiscordAuditText } from "./decision-audit.js";
@@ -42,10 +46,12 @@ export type DiscordApprovalNotificationResult = {
 
 export type DiscordApprovalNotificationAuditRecord = {
   schema_version: "0.1";
+  correlation_id?: string;
   approval_id: string;
   status: "sent" | "resent" | "updated" | "skipped" | "failed";
   channel_id: string;
   message_id?: string;
+  replaces_message_id?: string;
   board_url?: string;
   board_anchor?: string;
   reason?: string;
@@ -68,6 +74,7 @@ export type DiscordApprovalMessageUpdateResult =
 
 type ApprovalRecord = {
   id: string;
+  correlation_id?: string;
   status?: string;
   title?: string;
   type?: string;
@@ -131,6 +138,10 @@ export async function notifyPendingDiscordApprovals(
   const boardBaseUrl = await readConfiguredBoardBaseUrl(projectRoot);
 
   for (const approval of approvals) {
+    const correlation = await ensureApprovalCorrelation(projectRoot, approval, {
+      migrated: approval.correlation_id === undefined
+    });
+    approval.correlation_id = correlation.correlation_id;
     const board = boardTrackingMetadata(boardBaseUrl, approval.id);
     if (shouldRetryApprovalStatusUpdate(approval)) {
       try {
@@ -261,6 +272,7 @@ export async function notifyPendingDiscordApprovals(
         status: resent ? "resent" : "sent",
         channel_id: gateway.approval_channel_id,
         message_id: sent.id,
+        replaces_message_id: resent ? approval.discord?.message_id : undefined,
         board_url: input.board_url,
         board_anchor: input.board_url === undefined ? undefined : approvalBoardAnchor(approval.id),
         reason: resent ? "message_missing_reposted" : undefined,
@@ -345,6 +357,18 @@ export async function updateDiscordApprovalMessage(
       ...approval.discord,
       updated_at: (options.now?.() ?? new Date()).toISOString()
     }
+  });
+  const correlation = await ensureApprovalCorrelation(projectRoot, approval, {
+    migrated: approval.correlation_id === undefined
+  });
+  await trackCorrelationMember(projectRoot, {
+    correlationId: correlation.correlation_id,
+    approvalId,
+    kind: "discord_message",
+    id: messageId,
+    status: approval.status ?? "updated",
+    artifactPath: toProjectPath(projectRoot, discordNotificationAuditPath(projectRoot)),
+    createdAt: (options.now?.() ?? new Date()).toISOString()
   });
 
   return {
@@ -576,7 +600,35 @@ async function appendDiscordNotificationAudit(
   projectRoot: string,
   record: DiscordApprovalNotificationAuditRecord
 ): Promise<void> {
-  await appendJsonLine(discordNotificationAuditPath(projectRoot), record);
+  const approval = await readApprovalRecord(projectRoot, record.approval_id);
+  const correlation =
+    approval === null
+      ? undefined
+      : await ensureApprovalCorrelation(projectRoot, approval, {
+          migrated: approval.correlation_id === undefined
+        });
+  await appendJsonLine(discordNotificationAuditPath(projectRoot), {
+    ...record,
+    correlation_id: correlation?.correlation_id ?? record.correlation_id
+  });
+  if (correlation !== undefined && record.message_id !== undefined) {
+    await trackCorrelationMember(projectRoot, {
+      correlationId: correlation.correlation_id,
+      approvalId: record.approval_id,
+      kind: "discord_message",
+      id: record.message_id,
+      status:
+        approval?.status !== undefined &&
+        ["decided", "completed", "rejected", "cancelled"].includes(approval.status)
+          ? approval.status
+          : record.status === "failed"
+            ? "failed"
+            : "sent",
+      artifactPath: toProjectPath(projectRoot, discordNotificationAuditPath(projectRoot)),
+      createdAt: record.recorded_at,
+      replacesId: record.replaces_message_id
+    });
+  }
 }
 
 function toProjectPath(projectRoot: string, filePath: string): string {

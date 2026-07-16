@@ -4,6 +4,7 @@ import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { readJsonLines } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import type { AgentId } from "../agents/types.js";
+import { inspectCorrelationIntegrity } from "../correlation/store.js";
 
 export type DailyRunSummary = {
   run_id: string;
@@ -50,6 +51,7 @@ export type DailyReport = {
     git_transactions_ready_for_pr: number;
     git_transactions_requiring_approval: number;
     recovery_approvals_requested: number;
+    correlation_issues: number;
   };
   runs: {
     total: number;
@@ -89,6 +91,14 @@ export type DailyReport = {
       last_error_code?: string;
     };
   };
+  correlations: {
+    total: number;
+    healthy: number;
+    missing_artifacts: number;
+    stale_messages: number;
+    orphan_follow_ups: number;
+    duplicate_members: number;
+  };
   created_at: string;
 };
 
@@ -102,13 +112,14 @@ export async function createDailyReport(
 ): Promise<DailyReport> {
   const paths = getKaironPaths(projectRoot);
   const reportPath = resolveInside(paths.reportsDir, "daily", `${request.date}.json`);
-  const [runs, approvals, reviews, git, recovery, notifications] = await Promise.all([
+  const [runs, approvals, reviews, git, recovery, notifications, correlations] = await Promise.all([
     collectRuns(projectRoot, request.date),
     collectApprovals(projectRoot, request.date),
     collectReviews(projectRoot, request.date),
     collectGit(projectRoot, request.date),
     collectRecovery(projectRoot, request.date),
-    collectNotifications(projectRoot, request.date)
+    collectNotifications(projectRoot, request.date),
+    inspectCorrelationIntegrity(projectRoot)
   ]);
   const runStatusCounts = countBy(runs, (run) => run.status);
   const reviewLoopStatusCounts = countBy(
@@ -140,7 +151,12 @@ export async function createDailyReport(
       ).length,
       git_transactions_requiring_approval:
         gitTransactionStatusCounts.approval_required ?? 0,
-      recovery_approvals_requested: sumRecoveryApprovalsRequested(recovery)
+      recovery_approvals_requested: sumRecoveryApprovalsRequested(recovery),
+      correlation_issues:
+        correlations.missing_artifacts +
+        correlations.stale_messages +
+        correlations.orphan_follow_ups +
+        correlations.duplicate_members
     },
     runs: {
       total: runs.length,
@@ -171,6 +187,14 @@ export async function createDailyReport(
       items: recovery
     },
     notifications,
+    correlations: {
+      total: correlations.total,
+      healthy: correlations.healthy,
+      missing_artifacts: correlations.missing_artifacts,
+      stale_messages: correlations.stale_messages,
+      orphan_follow_ups: correlations.orphan_follow_ups,
+      duplicate_members: correlations.duplicate_members
+    },
     created_at: new Date().toISOString()
   };
 

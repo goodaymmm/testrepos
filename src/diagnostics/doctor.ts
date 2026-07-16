@@ -26,6 +26,7 @@ import {
 } from "../board/secret-scan.js";
 import { listBoardAccessRecords } from "../board/access-token.js";
 import { prepareBoardProfile, type BoardProfileConfig } from "../board/profile.js";
+import { inspectCorrelationIntegrity } from "../correlation/store.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -206,6 +207,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   );
   checks.push(await checkBoardSecretScan(options.projectRoot));
   checks.push(await checkBoardRemoteProfile(options.projectRoot));
+  checks.push(await checkCorrelationIntegrity(options.projectRoot));
   checks.push(await checkConfigBackups(options.projectRoot));
   checks.push(await checkRuntimeRecovery(options.projectRoot));
   checks.push(await checkDaemonHealth(options.projectRoot));
@@ -923,6 +925,33 @@ async function checkBoardRemoteProfile(projectRoot: string): Promise<DoctorCheck
     ...details,
     "status=ready"
   ]);
+}
+
+async function checkCorrelationIntegrity(projectRoot: string): Promise<DoctorCheck> {
+  const integrity = await inspectCorrelationIntegrity(projectRoot);
+  const details = [
+    `total=${integrity.total}`,
+    `healthy=${integrity.healthy}`,
+    `missing_artifacts=${integrity.missing_artifacts}`,
+    `stale_messages=${integrity.stale_messages}`,
+    `orphan_follow_ups=${integrity.orphan_follow_ups}`,
+    `duplicate_members=${integrity.duplicate_members}`
+  ];
+  if (integrity.issues.length === 0) {
+    return pass("correlation.integrity", "Correlation integrity", details);
+  }
+  return warning(
+    "correlation.integrity",
+    "Correlation integrity",
+    [
+      ...details,
+      ...integrity.issues.slice(0, 5).map(
+        (issue) =>
+          `issue=${issue.kind}:${issue.correlation_id}:${issue.member_kind}:${issue.member_id}`
+      )
+    ],
+    "Inspect .kairon/correlations and repair or regenerate the missing correlation links."
+  );
 }
 
 async function checkRuntimeRecovery(projectRoot: string): Promise<DoctorCheck> {

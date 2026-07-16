@@ -269,6 +269,8 @@ export const kaironDirectories = [
   "tasks",
   "messages",
   "approvals",
+  "correlations",
+  "audit",
   "runs",
   "workflows",
   "workflows/runs",
