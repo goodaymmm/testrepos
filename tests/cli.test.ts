@@ -505,8 +505,11 @@ describe("createProgram", () => {
     expect(rag?.commands.map((command) => command.name()).sort()).toEqual([
       "compact",
       "query",
+      "rebuild",
       "refresh",
-      "status"
+      "stats",
+      "status",
+      "verify"
     ]);
     expect(
       rag?.commands
@@ -518,6 +521,18 @@ describe("createProgram", () => {
         .find((command) => command.name() === "compact")
         ?.options.map((option) => option.long)
     ).toContain("--max-artifact-age-days");
+    expect(
+      rag?.commands
+        .find((command) => command.name() === "rebuild")
+        ?.options.map((option) => option.long)
+    ).toEqual(
+      expect.arrayContaining(["--dry-run", "--compare", "--execute", "--confirm"])
+    );
+    expect(
+      rag?.commands
+        .find((command) => command.name() === "stats")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--duplicates", "--context-budget"]));
     expect(
       rag?.commands
         .find((command) => command.name() === "query")

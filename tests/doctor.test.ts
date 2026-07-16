@@ -12,6 +12,7 @@ import { createDefaultSecretResolver } from "../src/core/secrets/secret-resolver
 import { exportBoardProjection } from "../src/board/projection.js";
 import { issuePersistentBoardAccess } from "../src/board/access-token.js";
 import { trackCorrelationMember } from "../src/correlation/store.js";
+import { buildRagIndex, type RagIndex } from "../src/rag/lexical-index.js";
 import { createTempProject } from "./test-utils.js";
 
 const discordIds = {
@@ -765,6 +766,38 @@ describe("runDoctor", () => {
     );
     expect(check?.next_action).toContain("kairon rag refresh");
     expect(check?.next_action).toContain("docs/rag-memory-v0.md");
+  });
+
+  it("warns when the enabled RAG index checksum no longer matches", async () => {
+    const root = await createInitializedGitProject();
+    const ragPath = path.join(root, ".kairon", "config", "rag.json");
+    const rag = await readJsonFile<Record<string, unknown>>(ragPath);
+    rag.enabled = true;
+    await writeJsonFileAtomic(ragPath, rag);
+    await buildRagIndex(root);
+    const indexPath = path.join(root, ".kairon", "rag", "index.json");
+    const index = await readJsonFile<RagIndex>(indexPath);
+    index.chunks[0] = { ...index.chunks[0]!, text: "tampered RAG chunk" };
+    await writeJsonFileAtomic(indexPath, index);
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+    const check = checkById(result, "rag.status");
+
+    expect(check?.status).toBe("warning");
+    expect(check?.details).toEqual(
+      expect.arrayContaining([
+        "enabled=true",
+        "status=unpassed",
+        "index_validation=unpassed",
+        expect.stringContaining("issue=index_checksum_mismatch")
+      ])
+    );
+    expect(check?.next_action).toContain("kairon rag verify");
+    expect(check?.next_action).toContain("kairon rag rebuild --dry-run --compare");
   });
 
   it("warns with daemon report and recovery commands after a fatal daemon event", async () => {

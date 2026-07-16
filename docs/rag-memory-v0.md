@@ -101,6 +101,18 @@ persona ごとに context budget を分ける。
 - protected / generated / missing / archivedは別理由として記録し、secret値や本文はsummaryへ保存しない。
 - `kairon rag status`はindex作成後に追加・変更・削除されたsource件数をread-onlyで検査し、`fresh`または`stale`を表示する。
 
+## Integrity And Rebuild
+
+- index manifestはsource/chunkの安定fieldだけから決定的SHA-256を計算し、可変時刻をchecksum対象に含めない。
+- `kairon rag verify`はmanifest checksum、件数、重複ID、orphan chunk、source/chunk hash、source driftを検証する。
+- 検証結果は`.kairon/rag/integrity/latest.json`へ保存し、本文やcredentialは含めない。
+- `kairon rag stats --duplicates --context-budget`は重複chunk比率、推定token、最大chunk、context budget超過、rebuild期限、retention候補を表示する。
+- `kairon rag rebuild --dry-run --compare`はfull candidateをmemory上に生成し、現在indexを書き換えずquery sampleのmatch消失を検査する。
+- rebuild planは`.kairon/rag/rebuilds/<rebuild-id>.json`へ保存する。retention超過artifactは候補として数えるだけで直接削除しない。
+- `kairon rag rebuild --execute --confirm <rebuild-id>`はexact confirmation、planned candidate checksum、current index checksumを再検証した場合だけatomic swapする。
+- plan後にsourceまたはindexが変わった場合は新しいplanを要求する。
+- refresh、compact、rebuild candidate、rebuild executeは同じindex resource lockを使い、同時書込みを拒否する。
+
 ## Safety
 
 - secret path は index しない。
@@ -122,6 +134,16 @@ persona ごとに context budget を分ける。
     "graph": "local"
   },
   "embedding_profile": "local_default",
+  "integrity": {
+    "query_samples": ["approval routing", "runtime recovery", "review findings"],
+    "context_budget_tokens": 12000,
+    "max_duplicate_ratio": 0.25
+  },
+  "rebuild": {
+    "interval_days": 30,
+    "retention_days": 90,
+    "max_artifacts": 20
+  },
   "collections": {
     "project_rules": { "enabled": true, "required": true },
     "task_state": { "enabled": true },

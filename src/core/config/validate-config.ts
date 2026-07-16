@@ -175,6 +175,28 @@ const notificationsConfigSchema = schemaVersion.extend({
     .optional()
 });
 
+const ragConfigSchema = schemaVersion.extend({
+  enabled: z.boolean(),
+  storage: z.object({
+    base_dir: z.string().regex(/^\.kairon(?:[\\/][A-Za-z0-9._-]+)*$/u)
+  }).passthrough(),
+  integrity: z
+    .object({
+      query_samples: z.array(z.string().trim().min(1).max(200)).max(20),
+      context_budget_tokens: z.number().int().positive().max(1_000_000),
+      max_duplicate_ratio: z.number().min(0).max(1)
+    })
+    .optional(),
+  rebuild: z
+    .object({
+      interval_days: z.number().int().positive(),
+      retention_days: z.number().int().positive(),
+      max_artifacts: z.number().int().positive()
+    })
+    .optional(),
+  security: z.object({ exclude_paths: z.array(z.string().min(1)) }).passthrough()
+});
+
 export function validateConfigFile(fileName: string, value: unknown): ValidationResult {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -210,6 +232,13 @@ export function validateConfigFile(fileName: string, value: unknown): Validation
       errors.push(
         `${fileName}: Discord notification and HTTP profile settings are invalid`
       );
+    }
+  }
+
+  if (fileName === "rag.json") {
+    const result = ragConfigSchema.safeParse(value);
+    if (!result.success) {
+      errors.push(`${fileName}: RAG storage, integrity, or rebuild settings are invalid`);
     }
   }
 

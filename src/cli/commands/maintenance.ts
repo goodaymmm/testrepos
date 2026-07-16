@@ -49,7 +49,17 @@ export async function runMaintenance(
           ...formatReasonCounts(
             "rag_pruned_reason",
             result.rag_index.pruned_reason_counts
-          )
+          ),
+          `rag_integrity=${result.rag_integrity?.status ?? "unknown"}`,
+          `rag_integrity_issues=${result.rag_integrity?.issue_count ?? 0}`,
+          `rag_duplicate_chunks=${result.rag_stats?.duplicate_chunk_count ?? 0}`,
+          `rag_duplicate_ratio=${(result.rag_stats?.duplicate_ratio ?? 0).toFixed(4)}`,
+          `rag_estimated_total_tokens=${result.rag_stats?.estimated_total_tokens ?? 0}`,
+          `rag_context_budget_tokens=${result.rag_stats?.context_budget_tokens ?? 0}`,
+          `rag_rebuild_due=${result.rag_stats?.rebuild_due ?? false}`,
+          `rag_retention_candidates=${result.rag_stats?.retention_candidate_count ?? 0}`,
+          `rag_rebuild_candidate=${result.rag_rebuild_candidate?.rebuild_id ?? "none"}`,
+          `rag_rebuild_candidate_status=${result.rag_rebuild_candidate?.status ?? "none"}`
         ];
 
   return [

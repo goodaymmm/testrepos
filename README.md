@@ -23,13 +23,12 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 - runtime loop scheduler、daemon tick、schedule別queue制御、maintenance重複防止、runtime recovery
 - daily report、agent handoff、cleanup proposal、cleanup apply / archive
 - read-only Board projection / loopback Board server / approval correlation timeline
-- local lexical RAG index、RAG query CLI、context builder連携
+- local lexical RAG index、integrity / rebuild / query CLI、context builder連携
 
 T67-T75完了後も残る主な後続作業の範囲:
 
 - private repositoryでbranch protection APIが403になる場合の診断文言改善
 - 24時間以上の連続daemon運用エビデンス取得とWindows常駐手順の固定
-- RAG index pruning / compaction など長期運用メンテナンス
 - operation test結果の自動集計とPASS反映支援
 - LangGraph workflow runtime の本格導入
 - merge / deploy の自動実行
@@ -282,10 +281,16 @@ stale lock、expired claim、partial outbox、Discord gateway mid-state、Git tr
 ```powershell
 kairon rag refresh
 kairon rag status
+kairon rag verify
+kairon rag stats --duplicates --context-budget
+kairon rag rebuild --dry-run --compare
+kairon rag rebuild --execute --confirm <rebuild-id>
 kairon rag query "approval routing" --type approval --limit 5
 ```
 
-local lexical RAG indexを `.kairon/rag/index.json` に作成し、metadata filter付きで検索します。2回目以降の通常refreshはsource manifestのmtime・file size・content hashを使うincremental modeになり、変更sourceだけを再構築します。`rag status`はpending added / changed / missingとfreshnessを表示し、refresh・maintenance出力はprotected / generated / missing / archivedなどのskip・prune理由を件数で示します。context builderは必要に応じてRAG検索結果をrun contextへ含め、secret-like path、protected path、generated pathはindex対象から除外します。
+local lexical RAG indexを `.kairon/rag/index.json` に作成し、metadata filter付きで検索します。2回目以降の通常refreshはsource manifestのmtime・file size・content hashを使うincremental modeになり、変更sourceだけを再構築します。`rag verify`は決定的checksum、source/chunk参照、source driftを検証し、結果を`.kairon/rag/integrity/latest.json`へ保存します。`rag stats`はduplicate比率、推定token、context budget、rebuild期限、retention候補を表示します。
+
+full rebuildは最初に`--dry-run --compare`で現在indexを変更せずcandidateとquery sampleを比較し、発行されたrebuild IDと一致する`--execute --confirm`でのみatomic swapします。plan後にcurrent indexまたはsourceが変わった場合は実行を拒否します。refresh、compact、rebuildは同じresource lockを使用します。`rag status`はpending added / changed / missingとfreshnessを表示し、refresh・maintenance出力はprotected / generated / missing / archivedなどのskip・prune理由を件数で示します。context builderは必要に応じてRAG検索結果をrun contextへ含め、secret-like path、protected path、generated pathはindex対象から除外します。
 
 ### 状態確認
 
