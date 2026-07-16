@@ -10,6 +10,7 @@ import {
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { createDefaultSecretResolver } from "../src/core/secrets/secret-resolver.js";
 import { exportBoardProjection } from "../src/board/projection.js";
+import { issuePersistentBoardAccess } from "../src/board/access-token.js";
 import { createTempProject } from "./test-utils.js";
 
 const discordIds = {
@@ -830,6 +831,61 @@ describe("runDoctor", () => {
     expect(text).toContain("doctor.ok=true");
     expect(text).toContain("WARNING git.gitignore .gitignore");
     expect(text).toContain("next_action=Create .gitignore and add .kairon/.");
+  });
+
+  it("reports remote Board readiness without exposing access tokens", async () => {
+    const root = await createInitializedGitProject();
+    const notificationsPath = path.join(
+      root,
+      ".kairon",
+      "config",
+      "notifications.json"
+    );
+    const notifications = await readJsonFile<Record<string, any>>(notificationsPath);
+    notifications.board = {
+      ...notifications.board,
+      enabled: true,
+      profile: "remote-readonly",
+      external_base_url: "https://board.example.test/",
+      trusted_proxies: ["127.0.0.1/32"],
+      allowed_origins: ["https://board.example.test"],
+      identity_header: "x-kairon-verified-identity",
+      rate_limit_per_minute: 30
+    };
+    await writeJsonFileAtomic(notificationsPath, notifications);
+
+    const setupRequired = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+    expect(statusById(setupRequired, "board.remote_profile")).toBe("warning");
+    expect(checkById(setupRequired, "board.remote_profile")?.details).toContain(
+      "active_access=0"
+    );
+
+    const token = "doctor-board-token-abcdefghijklmnopqrstuvwxyz0123456789";
+    await issuePersistentBoardAccess(root, {
+      ttlMinutes: 15,
+      randomToken: () => token,
+      accessId: "BOARD-ACCESS-T154-DOCTOR"
+    });
+    const ready = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+    const check = checkById(ready, "board.remote_profile");
+    expect(check?.status).toBe("pass");
+    expect(check?.details).toEqual(
+      expect.arrayContaining([
+        "profile=remote-readonly",
+        "external_base_url=configured",
+        "active_access=1",
+        "status=ready"
+      ])
+    );
+    expect(formatDoctorResult(ready)).not.toContain(token);
   });
 });
 

@@ -3,6 +3,10 @@ import {
   isValidCidr,
   isValidDiscordExternalBaseUrl
 } from "../../discord/http-profile.js";
+import {
+  normalizeBoardExternalBaseUrl,
+  normalizeBoardOrigin
+} from "../../board/profile.js";
 
 export type ValidationResult = {
   ok: boolean;
@@ -121,6 +125,50 @@ const notificationsConfigSchema = schemaVersion.extend({
           code: "custom",
           path: ["external_base_url"],
           message: "reverse-proxy external_base_url must use HTTPS"
+        });
+      }
+    })
+    .optional(),
+  board: z
+    .object({
+      enabled: z.boolean(),
+      base_url: z.string().url(),
+      profile: z.enum(["loopback", "remote-readonly"]).optional(),
+      external_base_url: z
+        .string()
+        .refine((value) => normalizeBoardExternalBaseUrl(value) !== undefined)
+        .nullable()
+        .optional(),
+      trusted_proxies: z.array(z.string().refine(isValidCidr)).min(1).optional(),
+      allowed_origins: z.array(
+        z.string().refine((value) => normalizeBoardOrigin(value) !== undefined)
+      ).optional(),
+      identity_header: z.string().regex(/^[A-Za-z0-9-]{1,64}$/).optional(),
+      rate_limit_per_minute: z.number().int().positive().optional()
+    })
+    .superRefine((board, context) => {
+      if (board.profile !== "remote-readonly") {
+        return;
+      }
+      if (!board.enabled) {
+        context.addIssue({
+          code: "custom",
+          path: ["enabled"],
+          message: "remote-readonly Board requires enabled=true"
+        });
+      }
+      if (board.external_base_url == null) {
+        context.addIssue({
+          code: "custom",
+          path: ["external_base_url"],
+          message: "remote-readonly Board requires external_base_url"
+        });
+      }
+      if (board.allowed_origins === undefined || board.allowed_origins.length === 0) {
+        context.addIssue({
+          code: "custom",
+          path: ["allowed_origins"],
+          message: "remote-readonly Board requires allowed_origins"
         });
       }
     })

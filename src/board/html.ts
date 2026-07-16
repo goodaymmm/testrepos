@@ -19,7 +19,10 @@ import type {
   BoardWorkflowSummary
 } from "./projection.js";
 
-export function renderBoardHtml(projection: BoardProjection): string {
+export function renderBoardHtml(
+  projection: BoardProjection,
+  options: { remoteReadOnly?: boolean } = {}
+): string {
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -96,7 +99,7 @@ export function renderBoardHtml(projection: BoardProjection): string {
 <body>
   <header>
     <h1>Kairon Board</h1>
-    <div class="meta">generated_at=${escapeHtml(projection.generated_at)} | projection=<a href="/projection.json">projection.json</a> | <a href="/">refresh</a></div>
+    <div class="meta">generated_at=${escapeHtml(projection.generated_at)} | view=${options.remoteReadOnly === true ? "remote-read-only" : "loopback-read-only"} | projection=<a href="/projection.json">projection.json</a> | <a href="/">refresh</a></div>
     <nav>
       <a href="#compact">Compact</a>
       <a href="#operations">Operations</a>
@@ -135,14 +138,14 @@ export function renderBoardHtml(projection: BoardProjection): string {
       ${renderMaintenance(projection.maintenance.latest_daily_report)}
     </div>
     ${renderDiscord(projection.discord.notifications, projection.discord.decisions)}
-    ${renderApprovals(projection.approvals.recent)}
-    ${renderFollowUps(projection.follow_ups.recent)}
+    ${renderApprovals(projection.approvals.recent, options.remoteReadOnly === true)}
+    ${renderFollowUps(projection.follow_ups.recent, options.remoteReadOnly === true)}
     ${renderQueue(projection.queue.recent)}
     ${renderWorkflows(projection.workflows.recent)}
     ${renderRuns(projection.runs.recent)}
     ${renderTasks(projection.tasks.recent)}
     ${renderReviews(projection.reviews.recent_loops, projection.reviews.recent_results)}
-    ${renderGitTransactions(projection.git.recent_transactions)}
+    ${renderGitTransactions(projection.git.recent_transactions, options.remoteReadOnly === true)}
     ${renderCleanup(projection.cleanup.recent)}
   </main>
 </body>
@@ -463,36 +466,56 @@ function renderWorkflows(workflows: BoardWorkflowSummary[]): string {
   );
 }
 
-function renderApprovals(approvals: BoardApprovalSummary[]): string {
+function renderApprovals(
+  approvals: BoardApprovalSummary[],
+  remoteReadOnly: boolean
+): string {
+  const summaryHeaders = remoteReadOnly
+    ? ["ID", "Status", "Risk", "Type", "Title", "Confirmation", "Updated"]
+    : ["ID", "Status", "Risk", "Type", "Title", "Confirmation", "Next Action", "Updated"];
   const summary = section(
     "Approvals",
-    ["ID", "Status", "Risk", "Type", "Title", "Confirmation", "Next Action", "Updated"],
-    approvals.map((approval) => [
+    summaryHeaders,
+    approvals.map((approval) => {
+      const row = [
       `<a id="${approvalAnchor(approval.id)}" href="#${approvalAnchor(approval.id)}">${escapeHtml(approval.id)}</a>`,
       text(approval.status),
       text(approval.risk_level),
       text(approval.type),
       text(approval.title),
-      text(approvalConfirmationSummary(approval)),
-      approval.local_command_hint === undefined
-        ? text(undefined)
-        : `<a href="#${approvalDetailAnchor(approval.id)}">${escapeHtml(approval.local_command_hint)}</a>`,
-      text(approval.updated_at ?? approval.created_at)
-    ]),
+      text(approvalConfirmationSummary(approval))
+      ];
+      if (!remoteReadOnly) {
+        row.push(
+          approval.local_command_hint === undefined
+            ? text(undefined)
+            : `<a href="#${approvalDetailAnchor(approval.id)}">${escapeHtml(approval.local_command_hint)}</a>`
+        );
+      }
+      row.push(text(approval.updated_at ?? approval.created_at));
+      return row;
+    }),
     "approvals"
   );
 
+  const detailHeaders = remoteReadOnly
+    ? ["Approval", "Scope", "Related Artifacts", "Checks"]
+    : ["Approval", "Scope", "Related Artifacts", "Checks", "Rollback", "Local CLI"];
   const details = section(
     "Approval Details",
-    ["Approval", "Scope", "Related Artifacts", "Checks", "Rollback", "Local CLI"],
-    approvals.map((approval) => [
+    detailHeaders,
+    approvals.map((approval) => {
+      const row = [
       `<a id="${approvalDetailAnchor(approval.id)}" href="#${approvalDetailAnchor(approval.id)}"><code>${escapeHtml(approval.id)}</code></a><div class="subvalue">${escapeHtml(approval.status)}</div>`,
       formatApprovalScope(approval),
       formatApprovalRelatedArtifacts(approval.related_artifacts),
-      formatApprovalChecks(approval.checks_summary, approval.required_approvals),
-      text(approval.rollback_hint),
-      text(approval.local_command_hint)
-    ]),
+      formatApprovalChecks(approval.checks_summary, approval.required_approvals)
+      ];
+      if (!remoteReadOnly) {
+        row.push(text(approval.rollback_hint), text(approval.local_command_hint));
+      }
+      return row;
+    }),
     "approval-details"
   );
 
@@ -580,19 +603,29 @@ function formatApprovalChecks(
     : `${checkHtml}${requiredHtml}`;
 }
 
-function renderFollowUps(followUps: BoardApprovalFollowUpSummary[]): string {
+function renderFollowUps(
+  followUps: BoardApprovalFollowUpSummary[],
+  remoteReadOnly: boolean
+): string {
   return section(
     "Follow-ups",
-    ["ID", "Status", "Action", "Approval", "Risk", "Hint", "Updated"],
-    followUps.map((followUp) => [
+    remoteReadOnly
+      ? ["ID", "Status", "Action", "Approval", "Risk", "Updated"]
+      : ["ID", "Status", "Action", "Approval", "Risk", "Hint", "Updated"],
+    followUps.map((followUp) => {
+      const row = [
       `<a id="${followUpAnchor(followUp.id)}" href="#${followUpAnchor(followUp.id)}"><code>${escapeHtml(followUp.id)}</code></a>`,
       text(followUp.status),
       text(followUp.action_type),
       text(followUp.approval_id),
-      text(followUp.risk_level),
-      text(followUp.command_hint),
-      text(followUp.updated_at ?? followUp.created_at)
-    ]),
+      text(followUp.risk_level)
+      ];
+      if (!remoteReadOnly) {
+        row.push(text(followUp.command_hint));
+      }
+      row.push(text(followUp.updated_at ?? followUp.created_at));
+      return row;
+    }),
     "follow-ups"
   );
 }
@@ -637,21 +670,31 @@ function renderReviews(
 ${section("Review Results", ["Review", "Run", "Status", "Score", "Highest Severity", "Created"], resultRows)}</div>`;
 }
 
-function renderGitTransactions(transactions: BoardGitTransactionSummary[]): string {
+function renderGitTransactions(
+  transactions: BoardGitTransactionSummary[],
+  remoteReadOnly: boolean
+): string {
   return section(
     "Git Transactions",
-    ["Transaction", "Status", "Task", "Branch", "PR", "Remote Ref", "Approval", "Rollback", "Updated"],
-    transactions.map((transaction) => [
+    remoteReadOnly
+      ? ["Transaction", "Status", "Task", "Branch", "PR", "Remote Ref", "Approval", "Updated"]
+      : ["Transaction", "Status", "Task", "Branch", "PR", "Remote Ref", "Approval", "Rollback", "Updated"],
+    transactions.map((transaction) => {
+      const row = [
       `<a id="${gitTransactionAnchor(transaction.transaction_id)}" href="#${gitTransactionAnchor(transaction.transaction_id)}"><code>${escapeHtml(transaction.transaction_id)}</code></a>`,
       text(transaction.status),
       text(transaction.task_id),
       text(transaction.branch),
       `${text(transaction.pr_status)}<div class="subvalue">${escapeHtml(transaction.pr_base ?? "-")} &larr; ${escapeHtml(transaction.pr_head ?? "-")}</div>`,
       text(transaction.remote_ref ?? undefined),
-      text(transaction.approval_id),
-      `${text(transaction.rollback_strategy)}<div class="subvalue">${escapeHtml(transaction.rollback_hint ?? "-")}</div>`,
-      text(transaction.updated_at ?? transaction.created_at)
-    ]),
+      text(transaction.approval_id)
+      ];
+      if (!remoteReadOnly) {
+        row.push(`${text(transaction.rollback_strategy)}<div class="subvalue">${escapeHtml(transaction.rollback_hint ?? "-")}</div>`);
+      }
+      row.push(text(transaction.updated_at ?? transaction.created_at));
+      return row;
+    }),
     "git"
   );
 }

@@ -7,6 +7,16 @@ import {
   startBoardServer,
   type BoardServerHandle
 } from "../../board/server.js";
+import {
+  issuePersistentBoardAccess,
+  revokePersistentBoardAccess
+} from "../../board/access-token.js";
+import {
+  prepareBoardProfile,
+  type BoardProfile,
+  type BoardProfileConfig
+} from "../../board/profile.js";
+import { loadConfigFile } from "../../core/config/load-config.js";
 
 export async function exportBoard(
   projectRoot: string,
@@ -23,6 +33,7 @@ export async function exportBoard(
 export async function serveBoard(
   projectRoot: string,
   options: {
+    profile?: string;
     host?: string;
     port?: string;
     recent?: string;
@@ -30,15 +41,61 @@ export async function serveBoard(
     accessTokenTtlSeconds?: string;
   } = {}
 ): Promise<BoardServerHandle> {
+  const notifications = await loadConfigFile<{ board?: BoardProfileConfig }>(
+    projectRoot,
+    "notifications.json"
+  );
+  const requestedProfile = parseOptionalBoardProfile(options.profile);
+  const prepared = prepareBoardProfile(notifications.board, requestedProfile);
+  const profileIssues = [...prepared.invalidConfig, ...prepared.missingConfig];
+  if (profileIssues.length > 0) {
+    throw new Error(`Board profile setup required: ${profileIssues.join(", ")}`);
+  }
   return startBoardServer(projectRoot, {
+    profile: prepared.profile,
     host: options.host,
     port: parseOptionalInteger(options.port),
     recentLimit: parseOptionalNumber(options.recent),
     requireToken: options.requireToken,
     accessTokenTtlSeconds: parseOptionalPositiveInteger(
       options.accessTokenTtlSeconds
-    )
+    ),
+    externalBaseUrl: prepared.externalBaseUrl,
+    trustedProxies: prepared.trustedProxies,
+    allowedOrigins: prepared.allowedOrigins,
+    identityHeader: prepared.identityHeader,
+    rateLimitPerMinute: prepared.rateLimitPerMinute
   });
+}
+
+export async function issueBoardAccessCommand(
+  projectRoot: string,
+  options: { ttlMinutes?: string } = {}
+): Promise<string> {
+  const issued = await issuePersistentBoardAccess(projectRoot, {
+    ttlMinutes: parseOptionalPositiveInteger(options.ttlMinutes)
+  });
+  return [
+    "Kairon board access issued.",
+    `access_id=${issued.access_id}`,
+    `access_token=${issued.access_token}`,
+    `expires_at=${issued.expires_at}`,
+    `scope=${issued.scope}`,
+    `artifact=${issued.artifact_path}`
+  ].join("\n");
+}
+
+export async function revokeBoardAccessCommand(
+  projectRoot: string,
+  accessId: string
+): Promise<string> {
+  const revoked = await revokePersistentBoardAccess(projectRoot, accessId);
+  return [
+    "Kairon board access revoked.",
+    `access_id=${revoked.access_id}`,
+    `status=${revoked.status}`,
+    `revoked_at=${revoked.revoked_at}`
+  ].join("\n");
 }
 
 export { formatBoardServeResult };
@@ -75,4 +132,14 @@ function parseOptionalPositiveInteger(
   }
 
   throw new Error(`Invalid positive numeric option: ${value}`);
+}
+
+function parseOptionalBoardProfile(value: string | undefined): BoardProfile | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "loopback" || value === "remote-readonly") {
+    return value;
+  }
+  throw new Error(`Invalid Board profile: ${value}`);
 }

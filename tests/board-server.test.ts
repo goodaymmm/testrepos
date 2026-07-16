@@ -1,5 +1,11 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  issuePersistentBoardAccess,
+  revokePersistentBoardAccess
+} from "../src/board/access-token.js";
+import { readJsonLines } from "../src/core/fs/jsonl-file.js";
+import { startBoardServer } from "../src/board/server.js";
 import { renderBoardHtml } from "../src/board/html.js";
 import { createBoardProjection } from "../src/board/projection.js";
 import { initializeProject } from "../src/cli/commands/init.js";
@@ -63,5 +69,159 @@ describe("Board workflow observability", () => {
     expect(html).toContain('id="workflows"');
     expect(html).toContain('id="workflow-WF-0152-BOARD"');
     expect(html).toContain("pause (paused)");
+  });
+});
+
+describe("remote read-only Board", () => {
+  it("requires proxy, origin, identity, and persistent access while blocking writes", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeJsonFileAtomic(path.join(root, ".kairon", "approvals", "APR-T154.json"), {
+      schema_version: "0.1",
+      id: "APR-T154",
+      status: "pending",
+      type: "deploy",
+      title: "Remote Board approval",
+      actions: ["approve", "reject"],
+      rollback_hint: "git revert SHOULD-NOT-REACH-REMOTE",
+      local_command_hint: "kairon approval decide SHOULD-NOT-REACH-REMOTE",
+      created_at: "2026-07-16T00:00:00.000Z",
+      updated_at: "2026-07-16T00:00:00.000Z"
+    });
+    const token = "remote-board-server-token-abcdefghijklmnopqrstuvwxyz0123456789";
+    const issued = await issuePersistentBoardAccess(root, {
+      now: new Date("2026-07-16T00:00:00.000Z"),
+      ttlMinutes: 15,
+      randomToken: () => token,
+      accessId: "BOARD-ACCESS-T154-SERVER"
+    });
+    const server = await startBoardServer(root, {
+      profile: "remote-readonly",
+      port: 0,
+      externalBaseUrl: "https://board.example.test/",
+      trustedProxies: ["127.0.0.1/32", "::1/128"],
+      allowedOrigins: ["https://board.example.test"],
+      identityHeader: "x-kairon-verified-identity",
+      rateLimitPerMinute: 2,
+      now: () => new Date("2026-07-16T00:05:00.000Z")
+    });
+    const proxyHeaders = {
+      "x-forwarded-proto": "https",
+      "x-forwarded-host": "board.example.test",
+      origin: "https://board.example.test",
+      "x-kairon-verified-identity": "operator@example.test",
+      authorization: `Bearer ${token}`
+    };
+
+    try {
+      expect(server).toMatchObject({
+        profile: "remote-readonly",
+        external_url: "https://board.example.test/",
+        audit_path: ".kairon/audit/board-access.jsonl"
+      });
+      expect(await fetch(server.board_url)).toMatchObject({ status: 400 });
+      expect(
+        await fetch(server.board_url, {
+          headers: {
+            ...proxyHeaders,
+            origin: "https://evil.example.test"
+          }
+        })
+      ).toMatchObject({ status: 403 });
+      const { "x-kairon-verified-identity": _identity, ...withoutIdentity } =
+        proxyHeaders;
+      expect(
+        await fetch(server.board_url, { headers: withoutIdentity })
+      ).toMatchObject({ status: 401 });
+      const { authorization: _authorization, ...withoutToken } = proxyHeaders;
+      expect(
+        await fetch(server.board_url, { headers: withoutToken })
+      ).toMatchObject({ status: 401 });
+
+      const htmlResponse = await fetch(server.board_url, { headers: proxyHeaders });
+      expect(htmlResponse.status).toBe(200);
+      const html = await htmlResponse.text();
+      expect(html).toContain("view=remote-read-only");
+      expect(html).not.toContain("Local CLI");
+      expect(html).not.toContain("SHOULD-NOT-REACH-REMOTE");
+
+      const projectionResponse = await fetch(`${server.board_url}projection.json`, {
+        headers: proxyHeaders
+      });
+      expect(projectionResponse.status).toBe(200);
+      const projectionText = await projectionResponse.text();
+      expect(projectionText).not.toContain("local_command_hint");
+      expect(projectionText).not.toContain("rollback_hint");
+      expect(projectionText).not.toContain(token);
+
+      expect(
+        await fetch(server.board_url, { headers: proxyHeaders })
+      ).toMatchObject({ status: 429 });
+      expect(
+        await fetch(server.board_url, { method: "POST", headers: proxyHeaders })
+      ).toMatchObject({ status: 405 });
+
+      await revokePersistentBoardAccess(
+        root,
+        issued.access_id,
+        new Date("2026-07-16T00:06:00.000Z")
+      );
+      expect(
+        await fetch(server.board_url, { headers: proxyHeaders })
+      ).toMatchObject({ status: 401 });
+    } finally {
+      await server.stop();
+    }
+
+    const audit = await readJsonLines<Record<string, unknown>>(
+      path.join(root, ".kairon", "audit", "board-access.jsonl")
+    );
+    expect(audit).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          client: "remote",
+          profile: "remote-readonly",
+          auth_status: "accepted",
+          proxy_status: "accepted",
+          origin_status: "accepted",
+          rate_limited: true
+        }),
+        expect.objectContaining({
+          proxy_status: "forwarded_headers_required",
+          http_status: 400
+        })
+      ])
+    );
+    const auditText = JSON.stringify(audit);
+    expect(auditText).not.toContain(token);
+    expect(auditText).not.toContain("operator@example.test");
+    expect(auditText).not.toMatch(/authorization|cookie/i);
+  });
+
+  it("rejects requests from a proxy outside the trusted CIDRs", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const server = await startBoardServer(root, {
+      profile: "remote-readonly",
+      port: 0,
+      externalBaseUrl: "https://board.example.test/",
+      trustedProxies: ["10.0.0.0/8"],
+      allowedOrigins: ["https://board.example.test"]
+    });
+    try {
+      const response = await fetch(server.board_url, {
+        headers: {
+          "x-forwarded-proto": "https",
+          "x-forwarded-host": "board.example.test",
+          origin: "https://board.example.test"
+        }
+      });
+      expect(response.status).toBe(403);
+      await expect(response.json()).resolves.toMatchObject({
+        reason: "untrusted_proxy"
+      });
+    } finally {
+      await server.stop();
+    }
   });
 });

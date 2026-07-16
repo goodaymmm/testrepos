@@ -24,6 +24,8 @@ import {
   inspectBoardProjectionSecrets,
   type BoardSecretScanSummary
 } from "../board/secret-scan.js";
+import { listBoardAccessRecords } from "../board/access-token.js";
+import { prepareBoardProfile, type BoardProfileConfig } from "../board/profile.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -69,7 +71,7 @@ type NotificationsConfig = {
   };
   board?: {
     enabled?: boolean;
-  };
+  } & BoardProfileConfig;
   providers?: {
     discord?: {
       enabled?: boolean;
@@ -203,6 +205,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
     )
   );
   checks.push(await checkBoardSecretScan(options.projectRoot));
+  checks.push(await checkBoardRemoteProfile(options.projectRoot));
   checks.push(await checkConfigBackups(options.projectRoot));
   checks.push(await checkRuntimeRecovery(options.projectRoot));
   checks.push(await checkDaemonHealth(options.projectRoot));
@@ -867,6 +870,59 @@ async function checkBoardSecretScan(projectRoot: string): Promise<DoctorCheck> {
   }
 
   return pass("board.secret_scan", "Board secret scan", details);
+}
+
+async function checkBoardRemoteProfile(projectRoot: string): Promise<DoctorCheck> {
+  const notifications = await loadConfigFile<NotificationsConfig>(
+    projectRoot,
+    "notifications.json"
+  );
+  const prepared = prepareBoardProfile(notifications.board);
+  if (prepared.profile !== "remote-readonly") {
+    return pass("board.remote_profile", "Board remote read-only profile", [
+      `profile=${prepared.profile}`,
+      "status=not_configured"
+    ]);
+  }
+
+  const records = await listBoardAccessRecords(projectRoot);
+  const now = Date.now();
+  const activeAccess = records.filter(
+    (record) =>
+      record.status === "active" &&
+      Number.isFinite(Date.parse(record.expires_at)) &&
+      Date.parse(record.expires_at) > now
+  ).length;
+  const details = [
+    `profile=${prepared.profile}`,
+    `external_base_url=${prepared.externalBaseUrl === undefined ? "missing" : "configured"}`,
+    `trusted_proxies=${prepared.trustedProxies.length}`,
+    `allowed_origins=${prepared.allowedOrigins.length}`,
+    `identity_header=${prepared.identityHeader}`,
+    `rate_limit_per_minute=${prepared.rateLimitPerMinute}`,
+    `active_access=${activeAccess}`
+  ];
+  const issues = [...prepared.invalidConfig, ...prepared.missingConfig];
+  if (issues.length > 0) {
+    return warning(
+      "board.remote_profile",
+      "Board remote read-only profile",
+      [...details, `setup_issues=${issues.join(",")}`, "status=setup_required"],
+      "Complete notifications.board remote-readonly settings, then run kairon doctor."
+    );
+  }
+  if (activeAccess === 0) {
+    return warning(
+      "board.remote_profile",
+      "Board remote read-only profile",
+      [...details, "status=setup_required"],
+      "Run kairon board access issue --ttl-minutes 15 before remote access."
+    );
+  }
+  return pass("board.remote_profile", "Board remote read-only profile", [
+    ...details,
+    "status=ready"
+  ]);
 }
 
 async function checkRuntimeRecovery(projectRoot: string): Promise<DoctorCheck> {

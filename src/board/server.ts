@@ -13,22 +13,38 @@ import { renderBoardHtml } from "./html.js";
 import {
   boardReadScope,
   issueBoardAccessToken,
-  validateBoardAccessToken
+  validateBoardAccessToken,
+  validatePersistentBoardAccess
 } from "./access-token.js";
 import {
   auditBoardAccess,
   boardAccessAuditPath,
   classifyBoardAccessRoute,
+  hashBoardIdentity,
   type BoardAccessAuditAuthStatus,
+  type BoardAccessAuditOriginStatus,
+  type BoardAccessAuditProxyStatus,
   type BoardAccessAuditRoute
 } from "./access-audit.js";
+import {
+  prepareBoardProfile,
+  validateBoardProxyRequest,
+  type BoardProfile,
+  type PreparedBoardProfile
+} from "./profile.js";
 
 export type BoardServerOptions = BoardProjectionOptions & {
+  profile?: BoardProfile;
   host?: string;
   port?: number;
   requireToken?: boolean;
   accessTokenTtlSeconds?: number;
   randomToken?: () => string;
+  externalBaseUrl?: string;
+  trustedProxies?: string[];
+  allowedOrigins?: string[];
+  identityHeader?: string;
+  rateLimitPerMinute?: number;
 };
 
 export type BoardServeResult = {
@@ -39,6 +55,8 @@ export type BoardServeResult = {
   port: number;
   status_path: string;
   audit_path: string;
+  profile: BoardProfile;
+  external_url?: string;
   access_token?: string;
   access_token_expires_at?: string;
   access_scope?: string;
@@ -47,8 +65,10 @@ export type BoardServeResult = {
 export type BoardServerRuntimeStatus = {
   schema_version: "0.1";
   status: "ready" | "stopped";
-  mode: "loopback_read_only";
+  mode: "loopback_read_only" | "remote_read_only";
+  profile: BoardProfile;
   board_url: string;
+  external_url?: string;
   projection_path: string;
   host: string;
   port: number;
@@ -58,6 +78,13 @@ export type BoardServerRuntimeStatus = {
     token_hash?: string;
     expires_at?: string;
     scope: typeof boardReadScope;
+    source?: "ephemeral" | "persistent";
+  };
+  remote_security?: {
+    trusted_proxies: string[];
+    allowed_origins: string[];
+    identity_header: string;
+    rate_limit_per_minute: number;
   };
   updated_at: string;
 };
@@ -75,14 +102,24 @@ export async function startBoardServer(
   const requestedPort = options.port ?? 8787;
   assertValidPort(requestedPort);
   const now = options.now ?? (() => new Date());
-  const access = createBoardAccess(options, now());
+  const preparedProfile = prepareServerBoardProfile(options);
+  const profile = preparedProfile.profile;
+  const access =
+    profile === "loopback" ? createBoardAccess(options, now()) : undefined;
+  const rateLimiter = new BoardRateLimiter(preparedProfile.rateLimitPerMinute);
   const server = createServer(async (request, response) => {
     const method = request.method ?? "UNKNOWN";
     const requestUrl = new URL(request.url ?? "/", `http://${host}`);
     const route = classifyBoardAccessRoute(requestUrl.pathname);
     const userAgentPresent = hasUserAgent(request.headers["user-agent"]);
     let authStatus: BoardAccessAuditAuthStatus =
-      access === undefined ? "not_required" : "not_evaluated";
+      profile === "loopback" && access === undefined ? "not_required" : "not_evaluated";
+    let proxyStatus: BoardAccessAuditProxyStatus =
+      profile === "remote-readonly" ? "not_evaluated" : "not_required";
+    let originStatus: BoardAccessAuditOriginStatus =
+      profile === "remote-readonly" ? "not_evaluated" : "not_required";
+    let identityHash: string | undefined;
+    let accessId: string | undefined;
 
     try {
       if (method !== "GET" && method !== "HEAD") {
@@ -93,6 +130,9 @@ export async function startBoardServer(
           status: 405,
           outcome: "denied",
           authStatus,
+          profile,
+          proxyStatus,
+          originStatus,
           userAgentPresent,
           now
         });
@@ -104,7 +144,131 @@ export async function startBoardServer(
         return;
       }
 
-      if (access !== undefined) {
+      if (profile === "remote-readonly") {
+        const forwarded = validateBoardProxyRequest({
+          headers: request.headers,
+          remoteAddress: request.socket.remoteAddress,
+          trustedProxies: preparedProfile.trustedProxies,
+          externalBaseUrl: preparedProfile.externalBaseUrl ?? ""
+        });
+        proxyStatus = forwarded === "ok" ? "accepted" : forwarded;
+        if (forwarded !== "ok") {
+          const status = forwarded === "untrusted_proxy" ? 403 : 400;
+          await recordBoardAccess({
+            projectRoot,
+            method,
+            route,
+            status,
+            outcome: "denied",
+            authStatus,
+            profile,
+            proxyStatus,
+            originStatus,
+            userAgentPresent,
+            now
+          });
+          sendBoardError(response, method, status, forwarded);
+          return;
+        }
+
+        const origin = readSingleHeader(request.headers.origin);
+        if (origin === undefined) {
+          originStatus = "missing_origin";
+        } else if (!preparedProfile.allowedOrigins.includes(origin)) {
+          originStatus = "origin_not_allowed";
+        } else {
+          originStatus = "accepted";
+        }
+        if (originStatus !== "accepted") {
+          await recordBoardAccess({
+            projectRoot,
+            method,
+            route,
+            status: 403,
+            outcome: "denied",
+            authStatus,
+            profile,
+            proxyStatus,
+            originStatus,
+            userAgentPresent,
+            now
+          });
+          sendBoardError(response, method, 403, originStatus);
+          return;
+        }
+
+        const identity = readVerifiedIdentity(
+          request.headers[preparedProfile.identityHeader]
+        );
+        if (identity === undefined) {
+          await recordBoardAccess({
+            projectRoot,
+            method,
+            route,
+            status: 401,
+            outcome: "denied",
+            authStatus,
+            profile,
+            proxyStatus,
+            originStatus,
+            userAgentPresent,
+            now
+          });
+          sendBoardError(response, method, 401, "verified_identity_required");
+          return;
+        }
+        identityHash = hashBoardIdentity(identity);
+
+        const validation = await validatePersistentBoardAccess({
+          projectRoot,
+          token: readBearerToken(request.headers.authorization),
+          now: now()
+        });
+        accessId = validation.access_id;
+        if (!validation.accepted) {
+          authStatus = validation.reason;
+          await recordBoardAccess({
+            projectRoot,
+            method,
+            route,
+            status: validation.reason === "scope_mismatch" ? 403 : 401,
+            outcome: "denied",
+            authStatus,
+            profile,
+            accessId,
+            identityHash,
+            proxyStatus,
+            originStatus,
+            userAgentPresent,
+            now
+          });
+          sendUnauthorized(response, method, validation.reason);
+          return;
+        }
+        authStatus = "accepted";
+
+        if (!rateLimiter.consume(identityHash, now())) {
+          await recordBoardAccess({
+            projectRoot,
+            method,
+            route,
+            status: 429,
+            outcome: "denied",
+            authStatus,
+            profile,
+            accessId,
+            identityHash,
+            proxyStatus,
+            originStatus,
+            rateLimited: true,
+            userAgentPresent,
+            now
+          });
+          response.setHeader("Retry-After", "60");
+          sendBoardError(response, method, 429, "rate_limited");
+          return;
+        }
+      } else if (access !== undefined) {
         const validation = validateBoardAccessToken({
           token: readBearerToken(request.headers.authorization),
           metadata: access.metadata,
@@ -120,6 +284,9 @@ export async function startBoardServer(
             status: validation.reason === "scope_mismatch" ? 403 : 401,
             outcome: "denied",
             authStatus,
+            profile,
+            proxyStatus,
+            originStatus,
             userAgentPresent,
             now
           });
@@ -129,7 +296,11 @@ export async function startBoardServer(
         authStatus = "accepted";
       }
 
-      const projection = await createBoardProjection(projectRoot, options);
+      const createdProjection = await createBoardProjection(projectRoot, options);
+      const projection =
+        profile === "remote-readonly"
+          ? sanitizeRemoteBoardProjection(createdProjection)
+          : createdProjection;
 
       if (requestUrl.pathname === "/" || requestUrl.pathname === "/index.html") {
         await recordBoardAccess({
@@ -139,10 +310,21 @@ export async function startBoardServer(
           status: 200,
           outcome: "allowed",
           authStatus,
+          profile,
+          accessId,
+          identityHash,
+          proxyStatus,
+          originStatus,
           userAgentPresent,
           now
         });
-        send(response, method, 200, "text/html; charset=utf-8", renderBoardHtml(projection));
+        send(
+          response,
+          method,
+          200,
+          "text/html; charset=utf-8",
+          renderBoardHtml(projection, { remoteReadOnly: profile === "remote-readonly" })
+        );
         return;
       }
 
@@ -154,6 +336,11 @@ export async function startBoardServer(
           status: 200,
           outcome: "allowed",
           authStatus,
+          profile,
+          accessId,
+          identityHash,
+          proxyStatus,
+          originStatus,
           userAgentPresent,
           now
         });
@@ -174,6 +361,11 @@ export async function startBoardServer(
         status: 404,
         outcome: "denied",
         authStatus,
+        profile,
+        accessId,
+        identityHash,
+        proxyStatus,
+        originStatus,
         userAgentPresent,
         now
       });
@@ -186,6 +378,11 @@ export async function startBoardServer(
         status: 500,
         outcome: "error",
         authStatus,
+        profile,
+        accessId,
+        identityHash,
+        proxyStatus,
+        originStatus,
         userAgentPresent,
         now
       });
@@ -201,16 +398,30 @@ export async function startBoardServer(
     const actualPort = readActualPort(server);
     const boardUrl = `http://${host}:${actualPort}/`;
     const statusPath = boardServerStatusPath(projectRoot);
-    const auditPath = boardAccessAuditPath(projectRoot);
+    const auditPath = boardAccessAuditPath(projectRoot, profile);
     const statusBase = {
       schema_version: "0.1" as const,
-      mode: "loopback_read_only" as const,
+      mode: profile === "remote-readonly" ? "remote_read_only" as const : "loopback_read_only" as const,
+      profile,
       board_url: boardUrl,
+      ...(preparedProfile.externalBaseUrl === undefined
+        ? {}
+        : { external_url: preparedProfile.externalBaseUrl }),
       projection_path: exportResult.projection_path,
       host,
       port: actualPort,
       audit_path: toProjectPath(projectRoot, auditPath),
-      access: accessStatus(access)
+      access: accessStatus(access, profile),
+      ...(profile === "remote-readonly"
+        ? {
+            remote_security: {
+              trusted_proxies: preparedProfile.trustedProxies,
+              allowed_origins: preparedProfile.allowedOrigins,
+              identity_header: preparedProfile.identityHeader,
+              rate_limit_per_minute: preparedProfile.rateLimitPerMinute
+            }
+          }
+        : {})
     };
     let closed = false;
     const closedPromise = new Promise<void>((resolve) => {
@@ -228,6 +439,8 @@ export async function startBoardServer(
       port: actualPort,
       status_path: toProjectPath(projectRoot, statusPath),
       audit_path: toProjectPath(projectRoot, auditPath),
+      profile,
+      external_url: preparedProfile.externalBaseUrl,
       access_token: access?.token,
       access_token_expires_at: access?.metadata.expires_at,
       access_scope: access?.metadata.scope,
@@ -262,6 +475,7 @@ export async function startBoardServer(
 export function formatBoardServeResult(result: BoardServeResult): string {
   const lines = [
     "Kairon board server started.",
+    `board.profile=${result.profile}`,
     `board.url=${result.board_url}`,
     `projection=${result.projection_path}`,
     `status_path=${result.status_path}`,
@@ -269,6 +483,9 @@ export function formatBoardServeResult(result: BoardServeResult): string {
     `host=${result.host}`,
     `port=${result.port}`
   ];
+  if (result.external_url !== undefined) {
+    lines.push(`board.external_url=${result.external_url}`);
+  }
   if (result.access_token !== undefined) {
     lines.push(
       `board.access_token=${result.access_token}`,
@@ -372,8 +589,16 @@ function createBoardAccess(
 }
 
 function accessStatus(
-  access: ReturnType<typeof issueBoardAccessToken> | undefined
+  access: ReturnType<typeof issueBoardAccessToken> | undefined,
+  profile: BoardProfile
 ): BoardServerRuntimeStatus["access"] {
+  if (profile === "remote-readonly") {
+    return {
+      required: true,
+      scope: boardReadScope,
+      source: "persistent"
+    };
+  }
   return access === undefined
     ? {
         required: false,
@@ -383,7 +608,8 @@ function accessStatus(
         required: true,
         token_hash: access.metadata.token_hash,
         expires_at: access.metadata.expires_at,
-        scope: boardReadScope
+        scope: boardReadScope,
+        source: "ephemeral"
       };
 }
 
@@ -411,6 +637,21 @@ function sendUnauthorized(
   response.end(JSON.stringify({ error: "board_access_denied", reason }));
 }
 
+function sendBoardError(
+  response: ServerResponse,
+  method: string,
+  status: number,
+  reason: string
+): void {
+  send(
+    response,
+    method,
+    status,
+    "application/json; charset=utf-8",
+    JSON.stringify({ error: "board_access_denied", reason })
+  );
+}
+
 async function writeBoardServerStatus(
   projectRoot: string,
   status: BoardServerRuntimeStatus
@@ -435,6 +676,12 @@ type BoardAccessRecordInput = {
   status: number;
   outcome: "allowed" | "denied" | "error";
   authStatus: BoardAccessAuditAuthStatus;
+  profile: BoardProfile;
+  accessId?: string;
+  identityHash?: string;
+  proxyStatus: BoardAccessAuditProxyStatus;
+  originStatus: BoardAccessAuditOriginStatus;
+  rateLimited?: boolean;
   userAgentPresent: boolean;
   now: () => Date;
 };
@@ -446,9 +693,14 @@ async function recordBoardAccess(input: BoardAccessRecordInput): Promise<void> {
     route: input.route,
     http_status: input.status,
     auth_status: input.authStatus,
+    access_id: input.accessId,
+    identity_hash: input.identityHash,
+    proxy_status: input.proxyStatus,
+    origin_status: input.originStatus,
+    rate_limited: input.rateLimited,
     user_agent_present: input.userAgentPresent,
     recorded_at: input.now().toISOString()
-  });
+  }, input.profile);
 }
 
 async function recordBoardAccessBestEffort(
@@ -466,4 +718,88 @@ function hasUserAgent(value: string | string[] | undefined): boolean {
     return value.some((item) => item.length > 0);
   }
   return value !== undefined && value.length > 0;
+}
+
+function prepareServerBoardProfile(options: BoardServerOptions): PreparedBoardProfile {
+  const prepared = prepareBoardProfile(
+    {
+      enabled: options.profile === "remote-readonly" ? true : undefined,
+      profile: options.profile,
+      external_base_url: options.externalBaseUrl,
+      trusted_proxies: options.trustedProxies,
+      allowed_origins: options.allowedOrigins,
+      identity_header: options.identityHeader,
+      rate_limit_per_minute: options.rateLimitPerMinute
+    },
+    options.profile
+  );
+  const issues = [...prepared.invalidConfig, ...prepared.missingConfig];
+  if (issues.length > 0) {
+    throw new Error(`Board profile setup required: ${issues.join(", ")}`);
+  }
+  return prepared;
+}
+
+function readSingleHeader(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) {
+    return value.length === 1 ? readSingleHeader(value[0]) : undefined;
+  }
+  const normalized = value?.trim();
+  return normalized === undefined || normalized.length === 0 || normalized.includes(",")
+    ? undefined
+    : normalized;
+}
+
+function readVerifiedIdentity(value: string | string[] | undefined): string | undefined {
+  const identity = readSingleHeader(value);
+  if (
+    identity === undefined ||
+    identity.length > 256 ||
+    /[\u0000-\u001f\u007f]/.test(identity)
+  ) {
+    return undefined;
+  }
+  return identity;
+}
+
+function sanitizeRemoteBoardProjection<T>(value: T): T {
+  return removeRemoteActionHints(value) as T;
+}
+
+function removeRemoteActionHints(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(removeRemoteActionHints);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !remoteActionHintKeys.has(key))
+        .map(([key, item]) => [key, removeRemoteActionHints(item)])
+    );
+  }
+  return value;
+}
+
+const remoteActionHintKeys = new Set([
+  "local_command_hint",
+  "command_hint",
+  "create_hint",
+  "rollback_hint"
+]);
+
+class BoardRateLimiter {
+  private readonly windows = new Map<string, { startedAt: number; count: number }>();
+
+  constructor(private readonly limit: number) {}
+
+  consume(identityHash: string, now: Date): boolean {
+    const timestamp = now.getTime();
+    const current = this.windows.get(identityHash);
+    if (current === undefined || timestamp - current.startedAt >= 60_000) {
+      this.windows.set(identityHash, { startedAt: timestamp, count: 1 });
+      return true;
+    }
+    current.count += 1;
+    return current.count <= this.limit;
+  }
 }
