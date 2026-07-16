@@ -200,6 +200,14 @@ describe("createDailyReport", () => {
       context_budget_tokens: 12000,
       rebuild_due: false
     });
+    expect(report.providers).toMatchObject({
+      total: 3,
+      ready: 3,
+      cooldown: 0,
+      daily_limit_reached: 0,
+      suspended: 0
+    });
+    expect(report.summary.providers_unavailable).toBe(0);
     const persistedReport = await readJsonFile(
       path.join(root, ".kairon", "reports", "daily", "2026-05-25.json")
     );

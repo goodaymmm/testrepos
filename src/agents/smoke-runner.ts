@@ -67,6 +67,7 @@ export async function runAgentSmoke(
     taskId,
     persona: "smoke",
     timeoutMs: request.timeoutMs,
+    unattended: false,
     capabilities: ["json.output", "smoke_test"]
   });
 

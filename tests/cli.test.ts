@@ -362,8 +362,11 @@ describe("createProgram", () => {
     const session = agent?.commands.find((command) => command.name() === "session");
 
     expect(agent?.commands.map((command) => command.name()).sort()).toEqual([
+      "health",
+      "resume",
       "session",
-      "smoke"
+      "smoke",
+      "suspend"
     ]);
     expect(session?.commands.map((command) => command.name()).sort()).toEqual([
       "list",

@@ -17,6 +17,18 @@ describe("initializeProject", () => {
 
     const configs = await loadAllConfigs(root);
     expect(configs["project.json"]).toMatchObject({ schema_version: "0.1" });
+    expect(configs["agents.json"]).toMatchObject({
+      provider_policies: {
+        codex: {
+          unattended_allowed: true,
+          max_concurrent: 1,
+          cooldown_seconds: 300,
+          daily_run_limit: 100
+        },
+        claude: expect.any(Object),
+        gemini: expect.objectContaining({ daily_run_limit: 50 })
+      }
+    });
     expect(configs["policies.json"]).toMatchObject({
       cleanup: {
         delete_directly: false,

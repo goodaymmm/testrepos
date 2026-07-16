@@ -11,6 +11,15 @@ import {
   type SessionMetadata
 } from "../../agents/session-host.js";
 import { agentIds, isAgentId, type AgentId } from "../../agents/types.js";
+import {
+  getProviderPolicyHealth,
+  listProviderPolicyHealth,
+  providerHealthArtifactPath,
+  providerPolicyAuditPath,
+  resumeProvider,
+  suspendProvider,
+  type ProviderPolicyHealth
+} from "../../agents/provider-policy.js";
 import { loadConfigFile } from "../../core/config/load-config.js";
 import { readJsonFile } from "../../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../../core/fs/paths.js";
@@ -29,6 +38,17 @@ export type AgentSessionCommandOptions = {
 };
 
 export type AgentSessionResetCommandOptions = AgentSessionCommandOptions;
+
+export type AgentHealthCommandOptions = {
+  agent?: string;
+  now?: () => Date;
+};
+
+export type AgentPolicyCommandOptions = {
+  agent?: string;
+  reason?: string;
+  now?: () => Date;
+};
 
 type ScheduleConfig = {
   timezone: string;
@@ -158,6 +178,60 @@ export async function resetAgentSessionCommand(
     `agent=${agentId}`,
     "status=archived",
     `archived_path=${toArtifactPath(projectRoot, archiveDir)}`
+  ].join("\n");
+}
+
+export async function showAgentHealthCommand(
+  projectRoot: string,
+  options: AgentHealthCommandOptions = {}
+): Promise<string> {
+  const now = options.now?.() ?? new Date();
+  const health = options.agent === undefined
+    ? await listProviderPolicyHealth(projectRoot, { now })
+    : [await getProviderPolicyHealth(projectRoot, parseAgentId(options.agent), { now })];
+
+  return [
+    "Kairon agent provider health.",
+    `providers=${health.length}`,
+    ...health.flatMap((entry) => formatProviderHealth(projectRoot, entry))
+  ].join("\n");
+}
+
+export async function suspendAgentCommand(
+  projectRoot: string,
+  options: AgentPolicyCommandOptions
+): Promise<string> {
+  const agent = parseRequiredPolicyAgent(options.agent);
+  const reason = requiredPolicyReason(options.reason);
+  const health = await suspendProvider(projectRoot, {
+    agent,
+    reason,
+    actor: "local-cli",
+    now: options.now?.()
+  });
+  return [
+    "Kairon agent provider suspended.",
+    ...formatProviderHealth(projectRoot, health),
+    `audit=${toArtifactPath(projectRoot, providerPolicyAuditPath(projectRoot))}`
+  ].join("\n");
+}
+
+export async function resumeAgentCommand(
+  projectRoot: string,
+  options: AgentPolicyCommandOptions
+): Promise<string> {
+  const agent = parseRequiredPolicyAgent(options.agent);
+  const reason = requiredPolicyReason(options.reason);
+  const health = await resumeProvider(projectRoot, {
+    agent,
+    reason,
+    actor: "local-cli",
+    now: options.now?.()
+  });
+  return [
+    "Kairon agent provider resumed.",
+    ...formatProviderHealth(projectRoot, health),
+    `audit=${toArtifactPath(projectRoot, providerPolicyAuditPath(projectRoot))}`
   ].join("\n");
 }
 
@@ -309,6 +383,39 @@ function parseAgentId(agent: string): AgentId {
   }
 
   return agent;
+}
+
+function parseRequiredPolicyAgent(agent: string | undefined): AgentId {
+  if (agent === undefined) {
+    throw new Error(`Missing --agent. Use one of: ${agentCliIdHint()}.`);
+  }
+  return parseAgentId(agent);
+}
+
+function requiredPolicyReason(reason: string | undefined): string {
+  if (reason === undefined || reason.trim().length === 0) {
+    throw new Error("Missing --reason for provider policy audit.");
+  }
+  return reason;
+}
+
+function formatProviderHealth(
+  projectRoot: string,
+  health: ProviderPolicyHealth
+): string[] {
+  return [
+    `agent=${health.agent}`,
+    `status=${health.status}`,
+    `available=${health.available}`,
+    `failure_category=${health.failure_category ?? ""}`,
+    `suspended=${health.suspended}`,
+    `suspended_reason=${health.suspended_reason ?? ""}`,
+    `next_retry_at=${health.next_retry_at ?? ""}`,
+    `daily_runs=${health.daily_run_count}/${health.policy.daily_run_limit}`,
+    `active_runs=${health.active_run_ids.length}/${health.policy.max_concurrent}`,
+    `unattended_allowed=${health.policy.unattended_allowed}`,
+    `health_path=${providerHealthArtifactPath(projectRoot, health.agent)}`
+  ];
 }
 
 function sessionDirectory(projectRoot: string, date: string, agent: AgentId): string {

@@ -2,6 +2,7 @@ import { access, readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { defaultAgentAdapters } from "../agents/adapters/index.js";
 import { agentDisplayName } from "../agents/display.js";
+import { listProviderPolicyHealth } from "../agents/provider-policy.js";
 import {
   isCommandAvailable,
   type CommandAvailabilityChecker
@@ -191,6 +192,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkGitignore(options.projectRoot));
   checks.push(await checkConfigValidation(options.projectRoot));
   checks.push(await checkAgentConfig(options.projectRoot));
+  checks.push(await checkProviderPolicyHealth(options.projectRoot));
   checks.push(await checkAgentCliAvailability(options.projectRoot, commandAvailability));
   checks.push(checkApiKeyContamination(env));
   checks.push(await checkDiscordConfig(options.projectRoot, env, options.secretResolver));
@@ -375,6 +377,33 @@ async function checkAgentConfig(projectRoot: string): Promise<DoctorCheck> {
   }
 
   return pass("config.agents", "Agent config", details);
+}
+
+async function checkProviderPolicyHealth(projectRoot: string): Promise<DoctorCheck> {
+  const health = await listProviderPolicyHealth(projectRoot, { persist: false });
+  const details = health.map((entry) =>
+    [
+      `${agentDisplayName(entry.agent)}: status=${entry.status}`,
+      `available=${entry.available}`,
+      `category=${entry.failure_category ?? "none"}`,
+      `daily_runs=${entry.daily_run_count}/${entry.policy.daily_run_limit}`,
+      `active_runs=${entry.active_run_ids.length}/${entry.policy.max_concurrent}`,
+      `unattended_allowed=${entry.policy.unattended_allowed}`,
+      `next_retry_at=${entry.next_retry_at ?? "none"}`
+    ].join(", ")
+  );
+  const blocked = health.filter((entry) => entry.status !== "ready");
+
+  if (blocked.length > 0) {
+    return warning(
+      "agent.provider_policy",
+      "Agent provider policy",
+      details,
+      "Resolve provider quota, authentication, setup, or compliance issues, then use kairon agent resume --agent <agent> --reason <reason> when manual verification is complete."
+    );
+  }
+
+  return pass("agent.provider_policy", "Agent provider policy", details);
 }
 
 async function checkAgentCliAvailability(

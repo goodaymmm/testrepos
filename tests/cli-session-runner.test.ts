@@ -345,6 +345,14 @@ describe("CliSessionRunner", () => {
     ).resolves.toMatchObject({
       status: "rate_limited"
     });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runtime", "agents", "claude-health.json"))
+    ).resolves.toMatchObject({
+      status: "cooldown",
+      failure_category: "rate_limit",
+      last_run_id: "RUN-0006",
+      active_run_ids: []
+    });
   });
 
   it("classifies provider usage caps as usage_limited with resume hints", async () => {
@@ -430,6 +438,14 @@ describe("CliSessionRunner", () => {
           failure_reason: "cli_usage_limited"
         })
       ]
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runtime", "agents", "claude-health.json"))
+    ).resolves.toMatchObject({
+      status: "cooldown",
+      failure_category: "quota",
+      last_run_id: "RUN-0016",
+      active_run_ids: []
     });
   });
 

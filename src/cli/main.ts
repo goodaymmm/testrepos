@@ -7,8 +7,11 @@ import { agentCliIdHint } from "../agents/display.js";
 import { KAIRON_VERSION } from "../index.js";
 import {
   listAgentSessionsCommand,
+  resumeAgentCommand,
   resetAgentSessionCommand,
   runAgentSmokeCommand,
+  showAgentHealthCommand,
+  suspendAgentCommand,
   showAgentSessionCommand
 } from "./commands/agent.js";
 import {
@@ -190,6 +193,32 @@ export function createProgram(): Command {
     .option("--timeout-ms <ms>", "CLI execution timeout in milliseconds.")
     .action(async (options: { agent?: string; timeoutMs?: string }) => {
       console.log(await runAgentSmokeCommand(process.cwd(), options));
+    });
+
+  agent
+    .command("health")
+    .description("Show provider policy health for configured agents.")
+    .option("--agent <agent>", `Agent id: ${agentCliIdHint()}.`)
+    .action(async (options: { agent?: string }) => {
+      console.log(await showAgentHealthCommand(process.cwd(), options));
+    });
+
+  agent
+    .command("suspend")
+    .description("Suspend one provider from dispatch with an audited reason.")
+    .requiredOption("--agent <agent>", `Agent id: ${agentCliIdHint()}.`)
+    .requiredOption("--reason <reason>", "Audited suspension reason.")
+    .action(async (options: { agent?: string; reason?: string }) => {
+      console.log(await suspendAgentCommand(process.cwd(), options));
+    });
+
+  agent
+    .command("resume")
+    .description("Resume one provider after an operator verifies recovery.")
+    .requiredOption("--agent <agent>", `Agent id: ${agentCliIdHint()}.`)
+    .requiredOption("--reason <reason>", "Audited resume reason.")
+    .action(async (options: { agent?: string; reason?: string }) => {
+      console.log(await resumeAgentCommand(process.cwd(), options));
     });
 
   const agentSession = agent

@@ -11,6 +11,9 @@ kairon init
 kairon migrate
 kairon doctor
 kairon agent smoke --agent codex|claude|gemini
+kairon agent health [--agent codex|claude|gemini]
+kairon agent suspend --agent codex|claude|gemini --reason <text>
+kairon agent resume --agent codex|claude|gemini --reason <text>
 kairon approval list
 kairon approval show APR-0001
 kairon approval decide APR-0001 --action approve|reject|request_changes|snooze
@@ -221,6 +224,21 @@ kairon agent session reset codex|claude|gemini --date YYYY-MM-DD
 dispatcherは既定でbackoff中の `degraded` / `blocked` sessionを避ける。内部dispatch requestで `avoidUnhealthyAgents=false` を明示した場合、または `health_next_retry_at` を経過した場合は候補へ戻す。
 
 `session reset` はAgent directory全体を `.archived-*` へrenameするため、`session.json`、`health.json`、context manifest、scratchを削除せず保存する。
+
+## kairon agent health / suspend / resume
+
+provider単位のunattended実行可否、同時実行数、cooldown、日次run上限、手動停止状態を確認・操作する。
+
+```text
+kairon agent health
+kairon agent health --agent codex|claude|gemini
+kairon agent suspend --agent codex|claude|gemini --reason <text>
+kairon agent resume --agent codex|claude|gemini --reason <text>
+```
+
+policyは `.kairon/config/agents.json` の `provider_policies`、runtime状態は `.kairon/runtime/agents/{agent}-health.json` に保存する。quota / rate limitは対象providerだけをcooldownし、auth / setup / compliance / 未分類エラーはfail closedでsuspendする。dispatcherは利用可能な別providerへfallbackする。
+
+`suspend` と `resume` は `--reason` が必須で、actor・理由・時刻を `.kairon/audit/provider-policy.jsonl` に追記する。resumeは日次上限をresetせず、operatorが確認したprovider停止だけを解除する。Kaironはquota回避目的のaccount切替、credential rotation、request分割を行わない。
 
 ## kairon approval list
 
