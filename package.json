@@ -4,6 +4,16 @@
   "description": "Local AI-human symbiosis runtime for project orchestration.",
   "type": "module",
   "private": true,
+  "license": "UNLICENSED",
+  "files": [
+    "dist/",
+    "scripts/local-beta-common.ps1",
+    "scripts/install-local-beta.ps1",
+    "scripts/update-local-beta.ps1",
+    "scripts/uninstall-local-beta.ps1",
+    "docs/installation.md",
+    "README.md"
+  ],
   "bin": {
     "kairon": "./dist/cli/main.js"
   },
@@ -11,6 +21,7 @@
     "kairon": "tsx src/cli/main.ts",
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "release:pack": "npm run build && node dist/cli/main.js release pack",
     "test:docs": "vitest run tests/pr-release-docs.test.ts",
     "test": "vitest run",
     "test:watch": "vitest"
@@ -20,7 +31,7 @@
   },
   "dependencies": {
     "commander": "^14.0.0",
-    "discord.js": "^14.0.0",
+    "discord.js": "^14.27.0",
     "node-pty": "^1.1.0",
     "zod": "^4.0.0"
   },
@@ -28,6 +39,6 @@
     "@types/node": "^22.0.0",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.2.7"
   }
 }

@@ -566,7 +566,9 @@ describe("createProgram", () => {
       "bump",
       "check",
       "notes",
-      "validate"
+      "pack",
+      "validate",
+      "verify"
     ]);
     expect(
       release?.commands.find((command) => command.name() === "validate")?.description()

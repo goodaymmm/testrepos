@@ -446,6 +446,8 @@ README更新が必要な代表条件:
 release判断では [docs/release-checklist-v0.md](docs/release-checklist-v0.md) を使い、`npm run build`、`npm test`、対象operation test、secret / generated artifact確認、README更新要否、version同期を確認します。
 release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在のbaseline versionは `0.1.0` で、versionを変更する場合は `package.json` と `src/index.ts` の `KAIRON_VERSION` を同時に更新します。`kairon release validate` でversion形式・同期、release checklist marker、`Unreleased` marker、現在version entryを一括確認できます。
 
+local betaはpublic npm registryへpublishせず、`npm run release:pack`でchecksummed tarballを生成します。Windowsでのinstall、update/rollback、uninstall手順は [docs/installation.md](docs/installation.md) を参照してください。uninstallはprojectの`.kairon/`を削除しません。
+
 ### T11-T15 運用テスト対象
 
 T11からT15では、初期ドッキング後の運用に必要なCLI経路を追加しています。運用テストでは、次の単位で確認します。
@@ -505,6 +507,7 @@ T67-T75では、local runtimeだけでなくGitHub / Discordを含む外部接�
 - [docs/architecture-v0.md](docs/architecture-v0.md)
 - [docs/workflow-v0.md](docs/workflow-v0.md)
 - [docs/cli-commands-v0.md](docs/cli-commands-v0.md)
+- [docs/installation.md](docs/installation.md)
 - [docs/github-branch-protection-sandbox-v0.md](docs/github-branch-protection-sandbox-v0.md)
 - [docs/project-docking-v0.md](docs/project-docking-v0.md)
 - [docs/subscription-compliance-v0.md](docs/subscription-compliance-v0.md)

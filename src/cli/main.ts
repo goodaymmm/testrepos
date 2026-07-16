@@ -88,6 +88,8 @@ import {
   releaseBumpCommand,
   releaseCheckCommand,
   releaseNotesCommand,
+  releasePackCommand,
+  releaseVerifyCommand,
   validateRelease
 } from "./commands/release.js";
 import { runReviewLoopCommand } from "./commands/review.js";
@@ -1265,6 +1267,27 @@ export function createProgram(): Command {
     .action(async () => {
       const result = await validateRelease(process.cwd());
       console.log(formatReleaseValidation(result));
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+    });
+
+  release
+    .command("pack")
+    .description("Build a checksummed private local beta tarball.")
+    .option("--output <path>", "Output directory. Defaults to release-artifacts/<version>.")
+    .action(async (options: { output?: string }) => {
+      console.log(await releasePackCommand(process.cwd(), options));
+    });
+
+  release
+    .command("verify")
+    .description("Verify a local beta tarball and its checksum manifest.")
+    .argument("<package>", "Path to the local beta .tgz package.")
+    .option("--manifest <path>", "Checksum manifest path. Defaults to <package>.sha256.json.")
+    .action(async (packageFile: string, options: { manifest?: string }) => {
+      const result = await releaseVerifyCommand(packageFile, options);
+      console.log(result.text);
       if (!result.ok) {
         process.exitCode = 1;
       }
