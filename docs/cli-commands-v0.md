@@ -67,6 +67,8 @@ kairon rag status
 kairon rag query <query>
 kairon release check
 kairon release validate
+kairon release pack [--output <path>]
+kairon release verify <package.tgz> [--manifest <manifest.json>]
 kairon release notes --since <ref> [--write]
 kairon release bump --version <version> [--write]
 kairon workflow run <workflow-id> --task-id <task-id>
@@ -847,6 +849,9 @@ release readiness、release notes、version bumpを補助する。
 ```text
 kairon release check
 kairon release validate
+kairon release pack
+kairon release pack --output C:\tmp\kairon-beta
+kairon release verify .\release-artifacts\0.1.0\kairon-0.1.0.tgz
 kairon release notes --since v0.1.0
 kairon release notes --since v0.1.0 --write
 kairon release bump --version 0.2.0
@@ -857,6 +862,8 @@ kairon release bump --type patch
 `release validate` は `package.json.version` と `KAIRON_VERSION` のcore SemVer形式と同期、
 release checklistの必須marker、release notesの`Unreleased` markerと現在version entryを
 まとめて検査する。検査失敗時は `validation.ok=false` を出力し、exit codeを1にする。
+
+`release pack`はrelease validationとbuild済みentrypointを確認して`npm pack`を実行し、tarballのSHA-256、size、file inventoryを`.sha256.json`へ保存する。`release verify`はmanifestだけでなくtar path、link、必須file、禁止path、package metadataを再検証する。public npm registryへのpublishは行わない。
 
 `release notes` は既定ではdry-runで、`--write` を付けた場合のみ
 `docs/release-notes-v0.md` の `<!-- kairon:release-notes-unreleased -->` 直下へappendする。

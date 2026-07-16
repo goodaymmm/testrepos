@@ -5,6 +5,13 @@ import {
 } from "../../agents/command-runner.js";
 import { readJsonFile, writeJsonFileAtomic } from "../../core/fs/json-file.js";
 import { resolveInside } from "../../core/fs/paths.js";
+import {
+  createLocalBetaPackage,
+  formatLocalBetaPack,
+  formatLocalBetaVerification,
+  verifyLocalBetaPackage,
+  type LocalBetaPackOptions
+} from "../../release/local-beta.js";
 
 export type ReleaseCheckResult = {
   schema_version: string;
@@ -89,6 +96,10 @@ export type ReleaseBumpCommandOptions = {
   now?: () => Date;
 };
 
+export type ReleaseVerifyCommandOptions = {
+  manifest?: string;
+};
+
 type PackageJson = {
   version?: unknown;
   [key: string]: unknown;
@@ -110,6 +121,30 @@ export async function releaseBumpCommand(
   options: ReleaseBumpCommandOptions = {}
 ): Promise<string> {
   return formatReleaseBump(await planReleaseBump(projectRoot, options));
+}
+
+export async function releasePackCommand(
+  projectRoot: string,
+  options: LocalBetaPackOptions = {}
+): Promise<string> {
+  const releaseValidation = await validateRelease(projectRoot);
+  if (!releaseValidation.ok) {
+    throw new Error(
+      `Release validation failed before pack: ${releaseValidation.checks
+        .filter((check) => check.status === "fail")
+        .map((check) => check.id)
+        .join(", ")}`
+    );
+  }
+  return formatLocalBetaPack(await createLocalBetaPackage(projectRoot, options));
+}
+
+export async function releaseVerifyCommand(
+  packageFile: string,
+  options: ReleaseVerifyCommandOptions = {}
+): Promise<{ text: string; ok: boolean }> {
+  const result = await verifyLocalBetaPackage(packageFile, options.manifest);
+  return { text: formatLocalBetaVerification(result), ok: result.ok };
 }
 
 export async function collectReleaseCheck(

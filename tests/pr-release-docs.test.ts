@@ -38,6 +38,22 @@ describe("PR and release documentation", () => {
     expect(readme).toContain("docs/pr-release-checklist-v0.md");
     expect(readme).toContain("docs/release-checklist-v0.md");
     expect(readme).toContain("docs/release-notes-v0.md");
+    expect(readme).toContain("docs/installation.md");
+  });
+
+  it("documents private local beta packaging and state-preserving uninstall", async () => {
+    const installation = await readUtf8("docs/installation.md");
+    const commands = await readUtf8("docs/cli-commands-v0.md");
+
+    expect(installation).toContain("npm run release:pack");
+    expect(installation).toContain("kairon release verify");
+    expect(installation).toContain("install-local-beta.ps1");
+    expect(installation).toContain("update-local-beta.ps1");
+    expect(installation).toContain("uninstall-local-beta.ps1");
+    expect(installation).toContain("`.kairon/`");
+    expect(installation).toContain("削除しません");
+    expect(commands).toContain("kairon release pack");
+    expect(commands).toContain("kairon release verify");
   });
 
   it("documents GitHub branch protection sandbox and token redaction policy", async () => {
