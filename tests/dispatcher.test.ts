@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AgentDispatcher } from "../src/agents/dispatcher.js";
+import { suspendProvider } from "../src/agents/provider-policy.js";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { createTempProject } from "./test-utils.js";
 
@@ -157,5 +158,30 @@ describe("AgentDispatcher", () => {
         ]
       })
     ).rejects.toThrow("No available agent");
+  });
+
+  it("falls back when the preferred provider is suspended", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const now = new Date("2026-07-16T06:00:00.000Z");
+    await suspendProvider(root, {
+      agent: "codex",
+      reason: "authentication remediation",
+      now
+    });
+
+    await expect(
+      new AgentDispatcher(root).decide({
+        persona: "implementer",
+        now,
+        availableSessions: [
+          { agent: "codex", status: "ready" },
+          { agent: "claude", status: "ready" }
+        ]
+      })
+    ).resolves.toMatchObject({
+      agent: "claude",
+      reason: expect.stringContaining("provider ready")
+    });
   });
 });

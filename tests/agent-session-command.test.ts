@@ -8,7 +8,10 @@ import {
 } from "../src/agents/session-host.js";
 import {
   listAgentSessionsCommand,
+  resumeAgentCommand,
   resetAgentSessionCommand,
+  showAgentHealthCommand,
+  suspendAgentCommand,
   showAgentSessionCommand
 } from "../src/cli/commands/agent.js";
 import { initializeProject } from "../src/cli/commands/init.js";
@@ -195,6 +198,37 @@ describe("agent session commands", () => {
       agent: "codex",
       session_id: "SESSION-2026-05-25-codex"
     });
+  });
+
+  it("shows provider health and audits manual suspend and resume", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const now = () => new Date("2026-07-16T05:00:00.000Z");
+
+    const initial = await showAgentHealthCommand(root, { agent: "codex", now });
+    expect(initial).toContain("Kairon agent provider health.");
+    expect(initial).toContain("agent=codex");
+    expect(initial).toContain("status=ready");
+    expect(initial).toContain(
+      "health_path=.kairon/runtime/agents/codex-health.json"
+    );
+
+    const suspended = await suspendAgentCommand(root, {
+      agent: "codex",
+      reason: "manual compliance review",
+      now
+    });
+    expect(suspended).toContain("Kairon agent provider suspended.");
+    expect(suspended).toContain("status=suspended");
+    expect(suspended).toContain("audit=.kairon/audit/provider-policy.jsonl");
+
+    const resumed = await resumeAgentCommand(root, {
+      agent: "codex",
+      reason: "review completed",
+      now
+    });
+    expect(resumed).toContain("Kairon agent provider resumed.");
+    expect(resumed).toContain("status=ready");
   });
 });
 

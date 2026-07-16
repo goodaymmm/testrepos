@@ -4,6 +4,7 @@ import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { readJsonLines } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import type { AgentId } from "../agents/types.js";
+import { listProviderPolicyHealth } from "../agents/provider-policy.js";
 import { inspectCorrelationIntegrity } from "../correlation/store.js";
 import { getRagStats, verifyRagIndex } from "../rag/integrity.js";
 
@@ -54,6 +55,7 @@ export type DailyReport = {
     recovery_approvals_requested: number;
     correlation_issues: number;
     rag_integrity_issues: number;
+    providers_unavailable: number;
   };
   runs: {
     total: number;
@@ -114,6 +116,25 @@ export type DailyReport = {
     rebuild_due: boolean;
     retention_candidate_count: number;
   };
+  providers: {
+    total: number;
+    ready: number;
+    cooldown: number;
+    daily_limit_reached: number;
+    suspended: number;
+    items: Array<{
+      agent: AgentId;
+      status: string;
+      available: boolean;
+      failure_category: string | null;
+      next_retry_at: string | null;
+      daily_run_count: number;
+      daily_run_limit: number;
+      active_runs: number;
+      max_concurrent: number;
+      unattended_allowed: boolean;
+    }>;
+  };
   created_at: string;
 };
 
@@ -127,7 +148,7 @@ export async function createDailyReport(
 ): Promise<DailyReport> {
   const paths = getKaironPaths(projectRoot);
   const reportPath = resolveInside(paths.reportsDir, "daily", `${request.date}.json`);
-  const [runs, approvals, reviews, git, recovery, notifications, correlations, ragIntegrity, ragStats] = await Promise.all([
+  const [runs, approvals, reviews, git, recovery, notifications, correlations, ragIntegrity, ragStats, providerHealth] = await Promise.all([
     collectRuns(projectRoot, request.date),
     collectApprovals(projectRoot, request.date),
     collectReviews(projectRoot, request.date),
@@ -136,7 +157,8 @@ export async function createDailyReport(
     collectNotifications(projectRoot, request.date),
     inspectCorrelationIntegrity(projectRoot),
     verifyRagIndex(projectRoot, { writeArtifact: false }),
-    getRagStats(projectRoot)
+    getRagStats(projectRoot),
+    listProviderPolicyHealth(projectRoot, { persist: false })
   ]);
   const runStatusCounts = countBy(runs, (run) => run.status);
   const reviewLoopStatusCounts = countBy(
@@ -174,7 +196,8 @@ export async function createDailyReport(
         correlations.stale_messages +
         correlations.orphan_follow_ups +
         correlations.duplicate_members,
-      rag_integrity_issues: ragIntegrity.issue_count
+      rag_integrity_issues: ragIntegrity.issue_count,
+      providers_unavailable: providerHealth.filter((entry) => !entry.available).length
     },
     runs: {
       total: runs.length,
@@ -225,6 +248,27 @@ export async function createDailyReport(
       chunks_exceeding_context_budget: ragStats.chunks_exceeding_context_budget,
       rebuild_due: ragStats.rebuild_due,
       retention_candidate_count: ragStats.retention_candidate_count
+    },
+    providers: {
+      total: providerHealth.length,
+      ready: providerHealth.filter((entry) => entry.status === "ready").length,
+      cooldown: providerHealth.filter((entry) => entry.status === "cooldown").length,
+      daily_limit_reached: providerHealth.filter(
+        (entry) => entry.status === "daily_limit_reached"
+      ).length,
+      suspended: providerHealth.filter((entry) => entry.status === "suspended").length,
+      items: providerHealth.map((entry) => ({
+        agent: entry.agent,
+        status: entry.status,
+        available: entry.available,
+        failure_category: entry.failure_category,
+        next_retry_at: entry.next_retry_at,
+        daily_run_count: entry.daily_run_count,
+        daily_run_limit: entry.policy.daily_run_limit,
+        active_runs: entry.active_run_ids.length,
+        max_concurrent: entry.policy.max_concurrent,
+        unattended_allowed: entry.policy.unattended_allowed
+      }))
     },
     created_at: new Date().toISOString()
   };

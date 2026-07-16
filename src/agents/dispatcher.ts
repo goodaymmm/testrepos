@@ -1,6 +1,11 @@
 import { loadConfigFile } from "../core/config/load-config.js";
 import { getAgentAdapter } from "./adapters/index.js";
 import { agentDisplayName } from "./display.js";
+import {
+  getProviderPolicyHealth,
+  isProviderRunAllowed,
+  type ProviderPolicyHealth
+} from "./provider-policy.js";
 import type { AgentSessionHealthStatus } from "./session-health.js";
 import type { AgentId, RunnerMode, SessionScope } from "./types.js";
 import { agentIds, isAgentId } from "./types.js";
@@ -34,6 +39,7 @@ export type DispatchRequest = {
   excludedAgents?: AgentId[];
   allowInteractiveAgents?: boolean;
   avoidUnhealthyAgents?: boolean;
+  unattended?: boolean;
   now?: Date;
   policy?: {
     allowedAgents?: AgentId[];
@@ -122,12 +128,25 @@ export class AgentDispatcher {
   constructor(private readonly projectRoot: string) {}
 
   async decide(request: DispatchRequest): Promise<DispatchDecision> {
-    const [agentsConfig, dispatchConfig] = await Promise.all([
+    const now = request.now ?? new Date();
+    const [agentsConfig, dispatchConfig, providerHealth] = await Promise.all([
       loadConfigFile<AgentsConfig>(this.projectRoot, "agents.json"),
-      loadConfigFile<DispatchConfig>(this.projectRoot, "dispatch.json")
+      loadConfigFile<DispatchConfig>(this.projectRoot, "dispatch.json"),
+      Promise.all(
+        agentIds.map(async (agent) => [
+          agent,
+          await getProviderPolicyHealth(this.projectRoot, agent, { now })
+        ] as const)
+      )
     ]);
 
-    const candidates = this.resolveCandidates(request, agentsConfig, dispatchConfig);
+    const providerHealthByAgent = new Map(providerHealth);
+    const candidates = this.resolveCandidates(
+      request,
+      agentsConfig,
+      dispatchConfig,
+      providerHealthByAgent
+    );
     const selected = candidates[0];
 
     if (selected === undefined) {
@@ -145,7 +164,12 @@ export class AgentDispatcher {
       runnerMode:
         session?.mode ?? agentConfig?.mode ?? "persistent_terminal_session",
       sessionScope: "daily",
-      reason: buildReason(selected, request, session),
+      reason: buildReason(
+        selected,
+        request,
+        session,
+        providerHealthByAgent.get(selected)
+      ),
       candidates
     };
   }
@@ -153,7 +177,8 @@ export class AgentDispatcher {
   private resolveCandidates(
     request: DispatchRequest,
     agentsConfig: AgentsConfig,
-    dispatchConfig: DispatchConfig
+    dispatchConfig: DispatchConfig,
+    providerHealth: ReadonlyMap<AgentId, ProviderPolicyHealth>
   ): AgentId[] {
     const eligible = new Set(
       agentIds.filter((agent) => {
@@ -192,6 +217,18 @@ export class AgentDispatcher {
         if (
           !getAgentAdapter(agent).supports.nonInteractive &&
           request.allowInteractiveAgents !== true
+        ) {
+          return false;
+        }
+
+        const health = providerHealth.get(agent);
+        if (
+          health !== undefined &&
+          !isProviderRunAllowed(
+            health,
+            request.unattended !== false,
+            request.now ?? new Date()
+          )
         ) {
           return false;
         }
@@ -312,7 +349,8 @@ function normalizeCapability(capability: string): string {
 function buildReason(
   agent: AgentId,
   request: DispatchRequest,
-  session: AgentSessionAvailability | undefined
+  session: AgentSessionAvailability | undefined,
+  providerHealth: ProviderPolicyHealth | undefined
 ): string {
   const parts = [`${agentDisplayName(agent)} selected for persona ${request.persona}`];
 
@@ -325,6 +363,10 @@ function buildReason(
     if (session.healthStatus !== undefined) {
       parts.push(`health ${session.healthStatus}`);
     }
+  }
+
+  if (providerHealth !== undefined) {
+    parts.push(`provider ${providerHealth.status}`);
   }
 
   return parts.join("; ");

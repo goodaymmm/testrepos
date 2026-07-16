@@ -26,6 +26,10 @@ import {
   type SessionMetadata
 } from "./session-host.js";
 import type { AgentId } from "./types.js";
+import {
+  beginProviderRun,
+  finishProviderRun
+} from "./provider-policy.js";
 import { extractOutboxFromStdout } from "./stdout-outbox.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
@@ -57,6 +61,7 @@ export type RunAgentJobRequest = {
   commitRequested?: boolean;
   changedFiles?: Array<Pick<ChangedFile, "path" | "status">>;
   tags?: string[];
+  unattended?: boolean;
 };
 
 export type CliSessionRunRecord = {
@@ -133,6 +138,7 @@ export class CliSessionRunner {
   private readonly contextBuilder: ContextBuilder;
   private readonly commandRunner: CommandRunner;
   private readonly interactiveSessionRunner?: InteractiveSessionRunner;
+  private readonly now: () => Date;
 
   constructor(
     private readonly projectRoot: string,
@@ -147,6 +153,7 @@ export class CliSessionRunner {
       commandAvailability: options.commandAvailability,
       now: options.now
     });
+    this.now = options.now ?? (() => new Date());
     this.contextBuilder = new ContextBuilder(projectRoot);
     this.commandRunner = options.commandRunner ?? spawnCommandRunner;
     this.interactiveSessionRunner = options.interactiveSessionRunner;
@@ -289,6 +296,13 @@ export class CliSessionRunner {
       contextPath: bundle.context_path,
       expectedOutboxPath: toProjectPath(this.projectRoot, outboxPath)
     });
+    await beginProviderRun(this.projectRoot, {
+      agent: request.agent,
+      date: request.date,
+      runId: request.runId,
+      unattended: request.unattended !== false,
+      now: this.now()
+    });
     await this.sessionHost.markRunStarted(request.agent, request.date, {
       kind: "job",
       run_id: request.runId,
@@ -301,7 +315,7 @@ export class CliSessionRunner {
       stderr_log: toProjectPath(this.projectRoot, paths.stderrPath),
       runner_metadata_path: toProjectPath(this.projectRoot, paths.runnerMetadataPath),
       status: "running",
-      started_at: new Date().toISOString()
+      started_at: this.now().toISOString()
     });
 
     let record: CliSessionRunRecord | undefined;
@@ -499,26 +513,38 @@ export class CliSessionRunner {
       await writeJsonFileAtomic(paths.runnerMetadataPath, record);
       return record;
     } finally {
-      await this.sessionHost.markRunFinished(request.agent, request.date, {
-        kind: "job",
-        run_id: request.runId,
-        task_id: request.taskId,
-        persona: request.persona,
-        context_path: bundle.context_path,
-        outbox_path: toProjectPath(this.projectRoot, outboxPath),
-        prompt_path: toProjectPath(this.projectRoot, paths.promptPath),
-        stdout_log: toProjectPath(this.projectRoot, paths.stdoutPath),
-        stderr_log: toProjectPath(this.projectRoot, paths.stderrPath),
-        runner_metadata_path: toProjectPath(this.projectRoot, paths.runnerMetadataPath),
-        status: record?.status ?? "failed",
-        failure_reason: record?.failure_reason,
-        setup_action: record?.setup_action,
-        resume_hint: record?.resume_hint,
-        retry_after: record?.retry_after,
-        matched_pattern: record?.matched_pattern,
-        started_at: record?.created_at,
-        finished_at: record?.finished_at ?? new Date().toISOString()
-      });
+      try {
+        await this.sessionHost.markRunFinished(request.agent, request.date, {
+          kind: "job",
+          run_id: request.runId,
+          task_id: request.taskId,
+          persona: request.persona,
+          context_path: bundle.context_path,
+          outbox_path: toProjectPath(this.projectRoot, outboxPath),
+          prompt_path: toProjectPath(this.projectRoot, paths.promptPath),
+          stdout_log: toProjectPath(this.projectRoot, paths.stdoutPath),
+          stderr_log: toProjectPath(this.projectRoot, paths.stderrPath),
+          runner_metadata_path: toProjectPath(this.projectRoot, paths.runnerMetadataPath),
+          status: record?.status ?? "failed",
+          failure_reason: record?.failure_reason,
+          setup_action: record?.setup_action,
+          resume_hint: record?.resume_hint,
+          retry_after: record?.retry_after,
+          matched_pattern: record?.matched_pattern,
+          started_at: record?.created_at,
+          finished_at: record?.finished_at ?? this.now().toISOString()
+        });
+      } finally {
+        await finishProviderRun(this.projectRoot, {
+          agent: request.agent,
+          date: request.date,
+          runId: request.runId,
+          status: record?.status ?? "failed",
+          reason: record?.failure_reason,
+          retryAfter: record?.retry_after,
+          now: this.now()
+        });
+      }
     }
   }
 

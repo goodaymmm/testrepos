@@ -19,12 +19,28 @@ const schemaVersion = z.object({
 });
 
 const agentsConfigSchema = schemaVersion.extend({
+  provider_policies: z
+    .object({
+      codex: providerPolicySchema(),
+      claude: providerPolicySchema(),
+      gemini: providerPolicySchema()
+    })
+    .optional(),
   agents: z.object({
     codex: z.object({ enabled: z.literal(true) }).passthrough(),
     claude: z.object({ enabled: z.literal(true) }).passthrough(),
     gemini: z.object({ enabled: z.literal(true) }).passthrough()
   })
 });
+
+function providerPolicySchema() {
+  return z.object({
+    unattended_allowed: z.boolean(),
+    max_concurrent: z.number().int().positive(),
+    cooldown_seconds: z.number().int().nonnegative().max(86_400),
+    daily_run_limit: z.number().int().positive()
+  });
+}
 
 const cleanupRetentionRuleSchema = z
   .object({

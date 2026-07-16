@@ -14,6 +14,7 @@ import { issuePersistentBoardAccess } from "../src/board/access-token.js";
 import { trackCorrelationMember } from "../src/correlation/store.js";
 import { buildRagIndex, type RagIndex } from "../src/rag/lexical-index.js";
 import { createTempProject } from "./test-utils.js";
+import { suspendProvider } from "../src/agents/provider-policy.js";
 
 const discordIds = {
   application: "111111111111111111",
@@ -37,6 +38,7 @@ describe("runDoctor", () => {
     expect(statusById(result, "git.repository")).toBe("pass");
     expect(statusById(result, "git.gitignore")).toBe("pass");
     expect(statusById(result, "cli.availability")).toBe("pass");
+    expect(statusById(result, "agent.provider_policy")).toBe("pass");
     expect(statusById(result, "env.api_keys")).toBe("pass");
     expect(statusById(result, "discord.config")).toBe("pass");
     expect(statusById(result, "board.secret_scan")).toBe("pass");
@@ -50,6 +52,26 @@ describe("runDoctor", () => {
     expect(checkById(result, "cli.availability")?.details).toContain(
       "antigravity(gemini): agy available=true"
     );
+  });
+
+  it("warns when a provider is suspended without exposing sensitive values", async () => {
+    const root = await createInitializedGitProject();
+    await suspendProvider(root, {
+      agent: "codex",
+      reason: "authentication token=SHOULD_NOT_LEAK",
+      now: new Date("2026-07-16T07:00:00.000Z")
+    });
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+    const text = formatDoctorResult(result);
+
+    expect(statusById(result, "agent.provider_policy")).toBe("warning");
+    expect(text).toContain("status=suspended");
+    expect(text).not.toContain("SHOULD_NOT_LEAK");
   });
 
   it("warns when migration or subscription-only environment cleanup is needed", async () => {

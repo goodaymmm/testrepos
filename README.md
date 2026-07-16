@@ -172,6 +172,19 @@ kairon agent session reset codex --date 2026-07-14
 
 Agentごとのhealth、連続失敗、retry backoff、setup_required履歴を `.kairon/sessions/YYYY-MM-DD/{agent}/health.json` に保存します。dispatcherはbackoff中の不健康なsessionを既定で避け、成功後は連続失敗をresetします。`session reset` はsession directoryをarchiveするため、healthを含む既存証跡は残ります。
 
+### Provider Policy Health
+
+```powershell
+kairon agent health
+kairon agent health --agent codex
+kairon agent suspend --agent claude --reason "terms review required"
+kairon agent resume --agent claude --reason "terms reviewed by operator"
+```
+
+`agents.json` の `provider_policies` で、providerごとのunattended許可、同時実行数、cooldown秒数、日次run上限を管理します。quota / rate limitは対象providerだけをcooldownし、auth / setup / compliance / 未分類エラーは手動確認までsuspendします。状態は `.kairon/runtime/agents/{agent}-health.json`、手動suspend / resumeを含む監査は `.kairon/audit/provider-policy.jsonl` に保存します。
+
+Kaironはquota回避を目的としたaccount切替、credential rotation、request分割を行いません。手動resumeにはoperatorの理由が必須で、日次上限を迂回する操作にはなりません。
+
 ### タスク作成と実行
 
 ```powershell

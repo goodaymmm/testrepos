@@ -62,6 +62,26 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
     },
     "agents.json": {
       schema_version: "0.1",
+      provider_policies: {
+        codex: {
+          unattended_allowed: true,
+          max_concurrent: 1,
+          cooldown_seconds: 300,
+          daily_run_limit: 100
+        },
+        claude: {
+          unattended_allowed: true,
+          max_concurrent: 1,
+          cooldown_seconds: 300,
+          daily_run_limit: 100
+        },
+        gemini: {
+          unattended_allowed: true,
+          max_concurrent: 1,
+          cooldown_seconds: 300,
+          daily_run_limit: 50
+        }
+      },
       agents: {
         codex: {
           enabled: true,
