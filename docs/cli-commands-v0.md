@@ -71,6 +71,9 @@ kairon release pack [--output <path>]
 kairon release verify <package.tgz> [--manifest <manifest.json>]
 kairon release notes --since <ref> [--write]
 kairon release bump --version <version> [--write]
+kairon readiness manifest --evidence <GATE_ID=path>
+kairon readiness check [--manifest <path>]
+kairon readiness report [--format json|markdown] [--output <path>]
 kairon workflow run <workflow-id> --task-id <task-id>
 kairon workflow show <workflow-id>
 kairon workflow recover <workflow-id> --dry-run
@@ -878,6 +881,29 @@ tracked worktreeがcleanであること
 backup artifactを.kairon/release/backups/<timestamp>/へ作成すること
 npm publish / git tag / GitHub Releaseは実行しないこと
 ```
+
+## kairon readiness
+
+T145以降のoperation test、doctor、daemon certification、backup rehearsal、GitHub / Discordのlive確認、RAG verify、provider compliance、local beta lifecycleなどの証跡を集約し、Beta配布可否を機械判定する。
+
+```powershell
+kairon readiness manifest `
+  --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\summary.json `
+  --evidence CONFIG_MIGRATION_DOCTOR=.\.kairon\reports\doctor.json `
+  --evidence PACKAGE_LIFECYCLE=.\release-artifacts\0.1.0\verification.json
+
+kairon readiness check
+kairon readiness report --format json --output .kairon\reports\readiness\latest.json
+kairon readiness report --format markdown --output .kairon\reports\readiness\latest.md
+```
+
+`manifest`は各証跡のrelative path、artifact kind、判定status、source commit、実行時刻、有効期限、SHA-256、sizeを`.kairon/readiness/evidence-manifest.json`へ記録する。`GATE_ID=path`は複数指定できるが、project root外のpathは拒否する。
+
+必須gate IDは`BUILD_UNIT_INTEGRATION`、`CONFIG_MIGRATION_DOCTOR`、`RUNTIME_RESILIENCE`、`GITHUB_MERGE_DEPLOY_GUARD`、`WORKFLOW_RECOVERY_CONTROL`、`DISCORD_BOARD_SECURITY`、`RAG_INTEGRITY`、`PROVIDER_QUOTA_COMPLIANCE`、`PACKAGE_LIFECYCLE`、`SECRET_ARTIFACT_INTEGRITY`。`KNOWN_LIMITATIONS`は任意gateで、証跡未登録時は`OPTIONAL`となる。
+
+`check`と`report`は証跡を再読込し、checksum、size、status、source commit、有効期限を再検証する。必須gateがすべて`PASS`の場合だけexit code 0となる。外部credentialやlive環境がない場合は`SETUP_REQUIRED`、期限切れ・別commit・改変・解析不能は`UNKNOWN`であり、自動的に`PASS`へ昇格しない。
+
+reportはraw token、環境変数値、Discord payload、GitHub response bodyを含めない。出力前後にsecret scanを行い、redactionが必要だった場合は`SECRET_ARTIFACT_INTEGRITY=UNPASSED`とする。
 
 ## kairon workflow
 

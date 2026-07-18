@@ -1,0 +1,88 @@
+import {
+  evaluateBetaReadiness,
+  formatBetaReadinessReport,
+  parseBetaReadinessFormat,
+  writeBetaReadinessReport
+} from "../../readiness/beta-readiness.js";
+import { createReadinessEvidenceManifest } from "../../readiness/evidence-manifest.js";
+
+export type ReadinessManifestCommandOptions = {
+  evidence?: string[];
+  output?: string;
+};
+
+export type ReadinessCheckCommandOptions = {
+  manifest?: string;
+};
+
+export type ReadinessReportCommandOptions = ReadinessCheckCommandOptions & {
+  format?: string;
+  output?: string;
+};
+
+export async function readinessManifestCommand(
+  projectRoot: string,
+  options: ReadinessManifestCommandOptions
+): Promise<string> {
+  const result = await createReadinessEvidenceManifest(projectRoot, {
+    evidence: options.evidence ?? [],
+    output: options.output
+  });
+  return [
+    "Kairon readiness evidence manifest created.",
+    `manifest=${result.output_path}`,
+    `source_commit=${result.manifest.source_commit}`,
+    `evidence=${result.manifest.evidence.length}`,
+    ...result.manifest.evidence.map((entry) =>
+      `gate=${entry.gate_id} status=${entry.detected_status} path=${entry.path}`
+    )
+  ].join("\n");
+}
+
+export async function readinessCheckCommand(
+  projectRoot: string,
+  options: ReadinessCheckCommandOptions = {}
+): Promise<{ text: string; ready: boolean }> {
+  const report = await evaluateBetaReadiness(projectRoot, options);
+  return {
+    text: [
+      "Kairon beta readiness check.",
+      `status=${report.status}`,
+      `ready=${report.ready}`,
+      `source_commit=${report.source_commit}`,
+      `manifest=${report.manifest.path}`,
+      `manifest_status=${report.manifest.status}`,
+      ...report.gates.map((gate) =>
+        `gate=${gate.id} required=${gate.required} status=${gate.status} evidence=${gate.evidence.length}`
+      )
+    ].join("\n"),
+    ready: report.ready
+  };
+}
+
+export async function readinessReportCommand(
+  projectRoot: string,
+  options: ReadinessReportCommandOptions = {}
+): Promise<{ text: string; ready: boolean }> {
+  const format = parseBetaReadinessFormat(options.format);
+  const report = await evaluateBetaReadiness(projectRoot, options);
+  const outputPath = await writeBetaReadinessReport(
+    projectRoot,
+    report,
+    format,
+    options.output
+  );
+  return {
+    text: [
+      "Kairon beta readiness report created.",
+      `status=${report.status}`,
+      `ready=${report.ready}`,
+      `format=${format}`,
+      `output=${outputPath}`,
+      `manifest_status=${report.manifest.status}`,
+      `secret_scan=${report.secret_scan.status}`,
+      format === "json" ? formatBetaReadinessReport(report, "json").trim() : ""
+    ].filter((line) => line.length > 0).join("\n"),
+    ready: report.ready
+  };
+}

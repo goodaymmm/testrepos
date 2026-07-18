@@ -77,6 +77,11 @@ import {
   verifyRagIndexCommand
 } from "./commands/rag.js";
 import {
+  readinessCheckCommand,
+  readinessManifestCommand,
+  readinessReportCommand
+} from "./commands/readiness.js";
+import {
   acknowledgeRecoveryTarget,
   listRecoveryTargets,
   resolveRecoveryTarget,
@@ -1193,6 +1198,54 @@ export function createProgram(): Command {
       console.log(
         await summarizeOperationTestsCommand(process.cwd(), logFile, options)
       );
+    });
+
+  const readiness = program
+    .command("readiness")
+    .description("Create evidence manifests and evaluate Beta release readiness.");
+
+  readiness
+    .command("manifest")
+    .description("Create a checksummed readiness evidence manifest.")
+    .requiredOption(
+      "--evidence <gate=path>",
+      "Evidence mapping in GATE_ID=path form. Repeatable.",
+      collectOption,
+      []
+    )
+    .option("--output <path>", "Manifest output path.")
+    .action(async (options: { evidence?: string[]; output?: string }) => {
+      console.log(await readinessManifestCommand(process.cwd(), options));
+    });
+
+  readiness
+    .command("check")
+    .description("Evaluate required Beta gates without writing a report.")
+    .option("--manifest <path>", "Readiness evidence manifest path.")
+    .action(async (options: { manifest?: string }) => {
+      const result = await readinessCheckCommand(process.cwd(), options);
+      console.log(result.text);
+      if (!result.ready) {
+        process.exitCode = 1;
+      }
+    });
+
+  readiness
+    .command("report")
+    .description("Evaluate Beta gates and write a JSON or Markdown report.")
+    .option("--manifest <path>", "Readiness evidence manifest path.")
+    .option("--format <format>", "Output format: json or markdown.", "markdown")
+    .option("--output <path>", "Report output path.")
+    .action(async (options: {
+      manifest?: string;
+      format?: string;
+      output?: string;
+    }) => {
+      const result = await readinessReportCommand(process.cwd(), options);
+      console.log(result.text);
+      if (!result.ready) {
+        process.exitCode = 1;
+      }
     });
 
   const review = program

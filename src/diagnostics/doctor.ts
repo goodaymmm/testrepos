@@ -29,6 +29,10 @@ import { listBoardAccessRecords } from "../board/access-token.js";
 import { prepareBoardProfile, type BoardProfileConfig } from "../board/profile.js";
 import { inspectCorrelationIntegrity } from "../correlation/store.js";
 import { getRagStats, verifyRagIndex } from "../rag/integrity.js";
+import {
+  evaluateBetaReadiness,
+  readinessManifestExists
+} from "../readiness/beta-readiness.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -212,6 +216,9 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkRuntimeRecovery(options.projectRoot));
   checks.push(await checkDaemonHealth(options.projectRoot));
   checks.push(await checkRagStatus(options.projectRoot));
+  if (await readinessManifestExists(options.projectRoot)) {
+    checks.push(await checkBetaReadiness(options.projectRoot));
+  }
 
   const sanitizedChecks = checks.map(sanitizeDoctorCheck);
   const summary = countStatuses(sanitizedChecks);
@@ -1613,6 +1620,38 @@ async function pathExists(filePath: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  }
+}
+
+async function checkBetaReadiness(projectRoot: string): Promise<DoctorCheck> {
+  const id = "readiness.status";
+  const title = "Beta readiness gate";
+  try {
+    const report = await evaluateBetaReadiness(projectRoot);
+    const details = [
+      `status=${report.status}`,
+      `ready=${report.ready}`,
+      `manifest_status=${report.manifest.status}`,
+      `pass=${report.counts.PASS}`,
+      `unpassed=${report.counts.UNPASSED}`,
+      `setup_required=${report.counts.SETUP_REQUIRED}`,
+      `unknown=${report.counts.UNKNOWN}`
+    ];
+    return report.ready
+      ? pass(id, title, details)
+      : warning(
+          id,
+          title,
+          details,
+          "Refresh readiness evidence and run kairon readiness check."
+        );
+  } catch {
+    return warning(
+      id,
+      title,
+      ["status=UNKNOWN", "ready=false"],
+      "Repair the readiness manifest and run kairon readiness check."
+    );
   }
 }
 

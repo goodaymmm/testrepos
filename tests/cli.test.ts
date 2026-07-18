@@ -32,6 +32,7 @@ describe("createProgram", () => {
       "merge",
       "migrate",
       "rag",
+      "readiness",
       "recovery",
       "release",
       "review",
@@ -583,6 +584,28 @@ describe("createProgram", () => {
         .find((command) => command.name() === "bump")
         ?.options.map((option) => option.long)
     ).toEqual(expect.arrayContaining(["--type", "--version", "--dry-run", "--write"]));
+  });
+
+  it("registers Beta readiness manifest, check, and report commands", () => {
+    const readiness = createProgram().commands.find(
+      (command) => command.name() === "readiness"
+    );
+    const manifest = readiness?.commands.find((command) => command.name() === "manifest");
+    const check = readiness?.commands.find((command) => command.name() === "check");
+    const report = readiness?.commands.find((command) => command.name() === "report");
+
+    expect(readiness?.commands.map((command) => command.name()).sort()).toEqual([
+      "check",
+      "manifest",
+      "report"
+    ]);
+    expect(manifest?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining(["--evidence", "--output"])
+    );
+    expect(check?.options.map((option) => option.long)).toContain("--manifest");
+    expect(report?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining(["--manifest", "--format", "--output"])
+    );
   });
 
   it("registers merge and deploy dry-run approval commands", () => {
