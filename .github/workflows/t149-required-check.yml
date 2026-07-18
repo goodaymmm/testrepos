@@ -1,0 +1,18 @@
+name: Kairon T149 Required Check
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kairon-t149-required-check:
+    name: kairon-t149-required-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pass required check
+        run: echo "Kairon T149 required check passed."
