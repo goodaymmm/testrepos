@@ -35,6 +35,7 @@ describe("release commands", () => {
     });
     expect(result.recommended_commands).toContain("npm run build");
     expect(result.recommended_commands).toContain("kairon release validate");
+    expect(result.recommended_commands).toContain("kairon readiness check");
     expect(formatReleaseCheck(result)).toContain("version.sync=true");
   });
 

@@ -889,6 +889,24 @@ describe("runDoctor", () => {
     expect(text).toContain("next_action=Create .gitignore and add .kairon/.");
   });
 
+  it("reports an existing invalid Beta readiness manifest as a warning", async () => {
+    const root = await createInitializedGitProject();
+    const readinessDir = path.join(root, ".kairon", "readiness");
+    await mkdir(readinessDir, { recursive: true });
+    await writeFile(path.join(readinessDir, "evidence-manifest.json"), "{ invalid", "utf8");
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+
+    expect(statusById(result, "readiness.status")).toBe("warning");
+    expect(checkById(result, "readiness.status")?.details).toEqual(
+      expect.arrayContaining(["status=UNKNOWN", "ready=false", "manifest_status=invalid"])
+    );
+  });
+
   it("reports remote Board readiness without exposing access tokens", async () => {
     const root = await createInitializedGitProject();
     const notificationsPath = path.join(

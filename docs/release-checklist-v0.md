@@ -54,6 +54,22 @@ kairon test summarize --result-root .\operation-test-results
 外部依存のlive確認は、実行できない場合に `SETUP_REQUIRED` として扱えます。
 ただしrelease判断では、代替確認または残課題として明記します。
 
+## Beta Readiness Gate
+
+各証跡を`GATE_ID=path`形式でmanifestへ登録し、証跡が現在commitに対応していることを確認します。
+
+```powershell
+kairon readiness manifest `
+  --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\summary.json `
+  --evidence CONFIG_MIGRATION_DOCTOR=.\.kairon\reports\doctor.json `
+  --evidence PACKAGE_LIFECYCLE=.\release-artifacts\0.1.0\verification.json
+
+kairon readiness check
+kairon readiness report --format markdown
+```
+
+Beta配布の機械判定では、すべての必須gateが`PASS`の場合だけreadyです。`SETUP_REQUIRED`、`UNKNOWN`、`UNPASSED`はexit code 1となります。manifest作成後に証跡を変更した場合、証跡が期限切れの場合、またはsource commitが現在の`HEAD`と異なる場合は証跡を再生成します。
+
 ## Secret / Generated Artifact確認
 
 <!-- kairon:release-evidence -->
@@ -128,6 +144,7 @@ kairon release notes --since <ref> --write
 ## 完了条件
 
 - `npm run build` と `npm test` が通っている。
+- `kairon readiness check` がexit code 0を返している。
 - 対象範囲のtargeted testまたはoperation test結果がPRまたはrelease notesにある。
 - README / docs更新要否を判断済み。
 - `package.json` と `src/index.ts` のversionが一致している。

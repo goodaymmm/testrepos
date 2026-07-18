@@ -165,6 +165,7 @@ export async function collectReleaseCheck(
     recommended_commands: [
       "git status --short",
       "kairon release validate",
+      "kairon readiness check",
       "npm run build",
       "npm test",
       "npx vitest run tests\\pr-release-docs.test.ts"
