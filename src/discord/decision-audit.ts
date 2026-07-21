@@ -12,6 +12,7 @@ import {
   type DiscordInteractionInput,
   type NormalizedDiscordCommand
 } from "./interactions.js";
+import type { CommandEnvelope } from "../queue/command-inbox.js";
 
 export type DiscordDecisionAuditStatus =
   | "applied"
@@ -31,11 +32,15 @@ export type DiscordDecisionAuditSideEffect = {
   message_update_status?: DiscordDecisionMessageUpdateStatus;
   message_update_reason?: string;
   message_id?: string;
+  reply_status?: "sent" | "skipped" | "failed";
+  reply_message_id?: string;
+  reply_reason?: string;
   error?: string;
 };
 
 export type DiscordDecisionAuditRecord = {
   schema_version: "0.1";
+  transport?: "gateway" | "http_interactions";
   correlation_id?: string;
   interaction_id: string;
   approval_id: string;
@@ -52,6 +57,9 @@ export type DiscordDecisionAuditRecord = {
   applied_event_ids?: string[];
   message_update_status?: DiscordDecisionMessageUpdateStatus;
   message_update_reason?: string;
+  reply_status?: "sent" | "skipped" | "failed";
+  reply_message_id?: string;
+  reply_reason?: string;
   received_at?: string;
   recorded_at: string;
 };
@@ -104,6 +112,7 @@ export async function auditDiscordDecisionInteraction(
 
   await appendJsonLine(discordDecisionAuditPath(projectRoot), {
     schema_version: "0.1",
+    transport: input.interaction.transport,
     correlation_id: correlationId,
     interaction_id: input.interaction.interaction_id,
     approval_id: parsed.approval_id,
@@ -127,6 +136,9 @@ export async function auditDiscordDecisionInteraction(
     message_update_reason: sanitizeDiscordAuditText(
       input.sideEffect?.message_update_reason
     ),
+    reply_status: input.sideEffect?.reply_status,
+    reply_message_id: input.sideEffect?.reply_message_id,
+    reply_reason: sanitizeDiscordAuditText(input.sideEffect?.reply_reason),
     received_at: input.interaction.received_at,
     recorded_at: input.recordedAt.toISOString()
   } satisfies DiscordDecisionAuditRecord);
@@ -152,7 +164,93 @@ export async function auditDiscordDecisionInteraction(
         createdAt: input.recordedAt.toISOString()
       });
     }
+    if (input.sideEffect?.reply_message_id !== undefined) {
+      await trackCorrelationMember(projectRoot, {
+        correlationId,
+        approvalId: parsed.approval_id,
+        kind: "discord_message",
+        id: input.sideEffect.reply_message_id,
+        status: input.sideEffect.reply_status ?? status,
+        artifactPath: auditPath,
+        createdAt: input.recordedAt.toISOString()
+      });
+    }
   }
+}
+
+export async function auditDiscordRuntimeCommandCompletion(
+  projectRoot: string,
+  input: {
+    envelope: CommandEnvelope;
+    commandStatus: "completed" | "failed";
+    result?: Record<string, unknown>;
+    error?: unknown;
+    reply?: {
+      status: "sent" | "skipped" | "failed";
+      source_message_id?: string;
+      reply_message_id?: string;
+      message_update_status?: DiscordDecisionMessageUpdateStatus;
+      reason?: string;
+    };
+    recordedAt: Date;
+  }
+): Promise<void> {
+  const command = input.envelope.command;
+  if (
+    command.source !== "discord" ||
+    (command.type !== "approval.confirmation.request" &&
+      command.type !== "approval.decide" &&
+      command.type !== "approval.snooze") ||
+    command.discord?.interaction_id === undefined ||
+    command.discord.custom_id === undefined
+  ) {
+    return;
+  }
+
+  const interactionId = command.discord.interaction_id;
+  const result: NormalizedDiscordCommand = {
+    accepted: true,
+    duplicate: false,
+    command,
+    command_id: input.envelope.command_id,
+    idempotency_key:
+      input.envelope.idempotency_key ?? `discord:interaction:${interactionId}`
+  };
+
+  await auditDiscordDecisionInteraction(projectRoot, {
+    interaction: {
+      interaction_id: interactionId,
+      transport: command.discord.transport,
+      user_id: readActorDiscordUserId(command.actor),
+      guild_id: command.discord.guild_id,
+      channel_id: command.discord.channel_id,
+      message_id: command.discord.message_id,
+      custom_id: command.discord.custom_id,
+      received_at: command.received_at
+    },
+    result,
+    sideEffect: {
+      command_status: input.commandStatus,
+      applied_event_ids: readStringArray(input.result?.applied_event_ids),
+      message_update_status:
+        input.reply?.message_update_status ?? "unavailable",
+      message_update_reason:
+        input.reply === undefined
+          ? "approval result reply was not attempted"
+          : input.reply.status === "sent"
+            ? undefined
+            : input.reply.reason,
+      message_id: input.reply?.source_message_id ?? command.discord.message_id,
+      reply_status: input.reply?.status,
+      reply_message_id: input.reply?.reply_message_id,
+      reply_reason: input.reply?.reason,
+      error:
+        input.commandStatus === "failed"
+          ? sanitizeDiscordAuditText(String(input.error ?? "command failed"))
+          : undefined
+    },
+    recordedAt: input.recordedAt
+  });
 }
 
 export function discordDecisionAuditPath(projectRoot: string): string {
@@ -206,4 +304,22 @@ export function sanitizeDiscordAuditText(value: string | undefined): string | un
 
 function truncate(value: string, maxLength: number): string {
   return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
+}
+
+function readActorDiscordUserId(actor: unknown): string {
+  if (typeof actor !== "object" || actor === null || !("discord_user_id" in actor)) {
+    return "";
+  }
+
+  const value = (actor as { discord_user_id?: unknown }).discord_user_id;
+  return typeof value === "string" ? value : "";
+}
+
+function readStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const strings = value.filter((item): item is string => typeof item === "string");
+  return strings.length > 0 ? strings : undefined;
 }

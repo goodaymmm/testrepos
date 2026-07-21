@@ -143,6 +143,24 @@ export async function notifyPendingDiscordApprovals(
     });
     approval.correlation_id = correlation.correlation_id;
     const board = boardTrackingMetadata(boardBaseUrl, approval.id);
+    if (
+      approval.discord?.message_id !== undefined &&
+      !isDiscordSnowflake(approval.discord.message_id)
+    ) {
+      result.skipped += 1;
+      await appendDiscordNotificationAudit(projectRoot, {
+        schema_version: "0.1",
+        approval_id: approval.id,
+        status: "skipped",
+        channel_id: gateway.approval_channel_id,
+        message_id: approval.discord?.message_id,
+        board_url: approval.discord?.board_url ?? board.board_url,
+        board_anchor: approval.discord?.board_anchor ?? board.board_anchor,
+        reason: "invalid_message_id",
+        recorded_at: now.toISOString()
+      });
+      continue;
+    }
     if (shouldRetryApprovalStatusUpdate(approval)) {
       try {
         const update = await updateDiscordApprovalMessage(projectRoot, approval.id, channel, options);
@@ -450,6 +468,10 @@ function shouldRetryApprovalStatusUpdate(approval: ApprovalRecord): boolean {
     approval.discord.updated_at === undefined &&
     (approval.status === "decided" || approval.status === "snoozed")
   );
+}
+
+function isDiscordSnowflake(value: unknown): value is string {
+  return typeof value === "string" && /^\d{17,20}$/u.test(value);
 }
 
 function isDiscordUnknownMessageError(error: unknown): boolean {

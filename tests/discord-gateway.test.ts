@@ -598,7 +598,7 @@ describe("prepareDiscordGateway", () => {
       actions: ["approve", "reject"],
       discord: {
         channel_id: discordIds.channel,
-        message_id: "message-missing",
+        message_id: "1528426661589024823",
         nonce: "n-old"
       }
     });
@@ -663,14 +663,14 @@ describe("prepareDiscordGateway", () => {
       type: "manual_test",
       discord: {
         channel_id: discordIds.channel,
-        message_id: "message-1",
+        message_id: "1528426661589024821",
         nonce: "n42"
       }
     });
     const client = new FakeDiscordClient("bot-user");
     const rest = new FakeDiscordRestRegistration();
     const channel = new FakeApprovalChannel("channel");
-    channel.addMessage("message-1");
+    channel.addMessage("1528426661589024821");
 
     const handlePromise = startDiscordGateway(root, {
       env: readyEnv(),
@@ -685,7 +685,7 @@ describe("prepareDiscordGateway", () => {
     const handle = await handlePromise;
 
     expect(channel.sent).toHaveLength(0);
-    expect(channel.messagesById.get("message-1")?.editedPayload).toMatchObject({
+    expect(channel.messagesById.get("1528426661589024821")?.editedPayload).toMatchObject({
       content: "Approval decided: APR-DECIDED",
       components: []
     });
@@ -703,8 +703,65 @@ describe("prepareDiscordGateway", () => {
       expect.objectContaining({
         approval_id: "APR-DECIDED",
         status: "updated",
-        message_id: "message-1",
+        message_id: "1528426661589024821",
         reason: "status_reconciled"
+      })
+    ]);
+
+    await handle.stop();
+  });
+
+  it("skips invalid stored message ids without calling Discord during status reconciliation", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await enableDiscordProvider(root);
+    await writeApproval(root, {
+      id: "APR-INVALID-MESSAGE",
+      status: "pending",
+      title: "Invalid fixture message",
+      type: "manual_test",
+      discord: {
+        channel_id: discordIds.channel,
+        message_id: "MSG-1",
+        nonce: "n42"
+      }
+    });
+    const client = new FakeDiscordClient("bot-user");
+    const rest = new FakeDiscordRestRegistration();
+    const channel = new FailingFetchApprovalChannel(
+      "channel",
+      "Discord fetch must not be called"
+    );
+
+    const handlePromise = startDiscordGateway(root, {
+      env: readyEnv(),
+      clientFactory: () => client,
+      restFactory: () => rest,
+      approvalChannelFactory: () => channel,
+      readyTimeoutMs: 50,
+      now: () => new Date("2026-05-25T08:00:00.000Z")
+    });
+    await client.waitForLogin();
+    client.emitReady();
+    const handle = await handlePromise;
+
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "runtime", "discord", "gateway.json"))
+    ).resolves.toMatchObject({
+      approval_notifications: {
+        skipped: 1,
+        failed: 0
+      }
+    });
+    const audit = await readJsonLines<Record<string, unknown>>(
+      path.join(root, ".kairon", "runtime", "discord", "approval-notifications.jsonl")
+    );
+    expect(audit).toEqual([
+      expect.objectContaining({
+        approval_id: "APR-INVALID-MESSAGE",
+        status: "skipped",
+        message_id: "MSG-1",
+        reason: "invalid_message_id"
       })
     ]);
 
@@ -723,7 +780,7 @@ describe("prepareDiscordGateway", () => {
       type: "manual_test",
       discord: {
         channel_id: discordIds.channel,
-        message_id: "message-1",
+        message_id: "1528426661589024822",
         nonce: "n42"
       }
     });
@@ -766,7 +823,7 @@ describe("prepareDiscordGateway", () => {
       expect.objectContaining({
         approval_id: "APR-RECONCILE-FAIL",
         status: "failed",
-        message_id: "message-1",
+        message_id: "1528426661589024822",
         reason: "Error: Missing Access token=[redacted]"
       })
     ]);
@@ -789,7 +846,7 @@ describe("prepareDiscordGateway", () => {
       status: "pending",
       discord: {
         channel_id: discordIds.channel,
-        message_id: "message-existing"
+        message_id: "1528426661589024824"
       }
     });
     await writeApproval(root, {

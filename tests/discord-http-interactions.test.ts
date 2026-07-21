@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { generateKeyPairSync, sign, type KeyObject } from "node:crypto";
 import { initializeProject } from "../src/cli/commands/init.js";
-import { writeJsonFileAtomic } from "../src/core/fs/json-file.js";
+import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { readJsonLines } from "../src/core/fs/jsonl-file.js";
 import type { PreparedDiscordGateway } from "../src/discord/gateway.js";
 import {
@@ -12,6 +12,7 @@ import {
   type DiscordHttpInteractionRequest
 } from "../src/discord/http-interactions.js";
 import { CommandInbox } from "../src/queue/command-inbox.js";
+import { RuntimeLoop } from "../src/runtime/runtime-loop.js";
 import { createTempProject } from "./test-utils.js";
 
 const gateway: PreparedDiscordGateway = {
@@ -98,26 +99,8 @@ describe("Discord HTTP interactions", () => {
       actions: ["approve"]
     });
     const keys = createDiscordSigningKeys();
-    const request = signDiscordRequest(
-      {
-        id: "interaction-http-1",
-        type: 3,
-        guild_id: "guild",
-        channel_id: "channel",
-        member: {
-          user: {
-            id: "owner"
-          }
-        },
-        message: {
-          id: "message-1"
-        },
-        data: {
-          custom_id: "kr:v1:apr:APR-HTTP:approve:n42"
-        }
-      },
-      keys
-    );
+    const payload = approvalInteractionPayload("interaction-http-1");
+    const request = signDiscordRequest(payload, keys);
 
     const response = await handleDiscordHttpInteraction(
       {
@@ -130,17 +113,16 @@ describe("Discord HTTP interactions", () => {
     );
     const body = JSON.parse(response.body) as {
       type: number;
-      data: { content: string; flags: number };
+      data: { components: unknown[] };
     };
 
     expect(response.status).toBe(200);
-    expect(body).toMatchObject({
-      type: 4,
+    expect(body).toEqual({
+      type: 7,
       data: {
-        flags: 64
+        components: []
       }
     });
-    expect(body.data.content).toMatch(/^Kairon command queued: CMD-/);
     await expect(new CommandInbox(root).list()).resolves.toMatchObject([
       {
         command: {
@@ -148,6 +130,7 @@ describe("Discord HTTP interactions", () => {
           approval_id: "APR-HTTP",
           decision: "approve",
           discord: {
+            transport: "http_interactions",
             guild_id: "guild",
             channel_id: "channel",
             message_id: "message-1",
@@ -156,6 +139,48 @@ describe("Discord HTTP interactions", () => {
           }
         }
       }
+    ]);
+
+    const duplicateResponse = await handleDiscordHttpInteraction(
+      {
+        projectRoot: root,
+        gateway,
+        publicKey: keys.publicKeyHex,
+        now: () => fixedNow
+      },
+      signDiscordRequest(approvalInteractionPayload("interaction-http-2"), keys)
+    );
+    expect(JSON.parse(duplicateResponse.body)).toEqual({
+      type: 4,
+      data: {
+        content: "Kairon command was already handled.",
+        flags: 64
+      }
+    });
+    await expect(new CommandInbox(root).list()).resolves.toHaveLength(1);
+
+    await expect(
+      new RuntimeLoop(root, { now: () => fixedNow }).runTick()
+    ).resolves.toMatchObject({ action: "processed-command" });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "approvals", "APR-HTTP.json"))
+    ).resolves.toMatchObject({ status: "decided", decision: "approve" });
+    await expect(
+      readJsonLines(
+        path.join(root, ".kairon", "runtime", "discord", "decision-interactions.jsonl")
+      )
+    ).resolves.toEqual([
+      expect.objectContaining({
+        interaction_id: "interaction-http-1",
+        transport: "http_interactions",
+        approval_id: "APR-HTTP",
+        decision: "approve",
+        status: "applied",
+        duplicate: false,
+        command_status: "completed",
+        message_update_status: "unavailable",
+        reply_status: "skipped"
+      })
     ]);
   });
 
@@ -299,4 +324,24 @@ function signDiscordRequest(
 
 function discordTimestamp(date: Date): string {
   return Math.floor(date.getTime() / 1000).toString();
+}
+
+function approvalInteractionPayload(interactionId: string): Record<string, unknown> {
+  return {
+    id: interactionId,
+    type: 3,
+    guild_id: "guild",
+    channel_id: "channel",
+    member: {
+      user: {
+        id: "owner"
+      }
+    },
+    message: {
+      id: "message-1"
+    },
+    data: {
+      custom_id: "kr:v1:apr:APR-HTTP:approve:n42"
+    }
+  };
 }

@@ -33,6 +33,7 @@ export type ParsedCustomId =
 
 export type DiscordInteractionInput = {
   interaction_id: string;
+  transport?: "gateway" | "http_interactions";
   user_id: string;
   guild_id?: string;
   channel_id?: string;
@@ -644,6 +645,7 @@ function buildDiscordMetadata(
   interaction: DiscordInteractionInput
 ): NonNullable<KaironCommand["discord"]> {
   return {
+    transport: interaction.transport,
     guild_id: interaction.guild_id,
     channel_id: interaction.channel_id,
     message_id: interaction.message_id,

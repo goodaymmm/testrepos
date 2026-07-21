@@ -85,7 +85,9 @@ export function validateForwardedHeaders(input: {
   externalBaseUrl: string;
 }): "ok" | "forwarded_headers_required" | "untrusted_proxy" | "invalid_forwarded_headers" {
   const proto = firstForwardedValue(readHeader(input.headers, "x-forwarded-proto"));
-  const host = firstForwardedValue(readHeader(input.headers, "x-forwarded-host"));
+  const host = firstForwardedValue(
+    readHeader(input.headers, "x-forwarded-host") ?? readHeader(input.headers, "host")
+  );
 
   if (proto === undefined || host === undefined) {
     return "forwarded_headers_required";

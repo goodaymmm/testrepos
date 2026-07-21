@@ -752,6 +752,7 @@ function toDiscordInteractionInput(
   const subcommand = interaction.options?.getSubcommand?.(false);
   return {
     interaction_id: interaction.id ?? `discord-${now.getTime()}`,
+    transport: "gateway",
     user_id: interaction.user?.id ?? "",
     guild_id: interaction.guildId ?? undefined,
     channel_id: interaction.channelId ?? interaction.channel?.id,

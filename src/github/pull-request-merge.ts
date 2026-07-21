@@ -33,6 +33,7 @@ export type GitHubPullRequestMergeInspection = {
   requiredStatusChecks: string[];
   requiredStatusChecksStrict: boolean;
   checks: GitHubPullRequestCheck[];
+  requiredReviewPolicyPresent: boolean;
   requiredApprovingReviewCount: number;
   approvalsOnHead: number;
 };
@@ -120,6 +121,7 @@ export async function inspectGitHubPullRequestForMerge(
     requiredStatusChecks,
     requiredStatusChecksStrict,
     checks: readChecks(status, checkRuns, headSha),
+    requiredReviewPolicyPresent: hasRequiredReviewPolicy(protection),
     requiredApprovingReviewCount,
     approvalsOnHead: countApprovalsOnHead(reviews, headSha)
   };
@@ -250,6 +252,11 @@ function readRequiredApprovals(protection: Record<string, unknown>): number {
   }
   const value = (reviews as Record<string, unknown>).required_approving_review_count;
   return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0;
+}
+
+function hasRequiredReviewPolicy(protection: Record<string, unknown>): boolean {
+  const reviews = protection.required_pull_request_reviews;
+  return reviews !== null && typeof reviews === "object" && !Array.isArray(reviews);
 }
 
 function readChecks(

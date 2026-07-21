@@ -44,6 +44,15 @@ import {
   isProductionWorkflowRuntimeEnabled,
   ProductionWorkflowRuntime
 } from "../workflow/runtime.js";
+import {
+  auditDiscordRuntimeCommandCompletion,
+  sanitizeDiscordAuditText
+} from "../discord/decision-audit.js";
+import type { CommandEnvelope } from "../queue/command-inbox.js";
+import {
+  replyToDiscordApprovalResult,
+  type DiscordApprovalResultReply
+} from "../discord/approval-result-reply.js";
 
 export type RuntimeTickAction =
   | "processed-command"
@@ -87,6 +96,14 @@ export type RuntimeLoopOptions = {
   ) => Promise<GitTransactionRecord>;
   commandAvailability?: CommandAvailabilityChecker;
   env?: NodeJS.ProcessEnv;
+  discordApprovalResultReplier?: (
+    projectRoot: string,
+    input: {
+      envelope: CommandEnvelope;
+      commandStatus: "completed" | "failed";
+      error?: unknown;
+    }
+  ) => Promise<DiscordApprovalResultReply>;
 };
 
 export type RuntimeGitTransactionRequest =
@@ -110,6 +127,22 @@ export class RuntimeLoop {
     });
 
     if (schedule.mode === "maintenance") {
+      const commandResult = await this.createQueueWorker(
+        now,
+        sessionAvailabilityFromSummary(sessions),
+        date
+      ).processNext(workerId, {
+        scheduleMode: schedule.mode,
+        now,
+        commandsOnly: true
+      });
+      if (commandResult.status === "processed-command") {
+        return this.recordTick({
+          ...this.baseTick(schedule, workerId, now, sessions),
+          action: "processed-command",
+          queue_result: commandResult
+        });
+      }
       return this.recordTick(
         await this.runMaintenanceTick(schedule, workerId, now, sessions)
       );
@@ -150,6 +183,8 @@ export class RuntimeLoop {
         defaultQueueHandlers(this.projectRoot, now, {
           reviewLoopRunner: this.options.reviewLoopRunner,
           gitTransactionRunner: this.options.gitTransactionRunner,
+          discordApprovalResultReplier: this.options.discordApprovalResultReplier,
+          env: this.options.env,
           availableSessions,
           date
         }),
@@ -271,7 +306,13 @@ function wrapProductionWorkflowHandler(
 function defaultQueueHandlers(
   projectRoot: string,
   now: Date,
-  options: Pick<RuntimeLoopOptions, "reviewLoopRunner" | "gitTransactionRunner"> & {
+  options: Pick<
+    RuntimeLoopOptions,
+    | "reviewLoopRunner"
+    | "gitTransactionRunner"
+    | "discordApprovalResultReplier"
+    | "env"
+  > & {
     availableSessions?: AgentSessionAvailability[];
     date?: string;
   } = {}
@@ -280,24 +321,12 @@ function defaultQueueHandlers(
 
   return {
     commands: {
-      "approval.confirmation.request": async (envelope) => {
-        const result = await new StateApplier(projectRoot).applyCommand(
-          envelope.command as InternalCommand
-        );
-        return { applied_event_ids: result.appliedEventIds };
-      },
-      "approval.decide": async (envelope) => {
-        const result = await new StateApplier(projectRoot).applyCommand(
-          envelope.command as InternalCommand
-        );
-        return { applied_event_ids: result.appliedEventIds };
-      },
-      "approval.snooze": async (envelope) => {
-        const result = await new StateApplier(projectRoot).applyCommand(
-          envelope.command as InternalCommand
-        );
-        return { applied_event_ids: result.appliedEventIds };
-      },
+      "approval.confirmation.request": (envelope) =>
+        applyApprovalCommand(projectRoot, envelope, now, options),
+      "approval.decide": (envelope) =>
+        applyApprovalCommand(projectRoot, envelope, now, options),
+      "approval.snooze": (envelope) =>
+        applyApprovalCommand(projectRoot, envelope, now, options),
       "schedule.close_active_work": async (envelope) => {
         const result = await new StateApplier(projectRoot).applyCommand(
           envelope.command as InternalCommand
@@ -367,6 +396,103 @@ function defaultQueueHandlers(
       }
     }
   };
+}
+
+async function applyApprovalCommand(
+  projectRoot: string,
+  envelope: CommandEnvelope,
+  now: Date,
+  options: Pick<RuntimeLoopOptions, "discordApprovalResultReplier" | "env">
+): Promise<Record<string, unknown>> {
+  let result: Record<string, unknown>;
+  try {
+    const applied = await new StateApplier(projectRoot).applyCommand(
+      envelope.command as InternalCommand
+    );
+    result = { applied_event_ids: applied.appliedEventIds };
+  } catch (error) {
+    const reply = await sendDiscordApprovalResultReply(
+      projectRoot,
+      envelope,
+      "failed",
+      options,
+      error
+    );
+    try {
+      await auditDiscordRuntimeCommandCompletion(projectRoot, {
+        envelope,
+        commandStatus: "failed",
+        error,
+        reply,
+        recordedAt: now
+      });
+    } catch {
+      // Preserve the canonical command failure if audit persistence also fails.
+    }
+    throw error;
+  }
+
+  const reply = await sendDiscordApprovalResultReply(
+    projectRoot,
+    envelope,
+    "completed",
+    options
+  );
+  try {
+    await auditDiscordRuntimeCommandCompletion(projectRoot, {
+      envelope,
+      commandStatus: "completed",
+      result,
+      reply,
+      recordedAt: now
+    });
+    return {
+      ...result,
+      discord_decision_audit_status: "recorded",
+      discord_result_reply_status: reply.status,
+      discord_result_reply_message_id: reply.reply_message_id
+    };
+  } catch (error) {
+    return {
+      ...result,
+      discord_result_reply_status: reply.status,
+      discord_result_reply_message_id: reply.reply_message_id,
+      discord_decision_audit_status: "failed",
+      discord_decision_audit_error:
+        sanitizeDiscordAuditText(String(error)) ?? "unknown audit error"
+    };
+  }
+}
+
+async function sendDiscordApprovalResultReply(
+  projectRoot: string,
+  envelope: CommandEnvelope,
+  commandStatus: "completed" | "failed",
+  options: Pick<RuntimeLoopOptions, "discordApprovalResultReplier" | "env">,
+  error?: unknown
+): Promise<DiscordApprovalResultReply> {
+  try {
+    return await (options.discordApprovalResultReplier ??
+      ((root, input) =>
+        replyToDiscordApprovalResult(root, input, { env: options.env })))(
+      projectRoot,
+      { envelope, commandStatus, error }
+    );
+  } catch (replyError) {
+    return {
+      status: "failed",
+      approval_id:
+        "approval_id" in envelope.command
+          ? envelope.command.approval_id
+          : "unknown",
+      action: envelope.command.type,
+      result: commandStatus,
+      message_update_status: "failed",
+      reason:
+        sanitizeDiscordAuditText(String(replyError)) ??
+        "unknown Discord approval result reply error"
+    };
+  }
 }
 
 function sessionAvailabilityFromSummary(

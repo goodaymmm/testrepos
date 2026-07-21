@@ -15,7 +15,7 @@ import { mergeGitPrCommand } from "../src/git/pr-merge.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("git PR merge", () => {
-  it("merges only after candidate-bound approval, follow-up, checks, and review pass", async () => {
+  it("merges only after candidate-bound approval, follow-up, and GitHub gates pass", async () => {
     const setup = await createMergeSetup();
     let mergeCalls = 0;
 
@@ -29,7 +29,11 @@ describe("git PR merge", () => {
       },
       {
         env: { GH_TOKEN: "secret-token" } as NodeJS.ProcessEnv,
-        inspectionClient: async () => mergeInspection(),
+        inspectionClient: async () =>
+          mergeInspection({
+            requiredApprovingReviewCount: 0,
+            approvalsOnHead: 0
+          }),
         mergeClient: async (request) => {
           mergeCalls += 1;
           expect(request).toMatchObject({
@@ -82,7 +86,11 @@ describe("git PR merge", () => {
       { dryRun: true, followUpId: setup.followUpId },
       {
         env: { GH_TOKEN: "secret-token" } as NodeJS.ProcessEnv,
-        inspectionClient: async () => mergeInspection(),
+        inspectionClient: async () =>
+          mergeInspection({
+            requiredApprovingReviewCount: 0,
+            approvalsOnHead: 0
+          }),
         mergeClient: async () => {
           mergeCalls += 1;
           return { merged: true, sha: "must-not-run" };
@@ -93,6 +101,7 @@ describe("git PR merge", () => {
     expect(output).toContain("Kairon git PR merge dry-run passed.");
     expect(output).toContain("execution_performed=false");
     expect(output).toContain("required_status_checks=build,test");
+    expect(output).toContain("required_approvals=0");
     expect(mergeCalls).toBe(0);
     await expect(readPrCandidateArtifact(setup.root, "GTX-0149")).resolves.not.toHaveProperty(
       "merge_execution"
@@ -103,15 +112,22 @@ describe("git PR merge", () => {
     ["head_sha_drift", { headSha: "moved-head" }],
     ["base_sha_drift", { baseSha: "moved-base" }],
     ["draft_pull_request", { draft: true }],
+    ["mergeability_unknown", { mergeable: null, mergeableState: "unknown" }],
     ["merge_conflict", { mergeable: false, mergeableState: "dirty" }],
     ["required_status_checks_missing", { requiredStatusChecks: [] }],
     ["strict_status_checks_required", { requiredStatusChecksStrict: false }],
     [
       "required_status_checks_not_successful",
-      { checks: [{ context: "build", status: "failure" as const }] }
+      {
+        mergeableState: "blocked",
+        checks: [{ context: "build", status: "failure" as const }]
+      }
     ],
-    ["required_review_policy_missing", { requiredApprovingReviewCount: 0 }],
-    ["required_reviews_missing", { approvalsOnHead: 0 }]
+    [
+      "required_review_policy_missing",
+      { requiredReviewPolicyPresent: false, requiredApprovingReviewCount: 0 }
+    ],
+    ["required_reviews_missing", { mergeableState: "blocked", approvalsOnHead: 0 }]
   ])("blocks %s before calling merge", async (reason, patch) => {
     const setup = await createMergeSetup();
     let mergeCalls = 0;
@@ -398,6 +414,7 @@ function mergeInspection(
       { context: "build", status: "success" },
       { context: "test", status: "success" }
     ],
+    requiredReviewPolicyPresent: true,
     requiredApprovingReviewCount: 1,
     approvalsOnHead: 1,
     ...patch

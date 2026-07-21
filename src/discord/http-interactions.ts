@@ -96,7 +96,8 @@ const jsonHeaders = {
 
 const interactionCallback = {
   pong: 1,
-  channelMessageWithSource: 4
+  channelMessageWithSource: 4,
+  updateMessage: 7
 } as const;
 
 export const defaultDiscordTimestampToleranceSeconds = 300;
@@ -219,6 +220,15 @@ export async function handleDiscordHttpInteraction(
     now
   );
 
+  if (isQueuedApprovalCommand(result)) {
+    return jsonResponse(200, {
+      type: interactionCallback.updateMessage,
+      data: {
+        components: []
+      }
+    });
+  }
+
   return jsonResponse(200, {
     type: interactionCallback.channelMessageWithSource,
     data: {
@@ -226,6 +236,16 @@ export async function handleDiscordHttpInteraction(
       flags: 64
     }
   });
+}
+
+function isQueuedApprovalCommand(result: NormalizedDiscordCommand): boolean {
+  return (
+    result.accepted &&
+    !result.duplicate &&
+    (result.command.type === "approval.confirmation.request" ||
+      result.command.type === "approval.decide" ||
+      result.command.type === "approval.snooze")
+  );
 }
 
 function parseDiscordSignatureTimestamp(value: string): number | null {
@@ -303,6 +323,7 @@ function toDiscordInteractionInput(
 
   return {
     interaction_id: stringValue(payload.id) ?? `discord-http-${now.getTime()}`,
+    transport: "http_interactions",
     user_id: readUserId(payload),
     guild_id: stringValue(payload.guild_id),
     channel_id: stringValue(payload.channel_id),

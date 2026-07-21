@@ -424,7 +424,7 @@ use GH_TOKEN first, then GITHUB_TOKEN
 
 PR本文は日本語テンプレートで生成し、raw diffやtokenは表示しない。実作成は `status=ready_for_pr` の候補だけを許可し、それ以外は候補artifactの `create_hint` を表示して停止する。
 
-`git pr merge` は、候補IDに紐付いたmerge dry-run approvalとfollow-upを必須とする。live GitHub APIからPR状態、base/head SHA、draft、merge conflict、branch protectionのstrict required status checks、最新head SHAへのrequired reviewsを再取得し、すべて一致した場合だけ許可されたmerge methodを実行する。既定methodは`squash`である。結果は候補artifactの`merge_execution`へ保存し、tokenやraw GitHub responseは保存しない。通信結果が不明な再実行ではPR状態を再取得し、merge済みならAPIを再送せず冪等に成功へ収束する。
+`git pr merge` は、候補IDに紐付いたmerge dry-run approvalとfollow-upを必須とする。live GitHub APIからPR状態、base/head SHA、draft、merge conflict、branch protectionのstrict required status checks、required review policyを再取得し、すべて一致した場合だけ許可されたmerge methodを実行する。required approving review countが0のsingle-operator repositoryではKairon approvalを承認境界とし、1以上の場合は最新head SHAへのGitHub approvalも要求する。既定methodは`squash`である。結果は候補artifactの`merge_execution`へ保存し、tokenやraw GitHub responseは保存しない。通信結果が不明な再実行ではPR状態を再取得し、merge済みならAPIを再送せず冪等に成功へ収束する。
 
 ## kairon merge / deploy
 
@@ -540,7 +540,9 @@ kairon discord http status
 - `reverse-proxy`もpublic addressへbindせず、TLS終端reverse proxyからの接続だけを受ける。
 - `reverse-proxy`にはHTTPS `external_base_url`、`trusted_proxies` CIDR、Discord public key secretが必要。
 - `/health`はliveness、`/ready`はreadinessを返す。
-- forwarded headerはtrusted proxyから届いた場合だけ採用する。
+- forwarded headerはtrusted proxyから届いた場合だけ採用する。`X-Forwarded-Host`を省略するproxyでは標準`Host`を検証対象として使用する。
+- approval interactionの初回受付では元メッセージの操作ボタンを除去し、同じapproval actionの再押下を防止する。
+- HTTPでqueueされたDiscord approval commandはsingle tickまたはdaemonで適用し、完了・失敗を`.kairon/runtime/discord/decision-interactions.jsonl`へ記録する。
 
 ## kairon start
 
