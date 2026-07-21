@@ -300,6 +300,39 @@ describe("Discord HTTP interactions server", () => {
     }
   });
 
+  it("accepts the standard Host header when a trusted proxy omits X-Forwarded-Host", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await enableDiscord(root);
+    await configureHttpProfile(root, {
+      profile: "reverse-proxy",
+      external_base_url: "https://discord.example.test/",
+      trusted_proxies: ["127.0.0.1/32"]
+    });
+    const keys = createDiscordSigningKeys();
+    const server = await startDiscordHttpInteractionsServer(root, {
+      port: 0,
+      env: discordHttpEnv(keys.publicKeyHex),
+      now: () => fixedNow
+    });
+    const proxy = await startHostHeaderReverseProxy(
+      server.url!,
+      "discord.example.test"
+    );
+
+    try {
+      const body = '{ "type" : 1 }';
+      const signed = signDiscordBody(body, keys);
+      await expect(postJson(proxy.url, body, signed.headers)).resolves.toEqual({
+        status: 200,
+        body: JSON.stringify({ type: 1 })
+      });
+    } finally {
+      await proxy.stop();
+      await server.stop();
+    }
+  });
+
   it("rejects non-JSON and oversized interaction requests before parsing", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
@@ -508,6 +541,37 @@ async function startReverseProxy(
           ...request.headers,
           "x-forwarded-proto": "https",
           "x-forwarded-host": forwardedHost
+        }
+      },
+      (upstreamResponse) => {
+        response.writeHead(upstreamResponse.statusCode ?? 500, upstreamResponse.headers);
+        upstreamResponse.pipe(response);
+      }
+    );
+    upstream.on("error", (error) => response.destroy(error));
+    request.pipe(upstream);
+  });
+  await listen(server);
+  const address = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${address.port}/`,
+    stop: () => closeServer(server)
+  };
+}
+
+async function startHostHeaderReverseProxy(
+  upstreamUrl: string,
+  externalHost: string
+): Promise<{ url: string; stop: () => Promise<void> }> {
+  const server = createHttpServer((request, response) => {
+    const upstream = httpRequest(
+      upstreamUrl,
+      {
+        method: request.method,
+        headers: {
+          ...request.headers,
+          host: externalHost,
+          "x-forwarded-proto": "https"
         }
       },
       (upstreamResponse) => {

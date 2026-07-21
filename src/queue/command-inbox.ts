@@ -11,6 +11,7 @@ export type CommandOrigin = {
   actor?: unknown;
   received_at?: string;
   discord?: {
+    transport?: "gateway" | "http_interactions";
     guild_id?: string;
     channel_id?: string;
     message_id?: string;

@@ -41,6 +41,7 @@ export type ProcessNextOptions = {
   scheduleMode?: ScheduleMode;
   now?: Date;
   blocked?: (item: QueueItem) => boolean;
+  commandsOnly?: boolean;
 };
 
 export class QueueWorker {
@@ -59,6 +60,10 @@ export class QueueWorker {
 
     if (command !== null) {
       return this.processCommand(command);
+    }
+
+    if (options.commandsOnly === true) {
+      return { status: "idle" };
     }
 
     await this.workQueue.expireStaleTestItems(options.now);

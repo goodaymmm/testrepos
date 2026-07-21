@@ -398,8 +398,11 @@ function validateLiveInspection(
   if (inspection.baseSha !== candidate.base_sha) {
     return "base_sha_drift";
   }
-  if (inspection.mergeable !== true || inspection.mergeableState !== "clean") {
-    return inspection.mergeable === null ? "mergeability_unknown" : "merge_conflict";
+  if (inspection.mergeable === null) {
+    return "mergeability_unknown";
+  }
+  if (inspection.mergeable === false) {
+    return "merge_conflict";
   }
   if (inspection.requiredStatusChecks.length === 0) {
     return "required_status_checks_missing";
@@ -413,7 +416,7 @@ function validateLiveInspection(
   ) {
     return "required_status_checks_not_successful";
   }
-  if (inspection.requiredApprovingReviewCount < 1) {
+  if (!inspection.requiredReviewPolicyPresent) {
     return "required_review_policy_missing";
   }
   if (inspection.approvalsOnHead < inspection.requiredApprovingReviewCount) {

@@ -173,6 +173,7 @@ describe("GitHub pull request client", () => {
       headSha: "head-sha",
       requiredStatusChecks: ["build", "test"],
       requiredStatusChecksStrict: true,
+      requiredReviewPolicyPresent: true,
       requiredApprovingReviewCount: 1,
       approvalsOnHead: 1
     });

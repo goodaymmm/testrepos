@@ -582,6 +582,50 @@ describe("RuntimeLoop", () => {
     });
   });
 
+  it("processes approval commands before maintenance work", async () => {
+    const root = await createInitializedProject();
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "approvals", "APR-MAINTENANCE.json"),
+      {
+        schema_version: "0.1",
+        id: "APR-MAINTENANCE",
+        status: "pending",
+        actions: ["approve"],
+        title: "Maintenance approval"
+      }
+    );
+    await new CommandInbox(root).enqueue({
+      type: "approval.decide",
+      source: "local",
+      approval_id: "APR-MAINTENANCE",
+      decision: "approve"
+    });
+    const loop = new RuntimeLoop(root, {
+      now: () => new Date("2026-05-25T02:00:00.000Z")
+    });
+
+    await expect(loop.runTick()).resolves.toMatchObject({
+      mode: "maintenance",
+      action: "processed-command",
+      queue_result: {
+        status: "processed-command",
+        command_type: "approval.decide"
+      }
+    });
+    await expect(
+      readJsonFile(
+        path.join(root, ".kairon", "approvals", "APR-MAINTENANCE.json")
+      )
+    ).resolves.toMatchObject({
+      status: "decided",
+      decision: "approve"
+    });
+    await expect(loop.runTick()).resolves.toMatchObject({
+      mode: "maintenance",
+      action: "maintenance-run"
+    });
+  });
+
   it("applies leave commands before processing queue items", async () => {
     const root = await createInitializedProject();
     const queue = new WorkQueue(root);
