@@ -147,6 +147,37 @@ describe("local beta package", () => {
     );
   }, 30_000);
 
+  runIfPowerShell("accepts native stderr when the process exits successfully", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kairon-local-beta-stderr-"));
+    const childScript = path.join(root, "native-stderr-success.ps1");
+    const probeScript = path.join(root, "invoke-probe.ps1");
+    await writeFile(
+      childScript,
+      '[Console]::Error.WriteLine("npm notice"); exit 0\n',
+      "utf8"
+    );
+    await writeFile(
+      probeScript,
+      [
+        '$ErrorActionPreference = "Stop"',
+        `. '${escapePowerShell(path.resolve("scripts", "local-beta-common.ps1"))}'`,
+        `$output = Invoke-KaironLocalBetaCommand -Command '${escapePowerShell(powershell!)}' -Arguments @('-NoProfile', '-File', '${escapePowerShell(childScript)}')`,
+        '$output | ForEach-Object { Write-Output $_ }',
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+
+    const result = spawnSync(
+      powershell!,
+      ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", probeScript],
+      { cwd: path.resolve("."), encoding: "utf8", timeout: 20_000 }
+    );
+
+    expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("npm notice");
+  }, 30_000);
+
   it("documents rollback and never removes project state directly", async () => {
     const [update, uninstall, installation] = await Promise.all([
       readFile(path.resolve("scripts", "update-local-beta.ps1"), "utf8"),

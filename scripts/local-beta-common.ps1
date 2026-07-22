@@ -131,17 +131,27 @@ function Invoke-KaironLocalBetaCommand {
   )
 
   $output = @()
-  if ([string]::IsNullOrWhiteSpace($WorkingDirectory)) {
-    $output = @(& $Command @Arguments 2>&1)
-  } else {
+  $exitCode = 0
+  $pushedLocation = $false
+  if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
     Push-Location -LiteralPath $WorkingDirectory
-    try {
-      $output = @(& $Command @Arguments 2>&1)
-    } finally {
+    $pushedLocation = $true
+  }
+
+  $previousErrorActionPreference = $ErrorActionPreference
+  try {
+    # Windows PowerShell 5.1 surfaces native stderr as ErrorRecord objects.
+    # Preserve that output, but use the native exit code as the sole success signal.
+    $ErrorActionPreference = "Continue"
+    $output = @(& $Command @Arguments 2>&1)
+    $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
+  } finally {
+    $ErrorActionPreference = $previousErrorActionPreference
+    if ($pushedLocation) {
       Pop-Location
     }
   }
-  $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
+
   if ($exitCode -ne 0) {
     $summary = ConvertTo-KaironRedactedText -Value ($output -join " ")
     throw "Command failed with exit code ${exitCode}: $summary"
