@@ -122,6 +122,14 @@ import {
   runTaskCommand
 } from "./commands/task.js";
 import {
+  updateApplyCommand,
+  updateChannelSetCommand,
+  updateChannelShowCommand,
+  updateCheckCommand,
+  updateDownloadCommand,
+  updateRollbackCommand
+} from "./commands/update.js";
+import {
   generateOperationTestCommandsCommand,
   generateOperationTestDocsCommand
 } from "./commands/test-commands.js";
@@ -1305,6 +1313,102 @@ export function createProgram(): Command {
       heartbeatStaleMs?: string;
     }) => {
       console.log(await runRecovery(process.cwd(), options));
+    });
+
+  const update = program
+    .command("update")
+    .description("Check, download, apply, and roll back verified Kairon releases.");
+
+  const updateChannel = update
+    .command("channel")
+    .description("Inspect or configure the manual update channel.");
+
+  updateChannel
+    .command("show")
+    .description("Show the configured update channel without changing state.")
+    .action(async () => {
+      console.log(await updateChannelShowCommand(process.cwd()));
+    });
+
+  updateChannel
+    .command("set")
+    .description("Plan or write a stable, beta, or pinned update channel.")
+    .argument("<channel>", "stable, beta, or pinned")
+    .requiredOption("--repository <owner/repo>", "GitHub release repository.")
+    .option("--base-branch <branch>", "Release source branch. Defaults to main.")
+    .option("--version <version>", "Required version for the pinned channel.")
+    .option("--dry-run", "Preview the channel change. This is the default.")
+    .option("--write", "Write the channel config after exact confirmation.")
+    .option("--confirm <value>", "Exact channel confirmation, such as beta or pinned@0.2.0.")
+    .action(async (channel: string, options: {
+      repository?: string;
+      baseBranch?: string;
+      version?: string;
+      dryRun?: boolean;
+      write?: boolean;
+      confirm?: string;
+    }) => {
+      console.log(await updateChannelSetCommand(process.cwd(), channel, options));
+    });
+
+  update
+    .command("check")
+    .description("Inspect verified releases without changing the filesystem.")
+    .option("--token-env <envName>", "Token environment variable. Defaults to GH_TOKEN then GITHUB_TOKEN.")
+    .action(async (options: { tokenEnv?: string }) => {
+      console.log(await updateCheckCommand(
+        process.cwd(),
+        KAIRON_VERSION,
+        options
+      ));
+    });
+
+  update
+    .command("download")
+    .description("Download and verify one release into the user-local cache.")
+    .argument("<version>", "Core semantic version to download.")
+    .option("--token-env <envName>", "Token environment variable. Defaults to GH_TOKEN then GITHUB_TOKEN.")
+    .action(async (version: string, options: { tokenEnv?: string }) => {
+      console.log(await updateDownloadCommand(process.cwd(), version, options));
+    });
+
+  update
+    .command("apply")
+    .description("Apply one verified download through the local beta PowerShell lifecycle.")
+    .argument("<download-id>", "Verified update download id.")
+    .requiredOption("--confirm <download-id>", "Exact download id confirmation.")
+    .option("--dry-run", "Verify and preview without launching the update lifecycle.")
+    .option("--timeout-ms <milliseconds>", "Update lifecycle timeout. Defaults to 900000.")
+    .action(async (downloadId: string, options: {
+      confirm?: string;
+      dryRun?: boolean;
+      timeoutMs?: string;
+    }) => {
+      console.log(await updateApplyCommand(process.cwd(), KAIRON_VERSION, downloadId, {
+        confirm: options.confirm,
+        dryRun: options.dryRun,
+        timeoutMs: parseOptionalPositiveInteger(options.timeoutMs, "--timeout-ms")
+      }));
+    });
+
+  update
+    .command("rollback")
+    .description("Roll back to a previously verified cached release.")
+    .requiredOption("--to <version>", "Verified cached target version.")
+    .requiredOption("--confirm <version>", "Exact target version confirmation.")
+    .option("--dry-run", "Verify and preview without launching the update lifecycle.")
+    .option("--timeout-ms <milliseconds>", "Rollback lifecycle timeout. Defaults to 900000.")
+    .action(async (options: {
+      to: string;
+      confirm?: string;
+      dryRun?: boolean;
+      timeoutMs?: string;
+    }) => {
+      console.log(await updateRollbackCommand(process.cwd(), KAIRON_VERSION, options.to, {
+        confirm: options.confirm,
+        dryRun: options.dryRun,
+        timeoutMs: parseOptionalPositiveInteger(options.timeoutMs, "--timeout-ms")
+      }));
     });
 
   const release = program

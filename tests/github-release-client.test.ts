@@ -5,6 +5,7 @@ import {
   downloadGitHubReleaseAsset,
   GitHubReleaseClientError,
   inspectGitHubRelease,
+  listGitHubReleases,
   publishGitHubRelease,
   uploadGitHubReleaseAsset
 } from "../src/github/release-client.js";
@@ -14,6 +15,23 @@ const sha = "a".repeat(40);
 describe("GitHub release client", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("lists normalized releases for update discovery", async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request) => jsonResponse(200, [
+      releaseResponse({ draft: false })
+    ]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(listGitHubReleases({
+      repository: "goodaymmm/Kairon",
+      token: "secret-token"
+    })).resolves.toMatchObject([{
+      id: 162,
+      tag_name: "v0.2.0",
+      prerelease: true
+    }]);
+    expect(String(fetchMock.mock.calls[0]?.[0])).toContain("/releases?per_page=100");
   });
 
   it("normalizes branch, tag, release, and asset fields without returning the token", async () => {
@@ -152,6 +170,7 @@ describe("GitHub release client", () => {
     [401, {}, "auth_error"],
     [403, {}, "permission_error"],
     [403, { "x-ratelimit-remaining": "0" }, "rate_limited"],
+    [404, {}, "not_found"],
     [409, {}, "conflict"],
     [422, {}, "validation_error"],
     [500, {}, "api_error"]

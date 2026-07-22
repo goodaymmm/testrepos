@@ -72,6 +72,12 @@ kairon release manifest --package <package.tgz> --manifest <manifest.json> [--ou
 kairon release verify <package.tgz> [--manifest <manifest.json>] [--release-manifest <release-manifest.json>]
 kairon release notes --since <ref> [--write]
 kairon release bump --version <version> [--write]
+kairon update channel show
+kairon update channel set stable|beta|pinned --repository <owner/repo> [--version <version>] [--write --confirm <value>]
+kairon update check [--token-env <envName>]
+kairon update download <version> [--token-env <envName>]
+kairon update apply <download-id> --confirm <download-id> [--dry-run]
+kairon update rollback --to <version> --confirm <version> [--dry-run]
 kairon readiness manifest --evidence <GATE_ID=path>
 kairon readiness check [--manifest <path>]
 kairon readiness report [--format json|markdown] [--output <path>]
@@ -929,6 +935,28 @@ backup artifactを.kairon/release/backups/<timestamp>/へ作成すること
 npm publishは実行しないこと
 git tag / GitHub Releaseは承認済み`release github publish`だけが実行すること
 ```
+
+## kairon update
+
+検証済みGitHub Releaseを手動で選択し、user-local cacheを経由して既存Windows package lifecycleへ渡す。background check、silent update、schedulerは実行しない。
+
+```powershell
+kairon update channel show
+kairon update channel set beta --repository owner/repo --dry-run
+kairon update channel set beta --repository owner/repo --write --confirm beta
+kairon update channel set pinned --repository owner/repo --version 0.2.0 --write --confirm pinned@0.2.0
+kairon update check
+kairon update download 0.2.0
+kairon update apply UPD-0001 --confirm UPD-0001 --dry-run
+kairon update apply UPD-0001 --confirm UPD-0001
+kairon update rollback --to 0.1.0 --confirm 0.1.0
+```
+
+`update check`はconfigured channelに合うpublished releaseを照合し、release manifest、tag SHA、Node runtime条件をmemory上で検証する。filesystemとregistryは変更しない。`stable`はprereleaseを除外し、`beta`はstable / prereleaseを許可し、`pinned`は指定versionだけを許可する。
+
+`update download`は`.tgz`、checksum manifest、release manifestを`%LOCALAPPDATA%\Kairon\updates`配下のpartial directoryへ取得する。package hash、inventory、manifest hash、source commitを検証した後だけatomic renameし、project側には`.kairon/update/downloads/UPD-*.json`のsecret-free metadataを保存する。tokenは`--token-env`、`GH_TOKEN`、`GITHUB_TOKEN`、明示したWindows Credential Manager参照の順で解決し、artifactへ保存しない。
+
+`update apply`と`update rollback`はcache済みartifactを再検証してから`scripts/update-local-beta.ps1`を起動する。exact `--confirm`が必要で、PowerShell lifecycleがtarget versionを確認した場合だけ`.kairon/update/registry.json`のinstalled、previous、last successful versionを更新する。失敗時はregistryを成功扱いにせず、既存scriptがpackage / state rollbackとdiagnostic bundleを処理する。rollback targetは事前に`update download`でcache済みでなければならない。
 
 ## kairon readiness
 

@@ -42,6 +42,7 @@ describe("createProgram", () => {
       "stop",
       "task",
       "test",
+      "update",
       "workflow"
     ]);
   });
@@ -641,6 +642,44 @@ describe("createProgram", () => {
     expect(report?.options.map((option) => option.long)).toEqual(
       expect.arrayContaining(["--manifest", "--format", "--output"])
     );
+  });
+
+  it("registers verified update channel and lifecycle commands", () => {
+    const update = createProgram().commands.find((command) => command.name() === "update");
+    expect(update?.commands.map((command) => command.name()).sort()).toEqual([
+      "apply",
+      "channel",
+      "check",
+      "download",
+      "rollback"
+    ]);
+    const channel = update?.commands.find((command) => command.name() === "channel");
+    expect(channel?.commands.map((command) => command.name()).sort()).toEqual([
+      "set",
+      "show"
+    ]);
+    expect(
+      channel?.commands
+        .find((command) => command.name() === "set")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining([
+      "--repository",
+      "--base-branch",
+      "--version",
+      "--dry-run",
+      "--write",
+      "--confirm"
+    ]));
+    expect(
+      update?.commands
+        .find((command) => command.name() === "apply")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--confirm", "--dry-run", "--timeout-ms"]));
+    expect(
+      update?.commands
+        .find((command) => command.name() === "rollback")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--to", "--confirm", "--dry-run"]));
   });
 
   it("registers merge and deploy dry-run approval commands", () => {

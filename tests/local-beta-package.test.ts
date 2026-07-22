@@ -186,6 +186,8 @@ describe("local beta package", () => {
     ]);
 
     expect(update).toContain("state\", \"backup\", \"create");
+    expect(update).toContain("ReleaseManifest");
+    expect(update).toContain("--release-manifest");
     expect(update).toContain("rollback_package_restored");
     expect(update).toContain("state\", \"backup\", \"restore");
     expect(update).toContain("doctor.ok=true");

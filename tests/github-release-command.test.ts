@@ -379,6 +379,12 @@ class FakeGitHubReleaseClient implements GitHubReleaseClient {
     this.branchSha = branchSha;
   }
 
+  async listReleases(): Promise<GitHubReleaseRecord[]> {
+    return this.release === null
+      ? []
+      : [{ ...this.release, assets: [...this.release.assets] }];
+  }
+
   async inspect(request: InspectGitHubReleaseRequest): Promise<GitHubReleaseInspection> {
     return {
       repository: request.repository,

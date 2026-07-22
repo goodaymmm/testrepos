@@ -8,6 +8,9 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 <!-- kairon:release-notes-unreleased -->
 現時点の未release変更は、各PR本文とmerge履歴を一次記録とします。local operation resultやgenerated evidenceはrelease notesへ埋め込まず、再実行方法と判定結果だけを記録します。
 
+- approval-gated GitHub Release配布とremote asset再検証を追加。
+- verified manual update channel、user-local cache、successful apply / rollback registryを追加。
+
 ## Versioning
 
 <!-- kairon:versioning-policy -->
@@ -68,7 +71,7 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 ### Known Limitations
 
 - public npm registryへpublishしない。
-- GitHub Releaseへのuploadとonline update channelはT162以降の対象。
+- GitHub Release配布とmanual update channelは後続PRで実装し、background auto-updateは対象外のまま維持する。
 - npm tar metadataの時刻差を許容し、再現性は同一source commit、package inventory、artifact metadataの検証可能性で判定する。
 
 ## 0.1.0 - MVP baseline
