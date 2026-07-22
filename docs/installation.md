@@ -4,6 +4,9 @@
 
 Kairon local betaはpublic npm registryへpublishせず、`npm pack`で生成したtarballとSHA-256 manifestを使ってWindowsへ配布します。packageは`private: true`と`license=UNLICENSED`を維持します。
 
+<!-- kairon:t159-package-baseline -->
+現在の`0.1.0` packageはT159 Local Beta baselineであり、Windows Sandboxでinstall、update、rollback、uninstallを検証済みです。version番号は`package.json`と`src/index.ts`を一次情報とし、以下の例はT160時点の現行versionを示します。次versionへの変更はrelease用PRで同期して行います。
+
 ## Requirements
 
 - Windows 10 / 11またはWindows Server

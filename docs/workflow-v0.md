@@ -5,6 +5,14 @@
 この文書は、Kairon をどのように開始し、CLI Agent の Session / Context をどのように保持し、各 vendor policy boundary をどのタイミングで確認するかを時系列だけで定義する。
 静的なコンポーネント構成は `docs/architecture-v0.md` に分離する。
 
+## 実装status
+
+<!-- kairon:production-workflow -->
+T159時点のproduction workflowは`src/workflow/`に実装され、run、transition checkpoint、queue idempotency、approval gate、resource lock、retry、pause / resume / cancel / recoverを`.kairon/workflows/`へ永続化する。production itemのclaimは現行baselineでは`KAIRON_WORKFLOW_RUNTIME=1`による明示opt-inを必要とする。
+
+<!-- kairon:experimental-workflow-compatibility -->
+`src/experimental/workflow-runtime.ts`と`.kairon/experimental/workflows/`はcandidate評価・互換経路である。dry-runではcanonical stateを変更せず、production workflowの保存先や通常運用経路として扱わない。
+
 ## 0. 初回プリインストール
 
 ```text

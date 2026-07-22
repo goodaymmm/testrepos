@@ -2,7 +2,7 @@
 
 ## 目的
 
-この文書は MVP で実装する `kairon` CLI のコマンド仕様を定義する。
+この文書はT159 Local Betaで実装済みの`kairon` CLI command仕様を定義する。歴史的なMVP判断は該当節に残すが、Command Listと各command節は現行実装を基準とする。
 
 ## Command List
 
@@ -847,6 +847,42 @@ kairon rag query "approval routing" --type approval --limit 5 --explain
 
 `rag status`は`freshness=fresh|stale|not_indexed`と、`pending_added_sources` / `pending_changed_sources` / `pending_missing_sources`を表示する。RAG indexは `.kairon/rag/index.json` に保存し、secret-like path、protected path、generated pathはindex対象から除外する。
 
+## kairon state
+
+file-based canonical stateのintegrity、snapshot、event compaction、deterministic backupを扱う。
+
+```text
+kairon state check
+kairon state snapshot --dry-run
+kairon state snapshot
+kairon state snapshot restore <snapshot-id> --dry-run
+kairon state snapshot restore <snapshot-id> --confirm <snapshot-id>
+kairon state events compact --dry-run
+kairon state events compact --confirm <checkpoint-id>
+kairon state events verify <checkpoint-id>
+kairon state backup create --dry-run
+kairon state backup create --output <directory>
+kairon state backup verify <backup-id>
+kairon state backup rehearse <backup-id>
+kairon state backup restore <backup-id> --confirm <backup-id>
+```
+
+`state check`はevent、materialized task / approval / queue、snapshot targetの参照整合性を検査する。snapshot restore、event compaction、backup restoreはdry-runまたはexact confirmationを要求し、実行前にrollback可能なartifactを作る。backupはmanifest、payload set、size、SHA-256を検証し、`rehearse`は隔離したtemporary projectへ展開するため元projectを変更しない。
+
+## kairon test
+
+operation testのPowerShell command、test list / command document、result summaryを生成する。
+
+```text
+kairon test commands --range T145-T159
+kairon test commands --profile branch-protection-public-sandbox --format powershell
+kairon test docs --range T145-T159 --dry-run
+kairon test summarize <log-file>
+kairon test summarize --result-root <directory> --test-list <test-list.md> --suggest --patch-preview
+```
+
+`commands`と`docs`はcredential値を埋め込まず、必要なenvironment variable名とsetup条件だけを出力する。`summarize`は既定でMarkdownを変更せず候補を表示し、`--apply-pass`を明示した場合もPASS候補だけをbackup付きで反映する。`FAIL`、`SETUP_REQUIRED`、`OPTIONAL`を自動的にPASSへ変更しない。
+
 ## kairon release
 
 release readiness、release notes、version bumpを補助する。
@@ -1006,7 +1042,7 @@ Discord からは `/kairon leave` を同じ command として扱う。
 | 6 | approval required |
 | 7 | active work closed |
 
-## MVP Notes
+## Operational Notes
 
 - `kairon start` はforeground single tickとdaemon modeの両方を持つ。
 - `kairon task run` は現段階では同期実行の最小経路として動く。queue itemの非同期処理はruntime loop経由でも進められる。

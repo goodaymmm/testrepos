@@ -91,7 +91,7 @@ git diff --cached --stat
 ## Versioning方針
 
 <!-- kairon:versioning-policy -->
-現在のKaironは `0.1.0` のMVP基盤です。packageは `private: true` のため、
+現在のKaironはT159でoperation testを完了した`0.1.0` Local Beta baselineです。packageは `private: true` のため、
 npm publishを前提にしたversion bumpではなく、運用上のrelease tag / release noteの
 判断材料としてversionを扱います。
 

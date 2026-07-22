@@ -25,7 +25,7 @@ Agent Runtime は「どう起動し、どう読み取り、どう終了または
 | background_child_process | Kairon が child process として CLI を単発起動 | one-shot fallback、dry run、recovery |
 | dry_run | CLI 起動前までを検証する | docking、policy test |
 
-MVP は `persistent_terminal_session` を標準にする。
+現行Local Betaは `persistent_terminal_session` を標準にする。
 CLI が interactive approval を要求する場合は、stdout fallbackを使う、その job を止めて approval queue に積む、または `foreground_terminal` / PTY adapter に切り替える。
 
 ## Agent Adapter Contract
@@ -84,7 +84,7 @@ Claude Code は subscription 利用時、公式 Claude Code の認証状態を�
 claude -p "<prompt>" --output-format stream-json --verbose
 ```
 
-MVP では `--bare` を標準にしない。
+現行baselineでは `--bare` を標準にしない。
 `--bare` は API key / apiKeyHelper 前提になりやすいため、subscription usage と混ざる可能性がある。
 
 Claude は tool permission を job capability から生成する。

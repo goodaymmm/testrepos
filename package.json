@@ -22,7 +22,7 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "release:pack": "npm run build && node dist/cli/main.js release pack",
-    "test:docs": "vitest run tests/pr-release-docs.test.ts",
+    "test:docs": "vitest run tests/pr-release-docs.test.ts tests/documentation-inventory.test.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },
