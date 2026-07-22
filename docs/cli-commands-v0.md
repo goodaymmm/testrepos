@@ -10,6 +10,8 @@
 kairon init
 kairon migrate
 kairon doctor
+kairon support bundle [--dry-run] [--output <directory>]
+kairon support verify <bundle.zip>
 kairon agent smoke --agent codex|claude|gemini
 kairon agent health [--agent codex|claude|gemini]
 kairon agent suspend --agent codex|claude|gemini --reason <text>
@@ -172,6 +174,20 @@ PASS git.repository Git repository
 `warning` は運用前に確認すべき注意、`error` は通常運用前に解消すべき問題を示す。外部設定が不足するcheckはdetailに`status=setup_required`を含み、`next_action`に再実行するCLI commandと関連guide pathを表示する。`--format json`でも同じ`next_action`をsnake_case fieldとして返す。secret値はtext/JSONのどちらにも含めない。
 
 GitHub branch protection診断は、remote repository、default branch、branch protection API、required pull request reviews、required status checksを確認する。API tokenは `GH_TOKEN` を優先し、未設定時に `GITHUB_TOKEN` を参照する。GitHub Freeのprivate repositoryなど、外部プラン制約でbranch protection APIが403になる場合は `api_status=plan_or_permission_error` として扱い、Kairon実装不具合ではなく外部条件としてpublic sandbox repositoryでlive API確認を代替する。
+
+## kairon support
+
+local-onlyのsanitized incident bundleを計画、生成、検証する。
+
+```text
+kairon support bundle --dry-run
+kairon support bundle --output <directory>
+kairon support verify <bundle.zip>
+```
+
+`bundle --dry-run`は収録予定file、category、推定payload size、除外理由を表示し、counter、plan、ZIPを変更しない。実生成時は`.kairon/support/plans/SUP-xxxx.json`へplanを保存し、指定先または`.kairon/support/bundles/`へ`kairon-support-SUP-xxxx.zip`をatomic finalizeする。
+
+収録対象はsystem、runtime、queue、provider、workflow、notification、integrityのsanitized JSONと`summary.md`だけである。project source、protected path、raw log、agent stdout / stderr、prompt、diffはdirectory単位でcopyしない。`manifest.json`と`hashes.sha256`が各payloadのsizeとSHA-256をbindし、生成前とarchive parse後のsecret scanに失敗した場合はZIPを残さない。`verify`はZIP traversal、duplicate、link、CRC、allowlist、manifest hash、secret findingを検査する。upload処理は持たない。詳細は`docs/support-bundle-v0.md`を参照する。
 
 ## kairon agent smoke
 

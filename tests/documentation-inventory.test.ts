@@ -123,6 +123,16 @@ describe("T159 documentation inventory", () => {
         marker: ".kairon/update/registry.json"
       },
       {
+        source: "src/diagnostics/support-bundle.ts",
+        document: documents.cli,
+        marker: "kairon support bundle"
+      },
+      {
+        source: "src/diagnostics/support-redaction.ts",
+        document: documents.readme,
+        marker: "sanitized support bundle"
+      },
+      {
         source: "src/readiness/beta-readiness.ts",
         document: documents.readme,
         marker: "kairon readiness check"
