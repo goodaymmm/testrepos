@@ -135,6 +135,35 @@ kairon release verify .\release-artifacts\0.2.0\kairon-0.2.0.tgz `
 
 `release-manifest.json`はsource commit、`dirty=false`、Windows runtime support、artifact SHA-256、checksum manifest SHA-256、sorted package inventoryとそのSHA-256を保持します。tracked変更が残る場合は生成を拒否します。npm tar metadataの時刻差によるbyte-for-byte一致は要件にせず、同じsourceから同じinventoryと検証可能metadataが得られることを確認します。
 
+## Approval-gated GitHub Release
+
+<!-- kairon:github-release-distribution -->
+検証済みLocal Beta artifactをGitHub Releaseへ配布する場合は、planとpublishを分離します。tokenには対象repositoryのContents read/write権限が必要です。`GH_TOKEN`または`GITHUB_TOKEN`を使い、値自体は表示・保存しません。
+
+```powershell
+kairon release github plan `
+  --version 0.2.0 `
+  --repository owner/repo
+
+kairon approval show APR-0001
+kairon approval decide APR-0001 --action approve --reason "GitHub Release publish approved"
+
+kairon release github publish REL-0001 `
+  --approval-id APR-0001 `
+  --confirm REL-0001
+
+kairon release github verify `
+  --version 0.2.0 `
+  --repository owner/repo
+```
+
+- 既定はprerelease。stable公開時だけplanとverifyの両方へ`--stable`を付ける。
+- plan作成後に`main`、local HEAD、release artifact、approval bindingが変化した場合はpublishしない。
+- approvalの`plan_id`、`plan_digest`、artifact pathが一致し、decisionが`approve`の場合だけpublishする。
+- tag、release、asset nameが既存の場合はsource SHA、channel、asset SHA-256が完全一致することを確認する。
+- network / rate limitによる途中失敗は同じplan IDで再実行し、検証済みassetを重複uploadしない。
+- result artifactにはtokenやraw GitHub responseを含めず、tag SHA、release ID、asset ID / size / SHA-256、正規化errorだけを残す。
+
 ## Release Notes更新
 
 releaseする場合は `docs/release-notes-v0.md` の `Unreleased` から該当versionへ移します。
@@ -166,3 +195,4 @@ kairon release notes --since <ref> --write
 - README / docs更新要否を判断済み。
 - `package.json` と `src/index.ts` のversionが一致している。
 - generated artifact、secret、local stateをcommitしていない。
+- GitHub配布を行う場合は`release github verify`が`status=verified`を返している。

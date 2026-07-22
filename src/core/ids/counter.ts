@@ -13,7 +13,8 @@ export type CounterKey =
   | "command"
   | "review"
   | "git_transaction"
-  | "correlation";
+  | "correlation"
+  | "release";
 
 export type Counters = Record<CounterKey, number>;
 
@@ -27,7 +28,8 @@ const defaultCounters: Counters = {
   command: 0,
   review: 0,
   git_transaction: 0,
-  correlation: 0
+  correlation: 0,
+  release: 0
 };
 
 const prefixes: Record<CounterKey, string> = {
@@ -40,7 +42,8 @@ const prefixes: Record<CounterKey, string> = {
   command: "CMD",
   review: "REV",
   git_transaction: "GTX",
-  correlation: "COR"
+  correlation: "COR",
+  release: "REL"
 };
 
 export function formatId(key: CounterKey, value: number): string {

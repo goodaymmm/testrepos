@@ -92,6 +92,9 @@ import {
   formatReleaseValidation,
   releaseBumpCommand,
   releaseCheckCommand,
+  releaseGitHubPlanCommand,
+  releaseGitHubPublishCommand,
+  releaseGitHubVerifyCommand,
   releaseManifestCommand,
   releaseNotesCommand,
   releasePackCommand,
@@ -1363,6 +1366,65 @@ export function createProgram(): Command {
       output?: string;
     }) => {
       console.log(await releaseManifestCommand(process.cwd(), options));
+    });
+
+  const releaseGitHub = release
+    .command("github")
+    .description("Plan, publish, and verify an approval-gated GitHub Release.");
+
+  releaseGitHub
+    .command("plan")
+    .description("Create an approval-bound GitHub Release publication plan.")
+    .requiredOption("--version <version>", "Release version, for example 0.2.0.")
+    .requiredOption("--repository <owner/repo>", "Target GitHub repository.")
+    .option("--base-branch <branch>", "Remote release source branch. Defaults to main.")
+    .option("--artifact-dir <path>", "Local release artifact directory.")
+    .option("--stable", "Plan a stable release. The default is prerelease.")
+    .option("--token-env <envName>", "Token environment variable. Defaults to GH_TOKEN then GITHUB_TOKEN.")
+    .action(async (options: {
+      version: string;
+      repository: string;
+      baseBranch?: string;
+      artifactDir?: string;
+      stable?: boolean;
+      tokenEnv?: string;
+    }) => {
+      console.log(await releaseGitHubPlanCommand(process.cwd(), options));
+    });
+
+  releaseGitHub
+    .command("publish")
+    .description("Publish one approved GitHub Release plan.")
+    .argument("<plan-id>", "GitHub Release plan id.")
+    .requiredOption("--approval-id <id>", "Approval bound to the plan.")
+    .requiredOption("--confirm <plan-id>", "Exact plan id confirmation.")
+    .option("--token-env <envName>", "Token environment variable. Defaults to GH_TOKEN then GITHUB_TOKEN.")
+    .action(async (planId: string, options: {
+      approvalId: string;
+      confirm: string;
+      tokenEnv?: string;
+    }) => {
+      console.log(await releaseGitHubPublishCommand(process.cwd(), planId, options));
+    });
+
+  releaseGitHub
+    .command("verify")
+    .description("Verify the remote tag, release state, and downloaded asset hashes.")
+    .requiredOption("--version <version>", "Release version, for example 0.2.0.")
+    .requiredOption("--repository <owner/repo>", "Target GitHub repository.")
+    .option("--base-branch <branch>", "Remote release source branch. Defaults to main.")
+    .option("--artifact-dir <path>", "Local release artifact directory.")
+    .option("--stable", "Verify a stable release. The default is prerelease.")
+    .option("--token-env <envName>", "Token environment variable. Defaults to GH_TOKEN then GITHUB_TOKEN.")
+    .action(async (options: {
+      version: string;
+      repository: string;
+      baseBranch?: string;
+      artifactDir?: string;
+      stable?: boolean;
+      tokenEnv?: string;
+    }) => {
+      console.log(await releaseGitHubVerifyCommand(process.cwd(), options));
     });
 
   release

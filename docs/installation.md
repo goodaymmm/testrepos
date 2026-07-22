@@ -52,6 +52,17 @@ kairon release verify .\release-artifacts\0.2.0\kairon-0.2.0.tgz `
 
 release manifestはtracked worktreeがcleanな場合だけ生成でき、Git commit SHA、runtime support、tarballとchecksum manifestのhash、sorted package inventoryを記録します。npm tar metadataの時刻差は許容し、同じsource commitから同じinventoryと検証可能metadataを得られることを再現性の基準とします。
 
+GitHub Releaseから取得する場合も、`.tgz`、`.sha256.json`、`release-manifest.json`の3ファイルを同じdirectoryへdownloadします。配布担当者は承認済みの`kairon release github publish`だけを使い、利用前にremote artifactを再検証します。
+
+```powershell
+kairon release github verify --version 0.2.0 --repository owner/repo
+kairon release verify .\kairon-0.2.0.tgz `
+  --manifest .\kairon-0.2.0.tgz.sha256.json `
+  --release-manifest .\release-manifest.json
+```
+
+GitHub Releaseの既定channelはprereleaseです。stable releaseを利用する場合は、配布側のplan / verifyで`--stable`が明示され、tag SHAとmanifestのsource commitが一致していることを確認します。
+
 ## First Install
 
 tarballとmanifestを同じdirectoryへ配置します。

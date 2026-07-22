@@ -511,6 +511,8 @@ release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動�
 
 local betaはpublic npm registryへpublishせず、`npm run release:pack`でchecksummed tarballを生成します。Windowsでのinstall、update/rollback、uninstall手順は [docs/installation.md](docs/installation.md) を参照してください。uninstallはprojectの`.kairon/`を削除しません。
 
+検証済みartifactは`kairon release github plan`で高risk approvalへbindし、承認後に`kairon release github publish`でGitHub Releaseへ配布できます。既定はprereleaseで、publish時にplan IDの完全一致確認、approval binding、local / remote source SHA、asset SHA-256を再検証します。`kairon release github verify`は公開assetを再downloadしてmanifestへ照合します。
+
 ### 初期運用テストの履歴 (T11-T15)
 
 T11からT15では、初期ドッキング後の運用に必要なCLI経路を次の単位で確認しました。この表は現行scopeではなく、初期baselineの履歴です。

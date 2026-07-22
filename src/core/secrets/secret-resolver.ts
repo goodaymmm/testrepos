@@ -41,6 +41,12 @@ export type SecretLookupOptions = {
   resolver?: SecretResolver;
 };
 
+export type GitHubTokenLookupOptions = {
+  env?: NodeJS.ProcessEnv;
+  envName?: string;
+  resolver?: SecretResolver;
+};
+
 export function createDefaultSecretResolver(options: {
   env?: NodeJS.ProcessEnv;
   platform?: NodeJS.Platform;
@@ -123,6 +129,30 @@ export async function resolveSecret(
   };
 }
 
+export async function resolveGitHubTokenSecret(
+  options: GitHubTokenLookupOptions = {}
+): Promise<ResolvedSecret> {
+  const env = options.env ?? process.env;
+  if (options.envName !== undefined) {
+    return resolveSecret({
+      env,
+      envName: options.envName,
+      resolver: options.resolver
+    });
+  }
+
+  return resolveSecret({
+    env,
+    references: [
+      { provider: "env", name: "GH_TOKEN" },
+      { provider: "env", name: "GITHUB_TOKEN" },
+      ...credentialReference(env.KAIRON_GH_TOKEN_CREDENTIAL_TARGET),
+      ...credentialReference(env.KAIRON_GITHUB_TOKEN_CREDENTIAL_TARGET)
+    ],
+    resolver: options.resolver
+  });
+}
+
 export function hashSecretForArtifact(value: string): string {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
@@ -134,6 +164,13 @@ export function secretMatchesArtifactHash(
   const actual = Buffer.from(hashSecretForArtifact(value), "hex");
   const expected = Buffer.from(expectedHash, "hex");
   return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
+
+function credentialReference(value: string | undefined): SecretReference[] {
+  const target = value?.trim();
+  return target === undefined || target.length === 0
+    ? []
+    : [{ provider: "windows_credential", target }];
 }
 
 async function readWindowsCredentialSecret(
