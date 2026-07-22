@@ -92,6 +92,11 @@ describe("T159 documentation inventory", () => {
         marker: "kairon release verify"
       },
       {
+        source: "src/release/release-manifest.ts",
+        document: documents.installation,
+        marker: "release-manifest.json"
+      },
+      {
         source: "src/readiness/beta-readiness.ts",
         document: documents.readme,
         marker: "kairon readiness check"

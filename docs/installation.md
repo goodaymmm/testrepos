@@ -4,8 +4,8 @@
 
 Kairon local betaはpublic npm registryへpublishせず、`npm pack`で生成したtarballとSHA-256 manifestを使ってWindowsへ配布します。packageは`private: true`と`license=UNLICENSED`を維持します。
 
-<!-- kairon:t159-package-baseline -->
-現在の`0.1.0` packageはT159 Local Beta baselineであり、Windows Sandboxでinstall、update、rollback、uninstallを検証済みです。version番号は`package.json`と`src/index.ts`を一次情報とし、以下の例はT160時点の現行versionを示します。次versionへの変更はrelease用PRで同期して行います。
+<!-- kairon:t161-package-baseline -->
+現在の`0.2.0` packageはT159までの検証済み機能を収録するLocal Betaです。version番号は`package.json`、`package-lock.json`、`src/index.ts`を一次情報とし、release manifestでsource commitとartifactを結び付けます。
 
 ## Requirements
 
@@ -33,6 +33,7 @@ npm run release:pack
 ```text
 kairon-<version>.tgz
 kairon-<version>.tgz.sha256.json
+release-manifest.json
 ```
 
 packageには`dist/`、local beta lifecycle scripts、本文書、README、package metadataだけを含めます。`src/`、`tests/`、`.kairon/`、`operation-test-results/`、credential-like path、local-only docsは含めません。
@@ -40,8 +41,16 @@ packageには`dist/`、local beta lifecycle scripts、本文書、README、packa
 配布前に再検証できます。
 
 ```powershell
-kairon release verify .\release-artifacts\0.1.0\kairon-0.1.0.tgz
+kairon release manifest `
+  --package .\release-artifacts\0.2.0\kairon-0.2.0.tgz `
+  --manifest .\release-artifacts\0.2.0\kairon-0.2.0.tgz.sha256.json
+
+kairon release verify .\release-artifacts\0.2.0\kairon-0.2.0.tgz `
+  --manifest .\release-artifacts\0.2.0\kairon-0.2.0.tgz.sha256.json `
+  --release-manifest .\release-artifacts\0.2.0\release-manifest.json
 ```
+
+release manifestはtracked worktreeがcleanな場合だけ生成でき、Git commit SHA、runtime support、tarballとchecksum manifestのhash、sorted package inventoryを記録します。npm tar metadataの時刻差は許容し、同じsource commitから同じinventoryと検証可能metadataを得られることを再現性の基準とします。
 
 ## First Install
 
@@ -49,11 +58,11 @@ tarballとmanifestを同じdirectoryへ配置します。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install-local-beta.ps1 `
-  -Package .\kairon-0.1.0.tgz `
+  -Package .\kairon-0.2.0.tgz `
   -DryRun
 
 powershell -NoProfile -ExecutionPolicy Bypass -File .\install-local-beta.ps1 `
-  -Package .\kairon-0.1.0.tgz
+  -Package .\kairon-0.2.0.tgz
 ```
 
 scriptはdependency、filename binding、size、SHA-256を確認してから`npm install --global`を実行し、install後に`kairon release verify`と`kairon --version`を確認します。既にKaironが存在する場合はinstallを拒否するため、update scriptを使います。
@@ -64,12 +73,12 @@ Kairon project rootで実行します。
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\update-local-beta.ps1 `
-  -Package .\kairon-0.1.1.tgz `
+  -Package .\kairon-0.2.0.tgz `
   -ProjectRoot M:\EnglishApp `
   -DryRun
 
 powershell -NoProfile -ExecutionPolicy Bypass -File .\update-local-beta.ps1 `
-  -Package .\kairon-0.1.1.tgz `
+  -Package .\kairon-0.2.0.tgz `
   -ProjectRoot M:\EnglishApp
 ```
 
@@ -113,3 +122,5 @@ kairon doctor
 ```
 
 続いて旧packageから新packageへのupdate、意図的なdoctor failure時のrollback、uninstall後の`.kairon`保持を確認します。operation test結果やdiagnostic bundleはpackageへ再同梱しません。
+
+Windows Sandboxでは、`0.1.0` rollback packageと`0.2.0` package、各checksum manifest、`0.2.0` release manifestを同じ共有directoryへ配置します。install前後で`kairon --version`、update失敗時の`rollback_package_restored`、uninstall後のglobal command不在とproject `.kairon/`保持を確認します。rollback packageとstate backupは確認完了まで削除しません。

@@ -358,13 +358,14 @@ production workflowは`.kairon/workflows/`へrunとtransition checkpointを保�
 
 ```powershell
 npm run release:pack
-kairon release verify .\release-artifacts\0.1.0\kairon-0.1.0.tgz
+kairon release manifest --package .\release-artifacts\0.2.0\kairon-0.2.0.tgz --manifest .\release-artifacts\0.2.0\kairon-0.2.0.tgz.sha256.json
+kairon release verify .\release-artifacts\0.2.0\kairon-0.2.0.tgz --manifest .\release-artifacts\0.2.0\kairon-0.2.0.tgz.sha256.json --release-manifest .\release-artifacts\0.2.0\release-manifest.json
 kairon readiness manifest --evidence <GATE_ID=path>
 kairon readiness check
 kairon readiness report --format markdown
 ```
 
-local packageはpublic npm registryへpublishせず、tarball、SHA-256、file inventoryを検証してWindowsへinstallします。readinessはevidenceのsource commit、hash、size、freshnessを再検証し、必須gateがすべて`PASS`の場合だけ成功します。外部未設定、別commit、期限切れ、改変済み証跡を自動的にPASSへ昇格しません。
+local packageはpublic npm registryへpublishせず、tarball、checksum manifest、release manifest、sorted file inventoryを検証してWindowsへinstallします。release manifestはclean source commit、runtime support、artifact hashをbindします。readinessはevidenceのsource commit、hash、size、freshnessを再検証し、必須gateがすべて`PASS`の場合だけ成功します。外部未設定、別commit、期限切れ、改変済み証跡を自動的にPASSへ昇格しません。
 
 ### 状態確認
 
@@ -506,7 +507,7 @@ README更新が必要な代表条件:
 
 release判断では [docs/release-checklist-v0.md](docs/release-checklist-v0.md) を使い、`npm run build`、`npm test`、対象operation test、secret / generated artifact確認、README更新要否、version同期を確認します。
 `kairon readiness manifest`で証跡のSHA-256・source commit・有効期限を固定し、`kairon readiness check`または`kairon readiness report`でBeta gateを判定できます。必須gateがすべて`PASS`の場合だけexit code 0となり、外部未設定は`SETUP_REQUIRED`、期限切れ・別commit・改変済み証跡は`UNKNOWN`として扱います。
-release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在のbaseline versionは `0.1.0` で、versionを変更する場合は `package.json` と `src/index.ts` の `KAIRON_VERSION` を同時に更新します。`kairon release validate` でversion形式・同期、release checklist marker、`Unreleased` marker、現在version entryを一括確認できます。
+release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在のLocal Beta versionは `0.2.0` で、versionを変更する場合は `package.json`、`package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。`kairon release validate` でversion形式・同期、release checklist marker、`Unreleased` marker、現在version entryを一括確認できます。
 
 local betaはpublic npm registryへpublishせず、`npm run release:pack`でchecksummed tarballを生成します。Windowsでのinstall、update/rollback、uninstall手順は [docs/installation.md](docs/installation.md) を参照してください。uninstallはprojectの`.kairon/`を削除しません。
 

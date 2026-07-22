@@ -62,7 +62,7 @@ kairon test summarize --result-root .\operation-test-results
 kairon readiness manifest `
   --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\summary.json `
   --evidence CONFIG_MIGRATION_DOCTOR=.\.kairon\reports\doctor.json `
-  --evidence PACKAGE_LIFECYCLE=.\release-artifacts\0.1.0\verification.json
+  --evidence PACKAGE_LIFECYCLE=.\release-artifacts\0.2.0\verification.json
 
 kairon readiness check
 kairon readiness report --format markdown
@@ -91,32 +91,49 @@ git diff --cached --stat
 ## Versioning方針
 
 <!-- kairon:versioning-policy -->
-現在のKaironはT159でoperation testを完了した`0.1.0` Local Beta baselineです。packageは `private: true` のため、
+現在のKaironはT159までのoperation test結果を収録した`0.2.0` Local Betaです。packageは `private: true` のため、
 npm publishを前提にしたversion bumpではなく、運用上のrelease tag / release noteの
 判断材料としてversionを扱います。
 
 - `MAJOR`: 1.0以降に使う。現段階では使わない。
 - `MINOR`: 0.x期間では、互換性に影響するCLI / config / artifact変更、または大きなuser-facing機能追加。
 - `PATCH`: bug fix、診断改善、docs、test、operation harness改善。
-- versionを変更する場合は、`package.json` と `src/index.ts` の `KAIRON_VERSION` を必ず同じ値にする。
+- versionを変更する場合は、`package.json`、`package-lock.json` と `src/index.ts` の `KAIRON_VERSION` を必ず同じ値にする。
 - docsのみ、またはlocal operation test資料のみの更新では、原則versionを変更しない。
 
 Release helperを使う場合は、先にdry-runを確認してからwriteします。
 
 ```powershell
 kairon release validate
-kairon release bump --version 0.2.0
-kairon release bump --version 0.2.0 --write
+kairon release bump --version 0.3.0
+kairon release bump --version 0.3.0 --write
 ```
 
 `release validate` は次を一括確認し、不整合時はexit code 1を返します。
 
 - `package.json.version` と `src/index.ts` の `KAIRON_VERSION` が`x.y.z`形式で一致する。
+- `package-lock.json`のtop-level versionとroot package versionが`package.json.version`に一致する。
 - checklistにrelease readiness、evidence、versioningのmarkerがある。
 - release notesに`Unreleased` heading / markerと現在versionのheadingがある。
 
 `--write` はtracked worktreeがcleanな場合だけ実行できます。
 実行時は `.kairon/release/backups/<timestamp>/` に変更前の対象fileを保存します。
+
+## Reproducible Local Beta Artifact
+
+version bumpをcommitしたclean tracked worktreeでpackageを生成し、そのpackageとchecksum manifestをsource commitへbindします。
+
+```powershell
+npm run release:pack
+kairon release manifest `
+  --package .\release-artifacts\0.2.0\kairon-0.2.0.tgz `
+  --manifest .\release-artifacts\0.2.0\kairon-0.2.0.tgz.sha256.json
+kairon release verify .\release-artifacts\0.2.0\kairon-0.2.0.tgz `
+  --manifest .\release-artifacts\0.2.0\kairon-0.2.0.tgz.sha256.json `
+  --release-manifest .\release-artifacts\0.2.0\release-manifest.json
+```
+
+`release-manifest.json`はsource commit、`dirty=false`、Windows runtime support、artifact SHA-256、checksum manifest SHA-256、sorted package inventoryとそのSHA-256を保持します。tracked変更が残る場合は生成を拒否します。npm tar metadataの時刻差によるbyte-for-byte一致は要件にせず、同じsourceから同じinventoryと検証可能metadataが得られることを確認します。
 
 ## Release Notes更新
 

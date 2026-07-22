@@ -1,0 +1,299 @@
+import { createHash } from "node:crypto";
+import { copyFile, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { gzipSync } from "node:zlib";
+import { beforeAll, describe, expect, it } from "vitest";
+import type {
+  CliInvocation,
+  CommandRunResult,
+  CommandRunner
+} from "../src/agents/command-runner.js";
+import {
+  releaseManifestCommand,
+  releaseVerifyCommand
+} from "../src/cli/commands/release.js";
+import {
+  createReleaseManifest,
+  formatReleaseManifest,
+  verifyReleaseManifest,
+  type ReleaseManifest
+} from "../src/release/release-manifest.js";
+
+const sourceCommit = "a".repeat(40);
+let outputRoot: string;
+let packagePath: string;
+let checksumManifestPath: string;
+let releaseManifestPath: string;
+
+describe("release manifest", () => {
+  beforeAll(async () => {
+    outputRoot = await mkdtemp(path.join(os.tmpdir(), "kairon-release-manifest-"));
+    const packed = await createPackageFixture(outputRoot);
+    packagePath = packed.packagePath;
+    checksumManifestPath = packed.manifestPath;
+    const released = await createReleaseManifest(
+      path.resolve("."),
+      packagePath,
+      checksumManifestPath,
+      {
+        commandRunner: cleanGitRunner,
+        now: () => new Date("2026-07-22T00:01:00.000Z")
+      }
+    );
+    releaseManifestPath = released.release_manifest_path;
+  }, 60_000);
+
+  it("binds a verified 0.2.0 package to clean source and normalized inventory", async () => {
+    const manifest = JSON.parse(
+      await readFile(releaseManifestPath, "utf8")
+    ) as ReleaseManifest;
+    const paths = manifest.package_inventory.files.map((entry) => entry.path);
+    const verification = await verifyReleaseManifest(
+      releaseManifestPath,
+      packagePath,
+      checksumManifestPath
+    );
+
+    expect(manifest).toMatchObject({
+      artifact_kind: "kairon_release",
+      release_channel: "local_beta",
+      package_version: "0.2.0",
+      source: {
+        commit_sha: sourceCommit,
+        dirty: false
+      },
+      runtime_support: {
+        node: ">=22",
+        powershell: ">=5.1"
+      }
+    });
+    expect(paths).toEqual([...paths].sort());
+    expect(manifest.package_inventory.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(manifest.artifact.checksum_manifest_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(verification.ok).toBe(true);
+    expect(verification.checks.every((entry) => entry.status === "pass")).toBe(true);
+    expect(formatReleaseManifest({
+      schema_version: "0.1",
+      status: "created",
+      release_manifest_path: releaseManifestPath,
+      package_path: packagePath,
+      checksum_manifest_path: checksumManifestPath,
+      package_version: manifest.package_version,
+      source_commit: manifest.source.commit_sha,
+      artifact_sha256: manifest.artifact.sha256,
+      inventory_sha256: manifest.package_inventory.sha256,
+      files: manifest.package_inventory.files.length,
+      verification
+    })).toContain("verification.ok=true");
+  });
+
+  it("exposes release manifest creation and verification through release commands", async () => {
+    const commandManifestPath = path.join(outputRoot, "command-release-manifest.json");
+    const output = await releaseManifestCommand(path.resolve("."), {
+      package: packagePath,
+      manifest: checksumManifestPath,
+      output: commandManifestPath,
+      commandRunner: cleanGitRunner
+    });
+    const verification = await releaseVerifyCommand(packagePath, {
+      manifest: checksumManifestPath,
+      releaseManifest: commandManifestPath
+    });
+
+    expect(output).toContain("Kairon release manifest created.");
+    expect(output).toContain("verification.ok=true");
+    expect(verification.ok).toBe(true);
+    expect(verification.text).toContain("release_manifest.verification.ok=true");
+  });
+
+  it("rejects release manifest generation from a dirty tracked worktree", async () => {
+    await expect(createReleaseManifest(
+      path.resolve("."),
+      packagePath,
+      checksumManifestPath,
+      {
+        commandRunner: async (invocation) => invocation.args[0] === "status"
+          ? commandResult(invocation, { stdout: " M package.json\n" })
+          : commandResult(invocation, { stdout: `${sourceCommit}\n` })
+      }
+    )).rejects.toThrow("clean tracked worktree");
+  });
+
+  it("detects release manifest inventory tampering", async () => {
+    const tamperedPath = path.join(outputRoot, "release-manifest-tampered.json");
+    const manifest = JSON.parse(
+      await readFile(releaseManifestPath, "utf8")
+    ) as ReleaseManifest;
+    manifest.package_inventory.sha256 = "0".repeat(64);
+    await writeFile(tamperedPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+
+    const result = await verifyReleaseManifest(
+      tamperedPath,
+      packagePath,
+      checksumManifestPath
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: "package_inventory_binding",
+      status: "fail"
+    }));
+  });
+
+  it("detects checksum manifest replacement even when package verification still passes", async () => {
+    const replacementRoot = await mkdtemp(
+      path.join(os.tmpdir(), "kairon-release-manifest-replacement-")
+    );
+    const copiedPackage = path.join(replacementRoot, path.basename(packagePath));
+    const copiedChecksum = `${copiedPackage}.sha256.json`;
+    await copyFile(packagePath, copiedPackage);
+    await copyFile(checksumManifestPath, copiedChecksum);
+    const released = await createReleaseManifest(
+      path.resolve("."),
+      copiedPackage,
+      copiedChecksum,
+      { commandRunner: cleanGitRunner }
+    );
+    const checksum = JSON.parse(await readFile(copiedChecksum, "utf8")) as {
+      created_at: string;
+    };
+    checksum.created_at = "2030-01-01T00:00:00.000Z";
+    await writeFile(copiedChecksum, `${JSON.stringify(checksum, null, 2)}\n`, "utf8");
+
+    const result = await verifyReleaseManifest(
+      released.release_manifest_path,
+      copiedPackage,
+      copiedChecksum
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: "checksum_manifest_binding",
+      status: "fail"
+    }));
+    expect(result.checks).toContainEqual(expect.objectContaining({
+      id: "package_verification",
+      status: "pass"
+    }));
+  });
+});
+
+const cleanGitRunner: CommandRunner = async (invocation) =>
+  invocation.args[0] === "rev-parse"
+    ? commandResult(invocation, { stdout: `${sourceCommit}\n` })
+    : commandResult(invocation);
+
+function commandResult(
+  invocation: CliInvocation,
+  options: Partial<CommandRunResult> = {}
+): CommandRunResult {
+  return {
+    command: invocation.command,
+    args: invocation.args,
+    cwd: invocation.cwd,
+    pid: 1234,
+    exitCode: 0,
+    signal: null,
+    stdout: "",
+    stderr: "",
+    startedAt: "2026-07-22T00:00:00.000Z",
+    finishedAt: "2026-07-22T00:00:01.000Z",
+    timedOut: false,
+    ...options
+  };
+}
+
+async function createPackageFixture(root: string): Promise<{
+  packagePath: string;
+  manifestPath: string;
+}> {
+  const packageMetadata = {
+    name: "kairon",
+    version: "0.2.0",
+    private: true,
+    license: "UNLICENSED",
+    bin: {
+      kairon: "./dist/cli/main.js"
+    },
+    files: [
+      "dist/",
+      "scripts/local-beta-common.ps1",
+      "scripts/install-local-beta.ps1",
+      "scripts/update-local-beta.ps1",
+      "scripts/uninstall-local-beta.ps1",
+      "docs/installation.md",
+      "README.md"
+    ]
+  };
+  const entries = [
+    { path: "package/package.json", content: `${JSON.stringify(packageMetadata)}\n` },
+    { path: "package/README.md", content: "# Kairon\n" },
+    { path: "package/dist/cli/main.js", content: "#!/usr/bin/env node\n" },
+    { path: "package/docs/installation.md", content: "# Installation\n" },
+    { path: "package/scripts/local-beta-common.ps1", content: "# common\n" },
+    { path: "package/scripts/install-local-beta.ps1", content: "# install\n" },
+    { path: "package/scripts/update-local-beta.ps1", content: "# update\n" },
+    { path: "package/scripts/uninstall-local-beta.ps1", content: "# uninstall\n" }
+  ].map((entry) => ({
+    path: entry.path,
+    content: Buffer.from(entry.content, "utf8")
+  }));
+  const packageBytes = gzipSync(createTar(entries), { mtime: 0 });
+  const packagePath = path.join(root, "kairon-0.2.0.tgz");
+  const manifestPath = `${packagePath}.sha256.json`;
+  await writeFile(packagePath, packageBytes);
+  await writeFile(manifestPath, `${JSON.stringify({
+    schema_version: "0.1",
+    artifact_kind: "local_beta_package",
+    package_name: "kairon",
+    package_version: "0.2.0",
+    package_file: path.basename(packagePath),
+    sha256: createHash("sha256").update(packageBytes).digest("hex"),
+    size_bytes: packageBytes.length,
+    files: entries.map((entry) => ({
+      path: entry.path,
+      size_bytes: entry.content.length,
+      type: "file"
+    })),
+    created_at: "2026-07-22T00:00:00.000Z"
+  }, null, 2)}\n`, "utf8");
+  return { packagePath, manifestPath };
+}
+
+function createTar(entries: Array<{ path: string; content: Buffer }>): Buffer {
+  const chunks: Buffer[] = [];
+  for (const entry of entries) {
+    const header = Buffer.alloc(512);
+    header.write(entry.path, 0, 100, "utf8");
+    writeTarOctal(header, 100, 8, 0o644);
+    writeTarOctal(header, 108, 8, 0);
+    writeTarOctal(header, 116, 8, 0);
+    writeTarOctal(header, 124, 12, entry.content.length);
+    writeTarOctal(header, 136, 12, 0);
+    header.fill(0x20, 148, 156);
+    header[156] = "0".charCodeAt(0);
+    header.write("ustar\0", 257, 6, "ascii");
+    header.write("00", 263, 2, "ascii");
+    const checksum = header.reduce((total, value) => total + value, 0);
+    header.write(checksum.toString(8).padStart(6, "0"), 148, 6, "ascii");
+    header[154] = 0;
+    header[155] = 0x20;
+    chunks.push(header, entry.content);
+    const padding = (512 - (entry.content.length % 512)) % 512;
+    if (padding > 0) {
+      chunks.push(Buffer.alloc(padding));
+    }
+  }
+  chunks.push(Buffer.alloc(1024));
+  return Buffer.concat(chunks);
+}
+
+function writeTarOctal(
+  buffer: Buffer,
+  offset: number,
+  length: number,
+  value: number
+): void {
+  buffer.write(`${value.toString(8).padStart(length - 1, "0")}\0`, offset, length, "ascii");
+}

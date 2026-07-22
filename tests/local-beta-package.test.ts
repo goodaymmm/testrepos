@@ -24,7 +24,7 @@ describe("local beta package", () => {
     expect(result).toMatchObject({
       status: "created",
       package_name: "kairon",
-      package_version: "0.1.0",
+      package_version: "0.2.0",
       verification: { ok: true }
     });
     expect(result.files).toBeGreaterThan(10);
