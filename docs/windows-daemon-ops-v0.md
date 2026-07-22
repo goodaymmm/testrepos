@@ -5,6 +5,9 @@ Task Schedulerにはsecret値を渡さず、ユーザー環境変数からKairon
 通常の状態確認・登録・登録解除・再起動は `kairon daemon task` を使います。
 CLIは内部で `scripts/kairon-daemon-task.ps1` へ固定引数を渡します。helperの直接実行手順も障害調査用として残します。
 
+<!-- kairon:t159-daemon-baseline -->
+T159 Local Beta baselineでは、Task Schedulerの無期限実行、24時間以上のsoak certification、restart / reboot segment分類、heartbeat gap、fatal error、evidence hashまでoperation test済みです。短縮fixtureは回帰test用であり、実時間certificationの代替にはしません。
+
 ## 前提
 
 - Kairon repository: `C:\Users\hikar\Documents\AutoRunner`

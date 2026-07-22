@@ -7,6 +7,10 @@
 Kairon の Orchestrator はスイッチャーではない。
 Orchestrator は制御プロトコル、状態遷移契約、policy contract を定義する層であり、どの Agent に渡すか、どの CLI process をどう動かすかは別コンポーネントが担う。
 
+## 現行実装baseline
+
+T159時点のinstalled runtimeは、same-day Terminal-backed CLI Session、daily handoff、state integrity / backup、Windows daemon、approval follow-up、production workflow、Discord / Boardの外部read-only経路を持つ。以下の構成図は構想だけではなく現行Local Betaの責務境界を示す。将来拡張は各節で明示し、実装済み経路と混在させない。
+
 ## 責務分離
 
 | Component | 責務 | やらないこと |

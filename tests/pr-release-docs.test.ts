@@ -131,7 +131,7 @@ describe("PR and release documentation", () => {
     };
 
     expect(packageJson.scripts["test:docs"]).toBe(
-      "vitest run tests/pr-release-docs.test.ts"
+      "vitest run tests/pr-release-docs.test.ts tests/documentation-inventory.test.ts"
     );
     expect(workflow).toContain("windows-latest");
     expect(workflow).toContain("node-version: 22");

@@ -6,7 +6,10 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 
 ## 現在の位置づけ
 
-このリポジトリは MVP の基盤実装です。現在はローカル運用の主要経路を実装し、運用テストで残る外部接続条件や長時間稼働条件を確認している段階です。
+<!-- kairon:t159-beta-baseline -->
+このリポジトリは、T159までの実装とoperation testを完了した個人運用向けLocal Betaです。build、unit / integration test、state integrity、secret scanに加え、24時間daemon、GitHub / Discord live経路、remote read-only Board、production workflow、Windows package lifecycleを検証済みです。
+
+Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Agent CLI、approval、Git / deploy guard、maintenanceをローカルで統合します。外部writeと高リスク操作はdefault disabledまたはapproval requiredであり、Boardはread-onlyを維持します。
 
 現時点で実装済みの主な範囲:
 
@@ -16,23 +19,29 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 - Agent dispatcher、context builder、session host
 - Codex / Claude / AntigravityCLI 公式 CLI へ接続する runner 境界
 - review loop / quality gate の実行経路
-- git workspace / diff snapshot / transaction metadata / review承認後の `git.transaction` queue連携
-- GitHub branch protection 診断
-- Discord approval gateway の正規化・idempotency・message payload・live接続・decision audit・correlation追跡
+- git workspace / diff snapshot / transaction / rollback metadata / guarded PR create・merge
+- GitHub branch protection、required checks、single-operator review policy診断
+- local-sandbox deploy providerとproduction providerのdefault deny
+- Discord Gateway / HTTP Interactions、approval reply、idempotency、decision audit、correlation追跡
 - approval queue CLI
-- runtime loop scheduler、daemon tick、schedule別queue制御、maintenance重複防止、runtime recovery
-- daily report、agent handoff、cleanup proposal、cleanup apply / archive
-- read-only Board projection / loopback Board server / approval correlation timeline
-- local lexical RAG index、integrity / rebuild / query CLI、context builder連携
+- runtime loop、Windows Task Scheduler daemon、24時間certification、runtime recovery
+- daily report、agent handoff、retention、cleanup proposal / apply / archive
+- state integrity、snapshot / restore、event compaction、deterministic backup / rehearsal
+- read-only Board projection、loopback / remote-readonly server、short-lived access token
+- production workflow、checkpoint、resource lock、pause / resume / cancel / recover
+- local lexical RAG、incremental refresh、integrity / stats / rebuild / context連携
+- provider quota / suspend policy、operation test profile / summary支援
+- checksummed private local package、install / update / rollback / uninstall
+- evidence manifestとBeta readiness gate
 
-T67-T75完了後も残る主な後続作業の範囲:
+Local Beta後の主な開発範囲:
 
-- private repositoryでbranch protection APIが403になる場合の診断文言改善
-- 24時間以上の連続daemon運用エビデンス取得とWindows常駐手順の固定
-- operation test結果の自動集計とPASS反映支援
-- LangGraph workflow runtime の本格導入
-- merge / deploy の自動実行
-- cloud / public HTTP endpoint でのDiscord Interactions運用
+- reproducible release artifact、guarded GitHub Release、verified update channel
+- sanitized support bundle、watchdog、incident lifecycle
+- workflow branch / join / compensationとdurable checkpoint store
+- session context budget、capability / MCP trust policy、hybrid local RAG
+- multi-project read-only supervisorと固定remote profile
+- Release Candidate readiness gate
 
 ## 前提
 
@@ -204,6 +213,18 @@ kairon review run REV-0001 --timeout-ms 120000
 
 通過した場合は loop を `approved` にし、基準未満の場合は修正用の queue item を作成します。最大反復回数に達した場合は approval queue にエスカレーションします。`commit_requested` かつreview承認済みで、対象runのdiff snapshotが存在する場合は `git.transaction` queue itemを作成します。実行結果は `.kairon/reviews/loops/` と `.kairon/reviews/results/` に残ります。
 
+### GitHub PR / Merge / Deploy
+
+```powershell
+kairon git pr list
+kairon git pr show GTX-0001
+kairon git pr create GTX-0001 --dry-run
+kairon git pr merge GTX-0001 --dry-run --follow-up-id <follow-up-id>
+kairon deploy dry-run --target main --environment local-sandbox --provider local-sandbox --check smoke:passed
+```
+
+PR作成、merge、deployはdry-run artifact、approval、fresh preflight、input digestを使って実行対象を固定します。実GitHub mergeはcandidate-boundな`kairon git pr merge`だけが担当し、branch protection、required checks、review policy、head SHAを実行直前に再確認します。deployは既定で`local-sandbox`だけを許可し、production providerはpolicyで明示的に有効化されるまで拒否します。
+
 ### 承認待ち確認と決定
 
 ```powershell
@@ -215,6 +236,8 @@ kairon approval decide APR-0001 --action snooze --until 2026-05-26T09:00:00.000Z
 ```
 
 `approval list` は既定で pending の承認だけを表示します。`show` は diff、log、stdout、stderr、secret-like key を過剰表示しない安全な詳細表示です。`decide` は `approve`、`reject`、`request_changes`、`snooze` を state に反映します。すでに決定済みの approval へ再決定しようとした場合は拒否します。
+
+Discord live連携ではGatewayまたは署名検証付きHTTP Interactionsを選択できます。HTTP modeはloopbackを既定とし、外部利用時はTLS reverse proxy、trusted proxy、Discord Public Keyを必須にします。approval requestとdecision replyはmessage referenceで関連付けられ、同じinteractionや決定済みapprovalの再処理を拒否します。詳細は [docs/discord-approval-v0.md](docs/discord-approval-v0.md) と [docs/discord-gateway-v0.md](docs/discord-gateway-v0.md) を参照してください。
 
 ### ドッキング解析
 
@@ -289,6 +312,19 @@ kairon recovery acknowledge <target-id-or-fingerprint> --reason "手動復旧す
 
 stale lock、expired claim、partial outbox、Discord gateway mid-state、Git transaction mid-stateを検出します。安全に再queue可能なものだけ自動処理し、ambiguousなものはapprovalへ回します。resolve / acknowledgeはfingerprint単位で記録され、同じtargetを未解決として残し続けないために使います。
 
+### State integrity / Backup
+
+```powershell
+kairon state check
+kairon state snapshot --dry-run
+kairon state events compact --dry-run
+kairon state backup create --dry-run
+kairon state backup verify <backup-id>
+kairon state backup rehearse <backup-id>
+```
+
+file-based canonical stateの参照整合性、checkpoint、snapshot、backup manifestとSHA-256を検証します。restoreやevent compactionはdry-runとexact confirmationを要求し、backup rehearsalは隔離したtemporary projectへ展開して元projectを変更しません。
+
 ### RAG
 
 ```powershell
@@ -304,6 +340,31 @@ kairon rag query "approval routing" --type approval --limit 5
 local lexical RAG indexを `.kairon/rag/index.json` に作成し、metadata filter付きで検索します。2回目以降の通常refreshはsource manifestのmtime・file size・content hashを使うincremental modeになり、変更sourceだけを再構築します。`rag verify`は決定的checksum、source/chunk参照、source driftを検証し、結果を`.kairon/rag/integrity/latest.json`へ保存します。`rag stats`はduplicate比率、推定token、context budget、rebuild期限、retention候補を表示します。
 
 full rebuildは最初に`--dry-run --compare`で現在indexを変更せずcandidateとquery sampleを比較し、発行されたrebuild IDと一致する`--execute --confirm`でのみatomic swapします。plan後にcurrent indexまたはsourceが変わった場合は実行を拒否します。refresh、compact、rebuildは同じresource lockを使用します。`rag status`はpending added / changed / missingとfreshnessを表示し、refresh・maintenance出力はprotected / generated / missing / archivedなどのskip・prune理由を件数で示します。context builderは必要に応じてRAG検索結果をrun contextへ含め、secret-like path、protected path、generated pathはindex対象から除外します。
+
+### Production workflow
+
+```powershell
+kairon workflow list
+kairon workflow run WF-0001 --task-id TASK-0001
+kairon workflow show WF-0001
+kairon workflow recover WF-0001 --dry-run
+kairon workflow pause WF-0001 --reason "operator review"
+kairon workflow resume WF-0001
+```
+
+production workflowは`.kairon/workflows/`へrunとtransition checkpointを保存し、queue idempotency、approval gate、resource lock、retry、pause / resume / cancel / recoverを既存TaskRunner境界へ接続します。現行baselineでは`KAIRON_WORKFLOW_RUNTIME=1`が明示された場合だけproduction workflow itemをruntimeがclaimします。`--candidate`を使う`.kairon/experimental/workflows/`経路は互換性とdry-run評価用であり、production canonical stateの代替ではありません。
+
+### Local Beta package / Readiness
+
+```powershell
+npm run release:pack
+kairon release verify .\release-artifacts\0.1.0\kairon-0.1.0.tgz
+kairon readiness manifest --evidence <GATE_ID=path>
+kairon readiness check
+kairon readiness report --format markdown
+```
+
+local packageはpublic npm registryへpublishせず、tarball、SHA-256、file inventoryを検証してWindowsへinstallします。readinessはevidenceのsource commit、hash、size、freshnessを再検証し、必須gateがすべて`PASS`の場合だけ成功します。外部未設定、別commit、期限切れ、改変済み証跡を自動的にPASSへ昇格しません。
 
 ### 状態確認
 
@@ -449,9 +510,9 @@ release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動�
 
 local betaはpublic npm registryへpublishせず、`npm run release:pack`でchecksummed tarballを生成します。Windowsでのinstall、update/rollback、uninstall手順は [docs/installation.md](docs/installation.md) を参照してください。uninstallはprojectの`.kairon/`を削除しません。
 
-### T11-T15 運用テスト対象
+### 初期運用テストの履歴 (T11-T15)
 
-T11からT15では、初期ドッキング後の運用に必要なCLI経路を追加しています。運用テストでは、次の単位で確認します。
+T11からT15では、初期ドッキング後の運用に必要なCLI経路を次の単位で確認しました。この表は現行scopeではなく、初期baselineの履歴です。
 
 | 区分 | 対象 | 確認内容 |
 | --- | --- | --- |
@@ -466,7 +527,7 @@ T11からT15では、初期ドッキング後の運用に必要なCLI経路を�
 | T14-01 | `kairon approval` | list/show/decide、redaction、approve/reject/request_changes/snooze、二重決定拒否、state反映 |
 | T15-01 | `kairon start` runtime tick | Active Work queue処理、Standby Work制限、承認済みitem処理、Maintenance 1日1回実行、`last-tick.json` 記録 |
 
-T11-T15時点では対象外だったが、T67-T75までに実装済みまたは運用テストPASS済みになった範囲:
+T11-T15時点では対象外で、その後T67-T75までに実装またはoperation testを完了した範囲:
 
 - T12-03 persistent PTY / same-day session state
 - T12-04 usage limit / permission detector
@@ -477,9 +538,9 @@ T11-T15時点では対象外だったが、T67-T75までに実装済みまたは
 - Board projection / loopback Board server
 - Runtime recovery target list / resolve / acknowledge
 
-### T67-T75 運用テスト結果の扱い
+### 外部連携テストの履歴 (T67-T75)
 
-T67-T75では、local runtimeだけでなくGitHub / Discordを含む外部接続条件も確認しています。外部サービス側の権限やプラン制約で対象project上のlive確認ができない場合は、public sandbox repositoryや手動目視を使って代替エビデンスを残します。
+T67-T75では、local runtimeだけでなくGitHub / Discordを含む外部接続条件を確認しました。次の表は後続実装の未完了一覧ではなく、当時の検証履歴です。
 
 | 区分 | 対象 | 現状 |
 | --- | --- | --- |
@@ -493,14 +554,28 @@ T67-T75では、local runtimeだけでなくGitHub / Discordを含む外部接�
 | T74 | RAG query / context連携 | refresh、query、metadata filter、secret/protected除外、context builder連携を確認済み |
 | T75 | Git transaction連携 | review承認後のtransaction queue、metadata、rollback/recovery接続を確認済み |
 
+### T159 Local Beta baseline
+
+T76-T159では初期経路を拡張し、T159 readinessで全11 gate（必須10、任意1）、secret finding 0、未PASS系status 0を確認しました。local operation resultはgenerated evidenceのためrepositoryへcommitせず、再検証時は現在commitに対して生成し直します。
+
+| 分類 | T159時点の検証範囲 |
+| --- | --- |
+| Runtime | Windows Task Scheduler、24時間daemon certification、retention、recovery、backup rehearsal |
+| Controlled execution | guarded PR create / merge、local-sandbox deploy、production workflow、approval follow-up |
+| External operations | Discord Gateway / HTTP Interactions、remote-readonly Board、correlation / decision audit |
+| Data and policy | state integrity / compaction、RAG integrity / rebuild、provider quota / suspend policy |
+| Distribution | checksummed local package、install / update / rollback / uninstall |
+| Readiness | evidence hash / freshness / source commitと必須gateの機械判定 |
+
 ## 推奨する次の進め方
 
-1. 検証用プロジェクトに `kairon init`
-2. `config/*.json` を確認
-3. `kairon start` / `kairon status` / `kairon leave` / `kairon stop` を確認
-4. `kairon maintenance run` で daily report / handoff / cleanup proposal を確認
-5. 実 CLI 接続、review loop、Git transaction連携は小さい smoke から確認
-6. 不足は次の運用テスト結果から後続タスクとして切り出す
+1. 対象projectで`kairon init`または`kairon migrate`を実行する。
+2. `kairon doctor`と`kairon state check`でconfig、CLI、state、external setupを確認する。
+3. Agent smokeと小さいtask / reviewから開始し、approval境界を確認する。
+4. `kairon start --daemon`またはWindows Task Schedulerを使い、`kairon status`とdaemon reportを監視する。
+5. GitHub、deploy、Discord HTTP、remote Boardはdry-run / loopbackから開始し、外部writeを段階的に有効化する。
+6. `kairon maintenance run`、backup、cleanup proposal、RAG verifyを定期実行する。
+7. 配布前はpackage verifyとreadiness gateを現在commitのevidenceで再生成する。
 
 ## 関連ドキュメント
 
@@ -509,6 +584,11 @@ T67-T75では、local runtimeだけでなくGitHub / Discordを含む外部接�
 - [docs/workflow-v0.md](docs/workflow-v0.md)
 - [docs/cli-commands-v0.md](docs/cli-commands-v0.md)
 - [docs/installation.md](docs/installation.md)
+- [docs/release-checklist-v0.md](docs/release-checklist-v0.md)
+- [docs/windows-daemon-ops-v0.md](docs/windows-daemon-ops-v0.md)
+- [docs/discord-approval-v0.md](docs/discord-approval-v0.md)
+- [docs/board-public-safety-v0.md](docs/board-public-safety-v0.md)
+- [docs/rag-memory-v0.md](docs/rag-memory-v0.md)
 - [docs/github-branch-protection-sandbox-v0.md](docs/github-branch-protection-sandbox-v0.md)
 - [docs/project-docking-v0.md](docs/project-docking-v0.md)
 - [docs/subscription-compliance-v0.md](docs/subscription-compliance-v0.md)
