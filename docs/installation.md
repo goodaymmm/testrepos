@@ -82,14 +82,52 @@ scriptはdependency、filename binding、size、SHA-256を確認してから`npm
 
 Kairon project rootで実行します。
 
+GitHub Releaseを利用する場合は、最初にmanual channelを設定します。設定変更は既定でdry-runであり、write時はchannel名の完全一致確認が必要です。
+
+```powershell
+$env:GH_TOKEN = "<fine-grained PAT>"
+
+kairon update channel set beta `
+  --repository owner/repo `
+  --dry-run
+
+kairon update channel set beta `
+  --repository owner/repo `
+  --write `
+  --confirm beta
+
+kairon update check
+kairon update download 0.2.0
+kairon update apply UPD-0001 --confirm UPD-0001 --dry-run
+kairon update apply UPD-0001 --confirm UPD-0001
+```
+
+`update check`はremote metadataをmemory上で検証するだけで、filesystemを変更しません。`update download`は3つのrelease assetを`%LOCALAPPDATA%\Kairon\updates`へpartial downloadし、package / checksum / release manifestとtag SHAが一致した場合だけcacheを確定します。token値はchannel、download metadata、registryへ保存しません。
+
+rollback先も事前に同じchannelでdownloadしておきます。
+
+```powershell
+kairon update download 0.1.0
+kairon update rollback --to 0.1.0 --confirm 0.1.0 --dry-run
+kairon update rollback --to 0.1.0 --confirm 0.1.0
+```
+
+`apply`と`rollback`はcache済みartifactを毎回再検証し、次の既存PowerShell lifecycleを呼び出します。成功後だけ`.kairon/update/registry.json`を更新し、失敗時はinstalled / previous / last successful versionを成功扱いにしません。channelを設定してもbackground auto-update、silent update、schedulerは開始しません。
+
+local package pathを手動指定する従来経路も維持しています。
+
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\update-local-beta.ps1 `
   -Package .\kairon-0.2.0.tgz `
+  -Manifest .\kairon-0.2.0.tgz.sha256.json `
+  -ReleaseManifest .\release-manifest.json `
   -ProjectRoot M:\EnglishApp `
   -DryRun
 
 powershell -NoProfile -ExecutionPolicy Bypass -File .\update-local-beta.ps1 `
   -Package .\kairon-0.2.0.tgz `
+  -Manifest .\kairon-0.2.0.tgz.sha256.json `
+  -ReleaseManifest .\release-manifest.json `
   -ProjectRoot M:\EnglishApp
 ```
 

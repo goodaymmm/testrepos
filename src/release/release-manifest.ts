@@ -92,6 +92,24 @@ export type CreateReleaseManifestOptions = {
   now?: () => Date;
 };
 
+export function parseReleaseManifestContent(
+  content: Uint8Array | string
+): ReleaseManifest {
+  let value: unknown;
+  try {
+    const text = typeof content === "string"
+      ? content
+      : Buffer.from(content).toString("utf8");
+    value = JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("Release manifest content is not valid JSON.");
+  }
+  if (!isReleaseManifest(value)) {
+    throw new Error("Release manifest schema or artifact kind is invalid.");
+  }
+  return value;
+}
+
 type RootPackageJson = {
   name?: unknown;
   version?: unknown;
@@ -479,7 +497,7 @@ function isLocalBetaChecksumManifest(value: unknown): value is LocalBetaPackageM
     typeof candidate.created_at === "string";
 }
 
-function isReleaseManifest(value: unknown): value is ReleaseManifest {
+export function isReleaseManifest(value: unknown): value is ReleaseManifest {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return false;
   }
@@ -521,7 +539,8 @@ function isReleaseManifest(value: unknown): value is ReleaseManifest {
       Number.isInteger(entry.size_bytes) &&
       (entry.type === "file" || entry.type === "directory")
     ) &&
-    typeof candidate.created_at === "string";
+    typeof candidate.created_at === "string" &&
+    !Number.isNaN(Date.parse(candidate.created_at));
 }
 
 function resultCheck(

@@ -108,6 +108,21 @@ describe("T159 documentation inventory", () => {
         marker: "kairon release github publish"
       },
       {
+        source: "src/update/channel.ts",
+        document: documents.cli,
+        marker: "kairon update channel set"
+      },
+      {
+        source: "src/update/downloader.ts",
+        document: documents.installation,
+        marker: "kairon update download"
+      },
+      {
+        source: "src/update/registry.ts",
+        document: documents.installation,
+        marker: ".kairon/update/registry.json"
+      },
+      {
         source: "src/readiness/beta-readiness.ts",
         document: documents.readme,
         marker: "kairon readiness check"

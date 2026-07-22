@@ -32,11 +32,11 @@ Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Age
 - local lexical RAG、incremental refresh、integrity / stats / rebuild / context連携
 - provider quota / suspend policy、operation test profile / summary支援
 - checksummed private local package、install / update / rollback / uninstall
+- reproducible `0.2.0` artifact、approval-gated GitHub Release、verified manual update channel
 - evidence manifestとBeta readiness gate
 
 Local Beta後の主な開発範囲:
 
-- reproducible release artifact、guarded GitHub Release、verified update channel
 - sanitized support bundle、watchdog、incident lifecycle
 - workflow branch / join / compensationとdurable checkpoint store
 - session context budget、capability / MCP trust policy、hybrid local RAG
@@ -512,6 +512,8 @@ release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動�
 local betaはpublic npm registryへpublishせず、`npm run release:pack`でchecksummed tarballを生成します。Windowsでのinstall、update/rollback、uninstall手順は [docs/installation.md](docs/installation.md) を参照してください。uninstallはprojectの`.kairon/`を削除しません。
 
 検証済みartifactは`kairon release github plan`で高risk approvalへbindし、承認後に`kairon release github publish`でGitHub Releaseへ配布できます。既定はprereleaseで、publish時にplan IDの完全一致確認、approval binding、local / remote source SHA、asset SHA-256を再検証します。`kairon release github verify`は公開assetを再downloadしてmanifestへ照合します。
+
+利用側は`kairon update channel set`で`stable | beta | pinned`を明示設定し、`update check`、`update download`、`update apply`を分離して実行できます。downloadはuser-local cacheで3 assetとtag SHAを検証し、apply / rollbackはexact confirm後に既存PowerShell lifecycleへ渡します。成功時だけupdate registryを更新し、background auto-updateは行いません。
 
 ### 初期運用テストの履歴 (T11-T15)
 

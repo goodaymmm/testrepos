@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Package,
   [string]$Manifest = "",
+  [string]$ReleaseManifest = "",
   [string]$ProjectRoot = (Get-Location).Path,
   [string]$TransactionRoot = (Join-Path $env:TEMP "kairon-beta-updates"),
   [string]$DiagnosticRoot = (Join-Path $env:TEMP "kairon-beta-diagnostics"),
@@ -21,6 +22,10 @@ $rollbackStateRestored = $false
 
 try {
   $packageInfo = Assert-KaironLocalBetaPackage -PackagePath $Package -ManifestPath $Manifest
+  $resolvedReleaseManifest = $null
+  if (-not [string]::IsNullOrWhiteSpace($ReleaseManifest)) {
+    $resolvedReleaseManifest = (Resolve-Path -LiteralPath $ReleaseManifest -ErrorAction Stop).Path
+  }
   $prerequisites = Assert-KaironLocalBetaPrerequisites
   $resolvedProject = (Resolve-Path -LiteralPath $ProjectRoot -ErrorAction Stop).Path
   $currentKairon = Get-Command kairon -ErrorAction SilentlyContinue
@@ -33,6 +38,7 @@ try {
   Write-Host "dry_run=$($DryRun.IsPresent.ToString().ToLowerInvariant())"
   Write-Host "package=$($packageInfo.PackagePath)"
   Write-Host "manifest=$($packageInfo.ManifestPath)"
+  Write-Host "release_manifest=$(if ($null -eq $resolvedReleaseManifest) { 'none' } else { $resolvedReleaseManifest })"
   Write-Host "target_version=$($packageInfo.PackageVersion)"
   Write-Host "project_root=$resolvedProject"
   Write-Host "project_initialized=$projectInitialized"
@@ -96,9 +102,16 @@ try {
   $updatedKairon = Get-KaironRequiredCommand -Name "kairon"
 
   $stage = "verify_package"
+  $verifyArguments = @(
+    "release", "verify", $packageInfo.PackagePath,
+    "--manifest", $packageInfo.ManifestPath
+  )
+  if ($null -ne $resolvedReleaseManifest) {
+    $verifyArguments += @("--release-manifest", $resolvedReleaseManifest)
+  }
   $verifyOutput = Invoke-KaironLocalBetaCommand `
     -Command $updatedKairon.Source `
-    -Arguments @("release", "verify", $packageInfo.PackagePath, "--manifest", $packageInfo.ManifestPath)
+    -Arguments $verifyArguments
   $verifyOutput | ForEach-Object { Write-Host $_ }
 
   if ($projectInitialized) {

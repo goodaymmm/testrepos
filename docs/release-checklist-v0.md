@@ -164,6 +164,26 @@ kairon release github verify `
 - network / rate limitによる途中失敗は同じplan IDで再実行し、検証済みassetを重複uploadしない。
 - result artifactにはtokenやraw GitHub responseを含めず、tag SHA、release ID、asset ID / size / SHA-256、正規化errorだけを残す。
 
+## Verified Update And Rollback
+
+release利用側では`stable | beta | pinned`のmanual channelを明示設定し、check / download / applyを分離します。
+
+```powershell
+kairon update channel set beta --repository owner/repo --write --confirm beta
+kairon update check
+kairon update download 0.2.0
+kairon update apply UPD-0001 --confirm UPD-0001 --dry-run
+kairon update apply UPD-0001 --confirm UPD-0001
+```
+
+- `update check`でfilesystemやregistryが変化しない。
+- download後にpackage SHA-256、checksum manifest、release manifest、inventory、tag source SHAが一致する。
+- cacheはproject source外のuser-local directoryにあり、partial downloadが確定artifactとして残らない。
+- apply / rollback前にcache済みartifactを再検証し、exact confirmなしではPowerShell lifecycleを開始しない。
+- lifecycle失敗時はregistryのinstalled / previous / last successfulを成功扱いにしない。
+- rollback targetは事前にverified cacheへ取得し、`kairon update rollback --to <version> --confirm <version>`で明示する。
+- background auto-update、silent update、schedulerは存在しない。
+
 ## Release Notes更新
 
 releaseする場合は `docs/release-notes-v0.md` の `Unreleased` から該当versionへ移します。

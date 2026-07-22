@@ -10,6 +10,7 @@ export type GitHubReleaseClientErrorKind =
   | "invalid_response";
 
 export type GitHubReleaseOperation =
+  | "list_releases"
   | "inspect_branch"
   | "inspect_tag"
   | "inspect_release"
@@ -73,6 +74,12 @@ export type InspectGitHubReleaseRequest = {
   token: string;
 };
 
+export type ListGitHubReleasesRequest = {
+  repository: string;
+  token: string;
+  perPage?: number;
+};
+
 export type CreateGitHubReleaseTagRequest = {
   repository: string;
   tag: string;
@@ -114,6 +121,7 @@ export type PublishGitHubReleaseRequest = {
 };
 
 export type GitHubReleaseClient = {
+  listReleases(request: ListGitHubReleasesRequest): Promise<GitHubReleaseRecord[]>;
   inspect(request: InspectGitHubReleaseRequest): Promise<GitHubReleaseInspection>;
   createTag(request: CreateGitHubReleaseTagRequest): Promise<GitHubReleaseTag>;
   createDraftRelease(request: CreateGitHubReleaseRequest): Promise<GitHubReleaseRecord>;
@@ -123,6 +131,7 @@ export type GitHubReleaseClient = {
 };
 
 export const defaultGitHubReleaseClient: GitHubReleaseClient = {
+  listReleases: listGitHubReleases,
   inspect: inspectGitHubRelease,
   createTag: createGitHubReleaseTag,
   createDraftRelease: createDraftGitHubRelease,
@@ -130,6 +139,33 @@ export const defaultGitHubReleaseClient: GitHubReleaseClient = {
   downloadAsset: downloadGitHubReleaseAsset,
   publishRelease: publishGitHubRelease
 };
+
+export async function listGitHubReleases(
+  request: ListGitHubReleasesRequest
+): Promise<GitHubReleaseRecord[]> {
+  const repository = parseRepository(request.repository);
+  const perPage = request.perPage ?? 100;
+  if (!Number.isInteger(perPage) || perPage < 1 || perPage > 100) {
+    throw new Error("GitHub release perPage must be an integer from 1 to 100.");
+  }
+  const response = await requestGitHub(
+    `${repositoryApiPrefix(repository)}/releases?per_page=${perPage}`,
+    request.token,
+    "list_releases"
+  );
+  let value: unknown;
+  try {
+    value = await response.json() as unknown;
+  } catch {
+    throw new GitHubReleaseClientError("invalid_response", "list_releases");
+  }
+  if (!Array.isArray(value)) {
+    throw new GitHubReleaseClientError("invalid_response", "list_releases");
+  }
+  return value.map((entry) =>
+    normalizeRelease(readRecord(entry, "list_releases"), "list_releases")
+  );
+}
 
 export async function inspectGitHubRelease(
   request: InspectGitHubReleaseRequest
