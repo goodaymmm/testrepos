@@ -566,6 +566,7 @@ describe("createProgram", () => {
     expect(release?.commands.map((command) => command.name()).sort()).toEqual([
       "bump",
       "check",
+      "github",
       "manifest",
       "notes",
       "pack",
@@ -595,6 +596,29 @@ describe("createProgram", () => {
         .find((command) => command.name() === "bump")
         ?.options.map((option) => option.long)
     ).toEqual(expect.arrayContaining(["--type", "--version", "--dry-run", "--write"]));
+    const github = release?.commands.find((command) => command.name() === "github");
+    expect(github?.commands.map((command) => command.name()).sort()).toEqual([
+      "plan",
+      "publish",
+      "verify"
+    ]);
+    expect(
+      github?.commands
+        .find((command) => command.name() === "plan")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining([
+      "--version",
+      "--repository",
+      "--base-branch",
+      "--artifact-dir",
+      "--stable",
+      "--token-env"
+    ]));
+    expect(
+      github?.commands
+        .find((command) => command.name() === "publish")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--approval-id", "--confirm", "--token-env"]));
   });
 
   it("registers Beta readiness manifest, check, and report commands", () => {

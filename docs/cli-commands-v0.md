@@ -900,6 +900,9 @@ kairon release notes --since v0.1.0 --write
 kairon release bump --version 0.3.0
 kairon release bump --version 0.3.0 --write
 kairon release bump --type patch
+kairon release github plan --version 0.2.0 --repository owner/repo
+kairon release github publish REL-0001 --approval-id APR-0001 --confirm REL-0001
+kairon release github verify --version 0.2.0 --repository owner/repo
 ```
 
 `release validate` は `package.json.version` と `KAIRON_VERSION` のcore SemVer形式と同期、
@@ -907,6 +910,10 @@ release checklistの必須marker、release notesの`Unreleased` markerと現在v
 まとめて検査する。検査失敗時は `validation.ok=false` を出力し、exit codeを1にする。
 
 `release pack`はrelease validationとbuild済みentrypointを確認して`npm pack`を実行し、tarballのSHA-256、size、file inventoryを`.sha256.json`へ保存する。`release manifest`はclean tracked sourceのcommit SHA、runtime support、artifact / checksum manifest hash、sorted inventoryを`release-manifest.json`へ保存する。`release verify --release-manifest`はtar path、link、必須file、禁止path、package metadataに加えてrelease manifestとのbindingを再検証する。public npm registryへのpublishは行わない。
+
+`release github plan`は検証済みの`release-artifacts/<version>/`、cleanなlocal HEAD、remote base branch SHA、既存tag / release / assetを照合し、高risk approvalへbindした`.kairon/release/github/plans/<plan-id>.json`を作る。既定はprereleaseで、stable releaseは`--stable`を明示する。tokenは`--token-env`、`GH_TOKEN`、`GITHUB_TOKEN`、明示設定したWindows Credential Manager参照の順で解決し、値はartifactやCLI出力へ保存しない。
+
+`release github publish`はplanに一致するapproved approval、`--confirm`の完全一致、local / remote source SHA、asset hashを再検証してからtag、draft release、3つのasset、release公開を順に実行する。同じtag / release / assetが完全一致する再実行は成功し、途中までuploadされた場合は検証済みassetを再利用する。同名assetの内容不一致、重複、source driftはmutationを続行せずblockedにする。`release github verify`はremote assetを再downloadし、sizeとSHA-256をlocal release manifestへ照合する。
 
 `release notes` は既定ではdry-runで、`--write` を付けた場合のみ
 `docs/release-notes-v0.md` の `<!-- kairon:release-notes-unreleased -->` 直下へappendする。
@@ -919,7 +926,8 @@ write modeの安全条件。
 ```text
 tracked worktreeがcleanであること
 backup artifactを.kairon/release/backups/<timestamp>/へ作成すること
-npm publish / git tag / GitHub Releaseは実行しないこと
+npm publishは実行しないこと
+git tag / GitHub Releaseは承認済み`release github publish`だけが実行すること
 ```
 
 ## kairon readiness

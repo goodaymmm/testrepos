@@ -44,6 +44,7 @@ describe("PR and release documentation", () => {
   it("documents private local beta packaging and state-preserving uninstall", async () => {
     const installation = await readUtf8("docs/installation.md");
     const commands = await readUtf8("docs/cli-commands-v0.md");
+    const checklist = await readUtf8("docs/release-checklist-v0.md");
 
     expect(installation).toContain("npm run release:pack");
     expect(installation).toContain("kairon release verify");
@@ -57,6 +58,10 @@ describe("PR and release documentation", () => {
     expect(commands).toContain("kairon release pack");
     expect(commands).toContain("kairon release verify");
     expect(commands).toContain("kairon release manifest");
+    expect(commands).toContain("kairon release github plan");
+    expect(commands).toContain("kairon release github publish");
+    expect(commands).toContain("kairon release github verify");
+    expect(checklist).toContain("<!-- kairon:github-release-distribution -->");
   });
 
   it("documents GitHub branch protection sandbox and token redaction policy", async () => {

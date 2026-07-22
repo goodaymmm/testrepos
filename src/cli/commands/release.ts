@@ -19,6 +19,16 @@ import {
   verifyReleaseManifest,
   type CreateReleaseManifestOptions
 } from "../../release/release-manifest.js";
+import {
+  formatGitHubReleaseResult,
+  planGitHubRelease,
+  publishGitHubRelease,
+  verifyGitHubRelease,
+  type GitHubReleaseDependencies,
+  type GitHubReleasePlanRequest,
+  type GitHubReleasePublishRequest,
+  type GitHubReleaseVerifyRequest
+} from "../../release/github-release.js";
 
 export type ReleaseCheckResult = {
   schema_version: string;
@@ -114,6 +124,13 @@ export type ReleaseManifestCommandOptions = CreateReleaseManifestOptions & {
   manifest?: string;
 };
 
+export type ReleaseGitHubPlanCommandOptions = GitHubReleasePlanRequest;
+export type ReleaseGitHubPublishCommandOptions = Omit<
+  GitHubReleasePublishRequest,
+  "planId"
+>;
+export type ReleaseGitHubVerifyCommandOptions = GitHubReleaseVerifyRequest;
+
 type PackageJson = {
   version?: unknown;
   [key: string]: unknown;
@@ -208,6 +225,40 @@ export async function releaseManifestCommand(
     options.manifest,
     options
   ));
+}
+
+export async function releaseGitHubPlanCommand(
+  projectRoot: string,
+  options: ReleaseGitHubPlanCommandOptions,
+  deps: GitHubReleaseDependencies = {}
+): Promise<string> {
+  return formatGitHubReleaseResult(
+    await planGitHubRelease(projectRoot, options, deps),
+    projectRoot
+  );
+}
+
+export async function releaseGitHubPublishCommand(
+  projectRoot: string,
+  planId: string,
+  options: ReleaseGitHubPublishCommandOptions,
+  deps: GitHubReleaseDependencies = {}
+): Promise<string> {
+  return formatGitHubReleaseResult(
+    await publishGitHubRelease(projectRoot, { planId, ...options }, deps),
+    projectRoot
+  );
+}
+
+export async function releaseGitHubVerifyCommand(
+  projectRoot: string,
+  options: ReleaseGitHubVerifyCommandOptions,
+  deps: GitHubReleaseDependencies = {}
+): Promise<string> {
+  return formatGitHubReleaseResult(
+    await verifyGitHubRelease(projectRoot, options, deps),
+    projectRoot
+  );
 }
 
 export async function collectReleaseCheck(

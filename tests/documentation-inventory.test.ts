@@ -47,6 +47,7 @@ describe("T159 documentation inventory", () => {
       readme: await readUtf8("README.md"),
       daemon: await readUtf8("docs/windows-daemon-ops-v0.md"),
       installation: await readUtf8("docs/installation.md"),
+      release: await readUtf8("docs/release-checklist-v0.md"),
       workflow: await readUtf8("docs/workflow-v0.md"),
       cli: await readUtf8("docs/cli-commands-v0.md")
     };
@@ -95,6 +96,16 @@ describe("T159 documentation inventory", () => {
         source: "src/release/release-manifest.ts",
         document: documents.installation,
         marker: "release-manifest.json"
+      },
+      {
+        source: "src/release/github-release.ts",
+        document: documents.release,
+        marker: "<!-- kairon:github-release-distribution -->"
+      },
+      {
+        source: "src/github/release-client.ts",
+        document: documents.cli,
+        marker: "kairon release github publish"
       },
       {
         source: "src/readiness/beta-readiness.ts",

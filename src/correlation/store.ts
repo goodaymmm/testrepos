@@ -11,7 +11,9 @@ export type CorrelationMemberKind =
   | "discord_message"
   | "discord_interaction"
   | "follow_up"
-  | "workflow";
+  | "workflow"
+  | "release_plan"
+  | "release_result";
 
 export type CorrelationMember = {
   kind: CorrelationMemberKind;
