@@ -50,7 +50,7 @@ describe("release commands", () => {
       package_version: "0.1.0",
       cli_version: "0.1.0"
     });
-    expect(result.checks).toHaveLength(6);
+    expect(result.checks).toHaveLength(7);
     expect(result.checks.every((check) => check.status === "pass")).toBe(true);
     expect(formatReleaseValidation(result)).toContain("validation.ok=true");
     expect(formatReleaseValidation(result)).toContain("summary.fail=0");
@@ -175,6 +175,39 @@ describe("release commands", () => {
         "utf8"
       )
     ).resolves.toContain('"version": "0.1.0"');
+  });
+
+  it("keeps package-lock.json synchronized when applying a version bump", async () => {
+    const root = await createReleaseProject("0.1.0");
+    await writeJsonFileAtomic(path.join(root, "package-lock.json"), {
+      name: "kairon-test",
+      version: "0.1.0",
+      lockfileVersion: 3,
+      packages: {
+        "": {
+          name: "kairon-test",
+          version: "0.1.0"
+        }
+      }
+    });
+
+    const result = await planReleaseBump(root, {
+      version: "0.2.0",
+      write: true,
+      commandRunner: cleanGitStatusRunner
+    });
+    const packageLock = JSON.parse(
+      await readFile(path.join(root, "package-lock.json"), "utf8")
+    ) as { version: string; packages: { "": { version: string } } };
+
+    expect(result.files).toContainEqual({
+      path: "package-lock.json",
+      current: "0.1.0",
+      next: "0.2.0",
+      action: "updated"
+    });
+    expect(packageLock.version).toBe("0.2.0");
+    expect(packageLock.packages[""].version).toBe("0.2.0");
   });
 
   it("rejects release writes when tracked files are dirty", async () => {

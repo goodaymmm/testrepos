@@ -566,6 +566,7 @@ describe("createProgram", () => {
     expect(release?.commands.map((command) => command.name()).sort()).toEqual([
       "bump",
       "check",
+      "manifest",
       "notes",
       "pack",
       "validate",
@@ -574,6 +575,16 @@ describe("createProgram", () => {
     expect(
       release?.commands.find((command) => command.name() === "validate")?.description()
     ).toContain("Validate synchronized versions");
+    expect(
+      release?.commands
+        .find((command) => command.name() === "manifest")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--package", "--manifest", "--output"]));
+    expect(
+      release?.commands
+        .find((command) => command.name() === "verify")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--manifest", "--release-manifest"]));
     expect(
       release?.commands
         .find((command) => command.name() === "notes")

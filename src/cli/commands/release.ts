@@ -12,6 +12,13 @@ import {
   verifyLocalBetaPackage,
   type LocalBetaPackOptions
 } from "../../release/local-beta.js";
+import {
+  createReleaseManifest,
+  formatReleaseManifest,
+  formatReleaseManifestVerification,
+  verifyReleaseManifest,
+  type CreateReleaseManifestOptions
+} from "../../release/release-manifest.js";
 
 export type ReleaseCheckResult = {
   schema_version: string;
@@ -31,6 +38,7 @@ export type ReleaseValidationCheck = {
     | "package_version_semver"
     | "cli_version_semver"
     | "version_sync"
+    | "package_lock_version"
     | "release_checklist"
     | "release_notes_unreleased"
     | "release_notes_target_version";
@@ -98,10 +106,22 @@ export type ReleaseBumpCommandOptions = {
 
 export type ReleaseVerifyCommandOptions = {
   manifest?: string;
+  releaseManifest?: string;
+};
+
+export type ReleaseManifestCommandOptions = CreateReleaseManifestOptions & {
+  package?: string;
+  manifest?: string;
 };
 
 type PackageJson = {
   version?: unknown;
+  [key: string]: unknown;
+};
+
+type PackageLockJson = {
+  version?: unknown;
+  packages?: Record<string, { version?: unknown; [key: string]: unknown }>;
   [key: string]: unknown;
 };
 
@@ -144,7 +164,50 @@ export async function releaseVerifyCommand(
   options: ReleaseVerifyCommandOptions = {}
 ): Promise<{ text: string; ok: boolean }> {
   const result = await verifyLocalBetaPackage(packageFile, options.manifest);
-  return { text: formatLocalBetaVerification(result), ok: result.ok };
+  if (options.releaseManifest === undefined) {
+    return { text: formatLocalBetaVerification(result), ok: result.ok };
+  }
+
+  const releaseManifest = await verifyReleaseManifest(
+    options.releaseManifest,
+    packageFile,
+    options.manifest
+  );
+  return {
+    text: [
+      formatLocalBetaVerification(result),
+      "",
+      formatReleaseManifestVerification(releaseManifest)
+    ].join("\n"),
+    ok: result.ok && releaseManifest.ok
+  };
+}
+
+export async function releaseManifestCommand(
+  projectRoot: string,
+  options: ReleaseManifestCommandOptions = {}
+): Promise<string> {
+  if (options.package === undefined || options.package.trim().length === 0) {
+    throw new Error("Specify --package <package.tgz>.");
+  }
+  if (options.manifest === undefined || options.manifest.trim().length === 0) {
+    throw new Error("Specify --manifest <checksum-manifest.json>.");
+  }
+  const releaseValidation = await validateRelease(projectRoot);
+  if (!releaseValidation.ok) {
+    throw new Error(
+      `Release validation failed before manifest generation: ${releaseValidation.checks
+        .filter((check) => check.status === "fail")
+        .map((check) => check.id)
+        .join(", ")}`
+    );
+  }
+  return formatReleaseManifest(await createReleaseManifest(
+    projectRoot,
+    options.package,
+    options.manifest,
+    options
+  ));
 }
 
 export async function collectReleaseCheck(
@@ -183,6 +246,7 @@ export async function validateRelease(
 ): Promise<ReleaseValidationResult> {
   const packageVersion = await readPackageVersion(projectRoot);
   const cliVersion = await readCliVersion(projectRoot);
+  const packageLockVersions = await readPackageLockVersions(projectRoot);
   const checklist = await readOptionalText(projectRoot, "docs/release-checklist-v0.md");
   const notes = await readOptionalText(projectRoot, "docs/release-notes-v0.md");
   const packageVersionValid = isCoreSemanticVersion(packageVersion);
@@ -218,7 +282,20 @@ export async function validateRelease(
       packageVersion === cliVersion,
       packageVersion === cliVersion
         ? `package.json and KAIRON_VERSION both use ${packageVersion}.`
-        : `Version mismatch: package.json=${packageVersion}, KAIRON_VERSION=${cliVersion}.`
+          : `Version mismatch: package.json=${packageVersion}, KAIRON_VERSION=${cliVersion}.`
+    ),
+    validationCheck(
+      "package_lock_version",
+      packageLockVersions === null || (
+        packageLockVersions.version === packageVersion &&
+        packageLockVersions.rootVersion === packageVersion
+      ),
+      packageLockVersions === null
+        ? "package-lock.json is absent; no lockfile version sync is required."
+        : packageLockVersions.version === packageVersion &&
+            packageLockVersions.rootVersion === packageVersion
+          ? `package-lock.json versions match ${packageVersion}.`
+          : `package-lock.json version mismatch: top=${packageLockVersions.version}, root=${packageLockVersions.rootVersion}, package=${packageVersion}.`
     ),
     validationCheck(
       "release_checklist",
@@ -363,11 +440,37 @@ export async function planReleaseBump(
     version: nextVersion
   };
   const indexNextText = replaceCliVersion(cliSource, nextVersion);
+  const packageLock = await readOptionalPackageLock(projectRoot);
+  const packageLockPath = resolveInside(projectRoot, "package-lock.json");
+  let packageLockNext: PackageLockJson | undefined;
+  if (packageLock !== undefined) {
+    const lockVersion = assertVersion(packageLock.version, "package-lock.json");
+    const rootVersion = assertVersion(
+      packageLock.packages?.[""]?.version,
+      "package-lock.json packages['']"
+    );
+    if (lockVersion !== currentVersion || rootVersion !== currentVersion) {
+      throw new Error(
+        `Version mismatch: package.json=${currentVersion}, package-lock.json=${lockVersion}, package-lock root=${rootVersion}`
+      );
+    }
+    packageLockNext = {
+      ...packageLock,
+      version: nextVersion,
+      packages: {
+        ...packageLock.packages,
+        "": {
+          ...packageLock.packages?.[""],
+          version: nextVersion
+        }
+      }
+    };
+  }
   let backupArtifact: string | undefined;
 
   if (write) {
     await assertCleanTrackedTree(projectRoot, commandRunner);
-    backupArtifact = await writeReleaseBackup(projectRoot, [
+    const backupFiles = [
       {
         relativePath: "package.json",
         content: await readFile(packagePath, "utf8")
@@ -376,9 +479,23 @@ export async function planReleaseBump(
         relativePath: "src/index.ts",
         content: cliSource
       }
-    ], options.now?.() ?? new Date());
+    ];
+    if (packageLockNext !== undefined) {
+      backupFiles.push({
+        relativePath: "package-lock.json",
+        content: await readFile(packageLockPath, "utf8")
+      });
+    }
+    backupArtifact = await writeReleaseBackup(
+      projectRoot,
+      backupFiles,
+      options.now?.() ?? new Date()
+    );
     await writeJsonFileAtomic(packagePath, packageNext);
     await writeFile(indexPath, indexNextText, "utf8");
+    if (packageLockNext !== undefined) {
+      await writeJsonFileAtomic(packageLockPath, packageLockNext);
+    }
   }
 
   const action = currentVersion === nextVersion
@@ -397,7 +514,10 @@ export async function planReleaseBump(
     backup_artifact: backupArtifact,
     diff_preview: [
       `package.json: ${currentVersion} -> ${nextVersion}`,
-      `src/index.ts: ${cliVersion} -> ${nextVersion}`
+      `src/index.ts: ${cliVersion} -> ${nextVersion}`,
+      ...(packageLockNext === undefined
+        ? []
+        : [`package-lock.json: ${currentVersion} -> ${nextVersion}`])
     ],
     files: [
       {
@@ -411,7 +531,15 @@ export async function planReleaseBump(
         current: cliVersion,
         next: nextVersion,
         action
-      }
+      },
+      ...(packageLockNext === undefined
+        ? []
+        : [{
+            path: "package-lock.json",
+            current: currentVersion,
+            next: nextVersion,
+            action
+          } as const])
     ]
   };
 }
@@ -559,6 +687,38 @@ async function readPackageVersion(projectRoot: string): Promise<string> {
     resolveInside(projectRoot, "package.json")
   );
   return assertVersion(packageJson.version, "package.json");
+}
+
+async function readOptionalPackageLock(
+  projectRoot: string
+): Promise<PackageLockJson | undefined> {
+  try {
+    return await readJsonFile<PackageLockJson>(
+      resolveInside(projectRoot, "package-lock.json")
+    );
+  } catch (error) {
+    if ((error as Error).message.includes("ENOENT")) {
+      return undefined;
+    }
+    throw error;
+  }
+}
+
+async function readPackageLockVersions(projectRoot: string): Promise<{
+  version: string;
+  rootVersion: string;
+} | null> {
+  const packageLock = await readOptionalPackageLock(projectRoot);
+  if (packageLock === undefined) {
+    return null;
+  }
+  return {
+    version: assertVersion(packageLock.version, "package-lock.json"),
+    rootVersion: assertVersion(
+      packageLock.packages?.[""]?.version,
+      "package-lock.json packages['']"
+    )
+  };
 }
 
 async function readCliVersion(projectRoot: string): Promise<string> {

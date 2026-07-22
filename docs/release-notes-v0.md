@@ -6,15 +6,13 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 ## Unreleased
 
 <!-- kairon:release-notes-unreleased -->
-T159までに、Windows 24時間daemon、guarded GitHub merge / deploy、production workflow、Discord HTTP Interactions、remote read-only Board、state backup / compaction、RAG integrity、provider policy、private local package lifecycle、Beta readiness gateを実装・operation test済みです。
-
-現時点の未release変更は、各PR本文とmerge履歴を一次記録とします。正式なreleaseを切る場合は、この節から対象versionの節へ要約を移します。local operation resultやgenerated evidenceはrelease notesへ埋め込まず、再実行方法と判定結果だけを記録します。
+現時点の未release変更は、各PR本文とmerge履歴を一次記録とします。local operation resultやgenerated evidenceはrelease notesへ埋め込まず、再実行方法と判定結果だけを記録します。
 
 ## Versioning
 
 <!-- kairon:versioning-policy -->
-現在のT159 Local Beta baseline versionは `0.1.0` です。version変更時は `package.json` と
-`src/index.ts` の `KAIRON_VERSION` を同時に更新します。
+現在のLocal Beta versionは `0.2.0` です。version変更時は `package.json`、
+`package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。
 `kairon release validate` は、この同期とcore SemVer形式に加えて、`Unreleased` marker、
 現在versionのrelease entry、release checklistの必須markerを一括確認します。
 
@@ -47,6 +45,31 @@ T159までに、Windows 24時間daemon、guarded GitHub merge / deploy、product
 
 -
 ```
+
+## 0.2.0 - 2026-07-22
+
+### Summary
+
+- T159までのWindows daemon、guarded GitHub merge / deploy、production workflow、Discord HTTP Interactions、remote read-only Board、state backup / compaction、RAG integrity、provider policy、private local package lifecycle、Beta readiness gateをLocal Beta baselineとして収録。
+- package / CLI / lockfileのversionを`0.2.0`へ同期。
+- tarball、checksum manifest、sorted package inventory、source commit、runtime supportをbindする`release-manifest.json`を追加。
+- dirty tracked source、tampered tarball、checksum manifest差替え、inventory差異をrelease検証で拒否。
+
+### Tests
+
+- `npm run build`
+- `npx vitest run tests\release-command.test.ts tests\local-beta-package.test.ts tests\release-manifest.test.ts tests\pr-release-docs.test.ts`
+- `npm test`
+
+### Manual / Operation Test Evidence
+
+- clean checkoutとWindows Sandboxでのpack / verify / install / rollbackはrelease artifact生成後に実施する。
+
+### Known Limitations
+
+- public npm registryへpublishしない。
+- GitHub Releaseへのuploadとonline update channelはT162以降の対象。
+- npm tar metadataの時刻差を許容し、再現性は同一source commit、package inventory、artifact metadataの検証可能性で判定する。
 
 ## 0.1.0 - MVP baseline
 

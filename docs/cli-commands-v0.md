@@ -68,7 +68,8 @@ kairon rag query <query>
 kairon release check
 kairon release validate
 kairon release pack [--output <path>]
-kairon release verify <package.tgz> [--manifest <manifest.json>]
+kairon release manifest --package <package.tgz> --manifest <manifest.json> [--output <path>]
+kairon release verify <package.tgz> [--manifest <manifest.json>] [--release-manifest <release-manifest.json>]
 kairon release notes --since <ref> [--write]
 kairon release bump --version <version> [--write]
 kairon readiness manifest --evidence <GATE_ID=path>
@@ -892,11 +893,12 @@ kairon release check
 kairon release validate
 kairon release pack
 kairon release pack --output C:\tmp\kairon-beta
-kairon release verify .\release-artifacts\0.1.0\kairon-0.1.0.tgz
+kairon release manifest --package .\release-artifacts\0.2.0\kairon-0.2.0.tgz --manifest .\release-artifacts\0.2.0\kairon-0.2.0.tgz.sha256.json
+kairon release verify .\release-artifacts\0.2.0\kairon-0.2.0.tgz --manifest .\release-artifacts\0.2.0\kairon-0.2.0.tgz.sha256.json --release-manifest .\release-artifacts\0.2.0\release-manifest.json
 kairon release notes --since v0.1.0
 kairon release notes --since v0.1.0 --write
-kairon release bump --version 0.2.0
-kairon release bump --version 0.2.0 --write
+kairon release bump --version 0.3.0
+kairon release bump --version 0.3.0 --write
 kairon release bump --type patch
 ```
 
@@ -904,13 +906,13 @@ kairon release bump --type patch
 release checklistの必須marker、release notesの`Unreleased` markerと現在version entryを
 まとめて検査する。検査失敗時は `validation.ok=false` を出力し、exit codeを1にする。
 
-`release pack`はrelease validationとbuild済みentrypointを確認して`npm pack`を実行し、tarballのSHA-256、size、file inventoryを`.sha256.json`へ保存する。`release verify`はmanifestだけでなくtar path、link、必須file、禁止path、package metadataを再検証する。public npm registryへのpublishは行わない。
+`release pack`はrelease validationとbuild済みentrypointを確認して`npm pack`を実行し、tarballのSHA-256、size、file inventoryを`.sha256.json`へ保存する。`release manifest`はclean tracked sourceのcommit SHA、runtime support、artifact / checksum manifest hash、sorted inventoryを`release-manifest.json`へ保存する。`release verify --release-manifest`はtar path、link、必須file、禁止path、package metadataに加えてrelease manifestとのbindingを再検証する。public npm registryへのpublishは行わない。
 
 `release notes` は既定ではdry-runで、`--write` を付けた場合のみ
 `docs/release-notes-v0.md` の `<!-- kairon:release-notes-unreleased -->` 直下へappendする。
 
-`release bump` は既定ではdry-runで、`--write` を付けた場合のみ `package.json` と
-`src/index.ts` を同時に更新する。`--version` と `--type` は同時指定しない。
+`release bump` は既定ではdry-runで、`--write` を付けた場合のみ `package.json`、
+存在する`package-lock.json`、`src/index.ts` を同時に更新する。`--version` と `--type` は同時指定しない。
 
 write modeの安全条件。
 
@@ -928,7 +930,7 @@ T145以降のoperation test、doctor、daemon certification、backup rehearsal�
 kairon readiness manifest `
   --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\summary.json `
   --evidence CONFIG_MIGRATION_DOCTOR=.\.kairon\reports\doctor.json `
-  --evidence PACKAGE_LIFECYCLE=.\release-artifacts\0.1.0\verification.json
+  --evidence PACKAGE_LIFECYCLE=.\release-artifacts\0.2.0\verification.json
 
 kairon readiness check
 kairon readiness report --format json --output .kairon\reports\readiness\latest.json

@@ -92,6 +92,7 @@ import {
   formatReleaseValidation,
   releaseBumpCommand,
   releaseCheckCommand,
+  releaseManifestCommand,
   releaseNotesCommand,
   releasePackCommand,
   releaseVerifyCommand,
@@ -1338,12 +1339,30 @@ export function createProgram(): Command {
     .description("Verify a local beta tarball and its checksum manifest.")
     .argument("<package>", "Path to the local beta .tgz package.")
     .option("--manifest <path>", "Checksum manifest path. Defaults to <package>.sha256.json.")
-    .action(async (packageFile: string, options: { manifest?: string }) => {
+    .option("--release-manifest <path>", "Release manifest path for source and artifact binding verification.")
+    .action(async (packageFile: string, options: {
+      manifest?: string;
+      releaseManifest?: string;
+    }) => {
       const result = await releaseVerifyCommand(packageFile, options);
       console.log(result.text);
       if (!result.ok) {
         process.exitCode = 1;
       }
+    });
+
+  release
+    .command("manifest")
+    .description("Create a release manifest bound to clean source and a verified package.")
+    .requiredOption("--package <path>", "Path to the verified local beta .tgz package.")
+    .requiredOption("--manifest <path>", "Path to the package checksum manifest.")
+    .option("--output <path>", "Output path. Defaults to release-manifest.json beside the package.")
+    .action(async (options: {
+      package?: string;
+      manifest?: string;
+      output?: string;
+    }) => {
+      console.log(await releaseManifestCommand(process.cwd(), options));
     });
 
   release

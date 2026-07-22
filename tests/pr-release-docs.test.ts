@@ -47,6 +47,8 @@ describe("PR and release documentation", () => {
 
     expect(installation).toContain("npm run release:pack");
     expect(installation).toContain("kairon release verify");
+    expect(installation).toContain("kairon release manifest");
+    expect(installation).toContain("release-manifest.json");
     expect(installation).toContain("install-local-beta.ps1");
     expect(installation).toContain("update-local-beta.ps1");
     expect(installation).toContain("uninstall-local-beta.ps1");
@@ -54,6 +56,7 @@ describe("PR and release documentation", () => {
     expect(installation).toContain("削除しません");
     expect(commands).toContain("kairon release pack");
     expect(commands).toContain("kairon release verify");
+    expect(commands).toContain("kairon release manifest");
   });
 
   it("documents GitHub branch protection sandbox and token redaction policy", async () => {
@@ -119,9 +122,15 @@ describe("PR and release documentation", () => {
     const packageJson = JSON.parse(await readUtf8("package.json")) as {
       version: string;
     };
+    const packageLock = JSON.parse(await readUtf8("package-lock.json")) as {
+      version: string;
+      packages: { "": { version: string } };
+    };
     const index = await readUtf8("src/index.ts");
 
     expect(index).toContain(`KAIRON_VERSION = "${packageJson.version}"`);
+    expect(packageLock.version).toBe(packageJson.version);
+    expect(packageLock.packages[""].version).toBe(packageJson.version);
   });
 
   it("keeps CI scoped to deterministic local checks", async () => {
