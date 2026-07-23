@@ -7,10 +7,13 @@ import {
   type SessionRunUpdate
 } from "../src/agents/session-host.js";
 import {
+  compactAgentSessionCommand,
   listAgentSessionsCommand,
   resumeAgentCommand,
   resetAgentSessionCommand,
+  rotateAgentSessionCommand,
   showAgentHealthCommand,
+  showAgentSessionBudgetCommand,
   suspendAgentCommand,
   showAgentSessionCommand
 } from "../src/cli/commands/agent.js";
@@ -198,6 +201,51 @@ describe("agent session commands", () => {
       agent: "codex",
       session_id: "SESSION-2026-05-25-codex"
     });
+  });
+
+  it("reports, compacts, and rotates session budgets through guarded commands", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const host = new FileSessionHost(root, {
+      commandAvailability: async () => true,
+      now: () => new Date("2026-07-23T01:00:00.000Z")
+    });
+    await host.openSession("codex", "2026-07-23");
+
+    const budget = await showAgentSessionBudgetCommand(root, "codex", {
+      date: "2026-07-23",
+      now: () => new Date("2026-07-23T01:01:00.000Z")
+    });
+    expect(budget).toContain("Kairon agent session budget.");
+    expect(budget).toContain("budget_source=unavailable");
+
+    const dryRun = await compactAgentSessionCommand(root, "codex", {
+      date: "2026-07-23",
+      dryRun: true,
+      now: () => new Date("2026-07-23T01:02:00.000Z")
+    });
+    const planId = /plan_id=(CMP-[^\r\n]+)/.exec(dryRun)?.[1];
+    expect(planId).toMatch(/^CMP-/);
+    await expect(
+      compactAgentSessionCommand(root, "codex", {
+        date: "2026-07-23"
+      })
+    ).rejects.toThrow("--dry-run");
+
+    const confirmed = await compactAgentSessionCommand(root, "codex", {
+      date: "2026-07-23",
+      confirm: planId,
+      now: () => new Date("2026-07-23T01:03:00.000Z")
+    });
+    expect(confirmed).toContain("status=completed");
+
+    const rotated = await rotateAgentSessionCommand(root, "codex", {
+      date: "2026-07-23",
+      reason: "operator requested clean context",
+      now: () => new Date("2026-07-23T01:04:00.000Z")
+    });
+    expect(rotated).toContain("status=completed");
+    expect(rotated).toContain("new_session_id=SESSION-2026-07-23-codex-R1");
   });
 
   it("shows provider health and audits manual suspend and resume", async () => {

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { ContextBuilder } from "../src/agents/context-builder.js";
+import { createSessionHandoffSummary } from "../src/agents/session-handoff.js";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { writeJsonFileAtomic, readJsonFile } from "../src/core/fs/json-file.js";
 import { createDailyReport } from "../src/maintenance/daily-report.js";
@@ -47,6 +48,11 @@ describe("handoff", () => {
 
     expect(handoff.runs).toHaveLength(1);
     expect(handoff.pending_approvals).toHaveLength(1);
+    expect(handoff.summary).toMatchObject({
+      kind: "session_handoff_summary",
+      reason: "daily_boundary",
+      source_hash: expect.stringMatching(/^sha256:/)
+    });
     expect(handoff.next_day_bootstrap_sources).toEqual(
       expect.arrayContaining([
         ".kairon/reports/daily/2026-05-25.json",
@@ -83,5 +89,23 @@ describe("handoff", () => {
     expect(bundle.sources.map((source) => source.type)).toEqual(
       expect.arrayContaining(["daily_report", "handoff"])
     );
+  });
+
+  it("bounds each shared handoff summary section", () => {
+    const values = Array.from({ length: 75 }, (_, index) => `item-${index}`);
+    const summary = createSessionHandoffSummary({
+      reason: "budget_compaction",
+      unfinishedWork: values,
+      decisions: values.map((reference) => ({
+        kind: "run_status",
+        reference,
+        status: "completed"
+      })),
+      artifactReferences: values
+    });
+
+    expect(summary.unfinished_work).toHaveLength(50);
+    expect(summary.decisions).toHaveLength(50);
+    expect(summary.artifact_references).toHaveLength(50);
   });
 });

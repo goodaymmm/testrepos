@@ -9,6 +9,10 @@ import {
   type DailyReport,
   type DailyRunSummary
 } from "./daily-report.js";
+import {
+  createSessionHandoffSummary,
+  type SessionHandoffSummary
+} from "../agents/session-handoff.js";
 
 export type AgentHandoff = {
   schema_version: string;
@@ -22,6 +26,7 @@ export type AgentHandoff = {
   scratch: string;
   runs: DailyRunSummary[];
   pending_approvals: Record<string, unknown>[];
+  summary: SessionHandoffSummary;
   next_day_bootstrap_sources: string[];
   created_at: string;
 };
@@ -58,6 +63,38 @@ export async function createAgentHandoff(
   const pendingApprovals = report.approvals.items.filter(
     (approval) => approval.status === "pending"
   );
+  const now = new Date();
+  const summary = createSessionHandoffSummary({
+    reason: "daily_boundary",
+    objective:
+      runs.length === 0
+        ? null
+        : String(runs.at(-1)?.task_id ?? runs.at(-1)?.run_id ?? ""),
+    unfinishedWork: runs
+      .filter((run) => run.status !== "completed")
+      .map(
+        (run) =>
+          `run ${run.run_id} task=${run.task_id ?? "none"} status=${run.status}`
+      ),
+    decisions: [
+      ...runs.map((run) => ({
+        kind: "run_status" as const,
+        reference: run.run_id,
+        status: run.status
+      })),
+      ...pendingApprovals.map((approval) => ({
+        kind: "approval" as const,
+        reference: String(approval.id ?? "unknown"),
+        status: String(approval.status ?? "pending")
+      }))
+    ],
+    artifactReferences: [
+      report.report_path,
+      toProjectPath(paths.root, resolveInside(sessionDir, "session.json")),
+      toProjectPath(paths.root, scratchPath)
+    ],
+    createdAt: now
+  });
   const handoff: AgentHandoff = {
     schema_version: "0.1",
     date: request.date,
@@ -70,12 +107,13 @@ export async function createAgentHandoff(
     scratch,
     runs,
     pending_approvals: pendingApprovals,
+    summary,
     next_day_bootstrap_sources: [
       report.report_path,
       toProjectPath(paths.root, handoffPath),
       toProjectPath(paths.root, handoffMarkdownPath)
     ],
-    created_at: new Date().toISOString()
+    created_at: now.toISOString()
   };
 
   await writeJsonFileAtomic(handoffPath, handoff);

@@ -100,7 +100,38 @@ const runtimeConfigSchema = schemaVersion
   })
   .passthrough();
 
+const sessionBudgetThresholdSchema = z.object({
+  prompt_bytes: z.number().int().positive(),
+  job_count: z.number().int().positive(),
+  elapsed_seconds: z.number().int().positive(),
+  compaction_count: z.number().int().positive()
+});
+
+const sessionBudgetSchema = z
+  .object({
+    enabled: z.boolean(),
+    soft_limit: sessionBudgetThresholdSchema,
+    hard_limit: sessionBudgetThresholdSchema,
+    compaction_keep_runs: z.number().int().min(1).max(100),
+    resource_lock_ttl_seconds: z.number().int().min(5).max(3_600)
+  })
+  .refine(
+    (budget) =>
+      (
+        [
+          "prompt_bytes",
+          "job_count",
+          "elapsed_seconds",
+          "compaction_count"
+        ] as const
+      ).every(
+        (metric) => budget.soft_limit[metric] < budget.hard_limit[metric]
+      ),
+    { message: "session budget soft limits must be below hard limits" }
+  );
+
 const agentsConfigSchema = schemaVersion.extend({
+  session_budget: sessionBudgetSchema.optional(),
   provider_policies: z
     .object({
       codex: providerPolicySchema(),
@@ -308,7 +339,7 @@ export function validateConfigFile(fileName: string, value: unknown): Validation
     const result = agentsConfigSchema.safeParse(value);
     if (!result.success) {
       errors.push(
-        `${fileName}: codex, claude, and gemini (Antigravity compatibility id) must be enabled for MVP`
+        `${fileName}: agent enablement, provider policy, or session budget settings are invalid`
       );
     }
   }

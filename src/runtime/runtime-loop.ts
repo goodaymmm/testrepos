@@ -513,7 +513,9 @@ function sessionAvailabilityFromSummary(
     status: session.dispatcher_status,
     mode: session.mode,
     healthStatus: session.health?.status,
-    nextRetryAt: session.health?.next_retry_at
+    nextRetryAt: session.health?.next_retry_at,
+    budgetStatus: session.budget_status,
+    budgetReasons: session.budget_reasons
   }));
 }
 

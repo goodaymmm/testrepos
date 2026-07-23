@@ -25,6 +25,11 @@ import {
   type CommandAvailabilityChecker,
   type SessionMetadata
 } from "./session-host.js";
+import {
+  assertSessionBudgetDispatchAllowed,
+  ensureSessionBudgetCompactionPlan,
+  recordSessionPromptBudget
+} from "./session-budget.js";
 import type { AgentId } from "./types.js";
 import {
   beginProviderRun,
@@ -163,6 +168,12 @@ export class CliSessionRunner {
     request: BootstrapAgentSessionRequest
   ): Promise<CliSessionRunRecord> {
     const session = await this.sessionHost.openSession(request.agent, request.date);
+    await assertSessionBudgetDispatchAllowed(
+      this.projectRoot,
+      request.agent,
+      request.date,
+      this.now()
+    );
     const bundle = await this.contextBuilder.buildDailyBootstrap({
       agent: request.agent,
       date: request.date
@@ -222,6 +233,13 @@ export class CliSessionRunner {
       return record;
     }
 
+    await recordSessionPromptBudget(this.projectRoot, {
+      agent: request.agent,
+      date: request.date,
+      promptBytes: Buffer.byteLength(prompt, "utf8"),
+      jobIncrement: 0,
+      now: this.now()
+    });
     const invocation = buildAgentCliInvocation({
       agent: request.agent,
       command: session.command,
@@ -251,6 +269,11 @@ export class CliSessionRunner {
     });
     await writeJsonFileAtomic(paths.runnerMetadataPath, record);
     await this.recordSessionRun({ session, bundle, paths, record });
+    await ensureSessionBudgetCompactionPlan(this.projectRoot, {
+      agent: request.agent,
+      date: request.date,
+      now: this.now()
+    });
     return record;
   }
 
@@ -260,6 +283,12 @@ export class CliSessionRunner {
     const session =
       (await this.sessionHost.attachSession(request.agent, request.date)) ??
       (await this.sessionHost.openSession(request.agent, request.date));
+    await assertSessionBudgetDispatchAllowed(
+      this.projectRoot,
+      request.agent,
+      request.date,
+      this.now()
+    );
     const bundle = await this.contextBuilder.buildRunContext({
       runId: request.runId,
       taskId: request.taskId,
@@ -343,6 +372,14 @@ export class CliSessionRunner {
         });
         return record;
       }
+
+      await recordSessionPromptBudget(this.projectRoot, {
+        agent: request.agent,
+        date: request.date,
+        promptBytes: Buffer.byteLength(prompt, "utf8"),
+        jobIncrement: 1,
+        now: this.now()
+      });
 
       if (!getAgentAdapter(request.agent).supports.nonInteractive) {
         if (this.interactiveSessionRunner !== undefined) {
@@ -533,6 +570,11 @@ export class CliSessionRunner {
           matched_pattern: record?.matched_pattern,
           started_at: record?.created_at,
           finished_at: record?.finished_at ?? this.now().toISOString()
+        });
+        await ensureSessionBudgetCompactionPlan(this.projectRoot, {
+          agent: request.agent,
+          date: request.date,
+          now: this.now()
         });
       } finally {
         await finishProviderRun(this.projectRoot, {

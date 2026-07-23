@@ -6,11 +6,14 @@ import { Command } from "commander";
 import { agentCliIdHint } from "../agents/display.js";
 import { KAIRON_VERSION } from "../index.js";
 import {
+  compactAgentSessionCommand,
   listAgentSessionsCommand,
   resumeAgentCommand,
   resetAgentSessionCommand,
+  rotateAgentSessionCommand,
   runAgentSmokeCommand,
   showAgentHealthCommand,
+  showAgentSessionBudgetCommand,
   suspendAgentCommand,
   showAgentSessionCommand
 } from "./commands/agent.js";
@@ -315,6 +318,52 @@ export function createProgram(): Command {
     .action(async (agentId: string, options: { date?: string }) => {
       console.log(await resetAgentSessionCommand(process.cwd(), agentId, options));
     });
+
+  agentSession
+    .command("budget")
+    .description("Show observed and estimated context budget for one session.")
+    .argument("<agent>", `Agent id: ${agentCliIdHint()}.`)
+    .option("--date <date>", "Session date in YYYY-MM-DD form. Defaults to today.")
+    .action(async (agentId: string, options: { date?: string }) => {
+      console.log(
+        await showAgentSessionBudgetCommand(process.cwd(), agentId, options)
+      );
+    });
+
+  agentSession
+    .command("compact")
+    .description("Plan or confirm a bounded session context compaction.")
+    .argument("<agent>", `Agent id: ${agentCliIdHint()}.`)
+    .option("--date <date>", "Session date in YYYY-MM-DD form. Defaults to today.")
+    .option("--dry-run", "Create a compaction plan without compacting the session.")
+    .option("--confirm <planId>", "Execute only when this value matches the plan id.")
+    .action(
+      async (
+        agentId: string,
+        options: { date?: string; dryRun?: boolean; confirm?: string }
+      ) => {
+        console.log(
+          await compactAgentSessionCommand(process.cwd(), agentId, options)
+        );
+      }
+    );
+
+  agentSession
+    .command("rotate")
+    .description("Rotate one idle session with a sanitized handoff.")
+    .argument("<agent>", `Agent id: ${agentCliIdHint()}.`)
+    .option("--date <date>", "Session date in YYYY-MM-DD form. Defaults to today.")
+    .requiredOption("--reason <text>", "Audited operator reason for rotation.")
+    .action(
+      async (
+        agentId: string,
+        options: { date?: string; reason?: string }
+      ) => {
+        console.log(
+          await rotateAgentSessionCommand(process.cwd(), agentId, options)
+        );
+      }
+    );
 
   const config = program
     .command("config")

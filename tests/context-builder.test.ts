@@ -70,6 +70,38 @@ describe("ContextBuilder", () => {
     );
   });
 
+  it("includes the bounded active handoff after compaction or rotation", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const sessionDir = path.join(
+      root,
+      ".kairon",
+      "sessions",
+      "2026-07-23",
+      "codex"
+    );
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      path.join(sessionDir, "active-handoff.md"),
+      "# Kairon Session Handoff\n\nObjective: Continue TASK-0170\n",
+      "utf8"
+    );
+
+    const bundle = await new ContextBuilder(root).buildDailyBootstrap({
+      agent: "codex",
+      date: "2026-07-23"
+    });
+
+    expect(bundle.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "handoff",
+          path: ".kairon/sessions/2026-07-23/codex/active-handoff.md"
+        })
+      ])
+    );
+  });
+
   it("injects RAG retrieval results into run context when enabled", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

@@ -16,6 +16,7 @@ Agent Runner は Session Host が保持する session に job prompt を投入�
 - 公式 CLI process、stdin、stdout、stderr、pid、terminal session id を追跡する。
 - session は日次メンテ終了時に close する。
 - 翌日は前日 handoff から新しい session に bootstrap context を投入する。
+- session contextは明示budgetで制限し、soft limitでcompaction、hard limitでrotationする。
 
 ## Component Boundary
 
@@ -85,11 +86,14 @@ return run result
 ### compacting
 
 ```text
-summarize current session state
-write scratch.md
-write context_manifest.json
-send compacted memory prompt if needed
+acquire Agent/date resource lock
+verify exact plan id and source hash
+write bounded sanitized handoff
+retain configured recent run checkpoints
+reset budget window and increment compaction count
 ```
+
+hard limit、`compacting`、`rotating` のsessionには新しいjobを投入しない。中断時はcanonical `session.json` とoperation artifactを照合して1つのactive sessionへ復旧する。
 
 ### closing
 
@@ -124,6 +128,14 @@ terminate CLI process gracefully
   },
   "active_run_id": null,
   "last_run_id": "RUN-0004",
+  "prompt_bytes": 183500,
+  "job_count": 4,
+  "elapsed_seconds": 10800,
+  "compaction_count": 1,
+  "rotation_count": 0,
+  "budget_source": "kairon_estimated",
+  "budget_status": "within_limit",
+  "budget_reasons": [],
   "loaded_bootstrap_hash": "sha256:...",
   "context_manifest": ".kairon/sessions/2026-05-24/codex/context_manifest.json",
   "scratch": ".kairon/sessions/2026-05-24/codex/scratch.md",
@@ -233,6 +245,7 @@ close_session(session_id)
 - stdout / stderr は terminal-level log と run-level log の両方に残す。
 - run-level log は `RUN-xxxx` に切り出す。
 - session scratch は run ごとに更新する。
+- context budget、artifact、CLI操作、復旧契約は `docs/session-context-budget-v0.md` を正とする。
 
 ## Done Criteria
 

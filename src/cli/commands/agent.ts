@@ -10,6 +10,15 @@ import {
   sameDaySessionStatus,
   type SessionMetadata
 } from "../../agents/session-host.js";
+import {
+  confirmSessionCompaction,
+  formatSessionBudgetReport,
+  formatSessionCompactionPlan,
+  formatSessionRotation,
+  getSessionBudgetReport,
+  planSessionCompaction,
+  rotateSessionBudget
+} from "../../agents/session-budget.js";
 import { agentIds, isAgentId, type AgentId } from "../../agents/types.js";
 import {
   getProviderPolicyHealth,
@@ -38,6 +47,15 @@ export type AgentSessionCommandOptions = {
 };
 
 export type AgentSessionResetCommandOptions = AgentSessionCommandOptions;
+
+export type AgentSessionCompactCommandOptions = AgentSessionCommandOptions & {
+  dryRun?: boolean;
+  confirm?: string;
+};
+
+export type AgentSessionRotateCommandOptions = AgentSessionCommandOptions & {
+  reason?: string;
+};
 
 export type AgentHealthCommandOptions = {
   agent?: string;
@@ -136,6 +154,15 @@ export async function showAgentSessionCommand(
     ...(metadata.session_context_manifest === undefined
       ? []
       : [`session_context_manifest=${metadata.session_context_manifest}`]),
+    `budget_status=${metadata.budget_status ?? "within_limit"}`,
+    `budget_source=${metadata.budget_source ?? "unavailable"}`,
+    `prompt_bytes=${metadata.prompt_bytes ?? 0}`,
+    `job_count=${metadata.job_count ?? 0}`,
+    `elapsed_seconds=${metadata.elapsed_seconds ?? 0}`,
+    `compaction_count=${metadata.compaction_count ?? 0}`,
+    `rotation_count=${metadata.rotation_count ?? 0}`,
+    `budget_reasons=${(metadata.budget_reasons ?? []).join(",")}`,
+    `active_compaction_plan_id=${metadata.active_compaction_plan_id ?? ""}`,
     ...formatHealthLines(metadata, options.now?.() ?? new Date()),
     ...formatIssueLines(issue)
   ].join("\n");
@@ -179,6 +206,75 @@ export async function resetAgentSessionCommand(
     "status=archived",
     `archived_path=${toArtifactPath(projectRoot, archiveDir)}`
   ].join("\n");
+}
+
+export async function showAgentSessionBudgetCommand(
+  projectRoot: string,
+  agent: string,
+  options: AgentSessionCommandOptions = {}
+): Promise<string> {
+  const agentId = parseAgentId(agent);
+  const date = await resolveSessionDate(projectRoot, options);
+  return formatSessionBudgetReport(
+    await getSessionBudgetReport(
+      projectRoot,
+      agentId,
+      date,
+      options.now?.() ?? new Date()
+    )
+  );
+}
+
+export async function compactAgentSessionCommand(
+  projectRoot: string,
+  agent: string,
+  options: AgentSessionCompactCommandOptions = {}
+): Promise<string> {
+  const agentId = parseAgentId(agent);
+  const date = await resolveSessionDate(projectRoot, options);
+  const now = options.now?.() ?? new Date();
+  if (options.dryRun === true && options.confirm !== undefined) {
+    throw new Error("Use either --dry-run or --confirm, not both.");
+  }
+  if (options.confirm !== undefined) {
+    return formatSessionCompactionPlan(
+      await confirmSessionCompaction(projectRoot, {
+        agent: agentId,
+        date,
+        planId: options.confirm,
+        now
+      })
+    );
+  }
+  if (options.dryRun !== true) {
+    throw new Error(
+      "Session compaction requires --dry-run or --confirm <plan-id>."
+    );
+  }
+  return formatSessionCompactionPlan(
+    await planSessionCompaction(projectRoot, {
+      agent: agentId,
+      date,
+      now
+    })
+  );
+}
+
+export async function rotateAgentSessionCommand(
+  projectRoot: string,
+  agent: string,
+  options: AgentSessionRotateCommandOptions
+): Promise<string> {
+  const agentId = parseAgentId(agent);
+  const date = await resolveSessionDate(projectRoot, options);
+  return formatSessionRotation(
+    await rotateSessionBudget(projectRoot, {
+      agent: agentId,
+      date,
+      reason: requiredRotationReason(options.reason),
+      now: options.now?.() ?? new Date()
+    })
+  );
 }
 
 export async function showAgentHealthCommand(
@@ -299,6 +395,9 @@ function formatSessionListLine(metadata: SessionMetadata): string {
     `command=${metadata.command}`,
     `command_available=${metadata.command_available}`,
     `last_status=${metadata.last_status ?? ""}`,
+    `budget_status=${metadata.budget_status ?? "within_limit"}`,
+    `prompt_bytes=${metadata.prompt_bytes ?? 0}`,
+    `job_count=${metadata.job_count ?? 0}`,
     `health_status=${metadata.health?.status ?? "unknown"}`,
     `health_next_retry_at=${metadata.health?.next_retry_at ?? ""}`,
     `reason=${issue?.reason ?? ""}`,
@@ -395,6 +494,13 @@ function parseRequiredPolicyAgent(agent: string | undefined): AgentId {
 function requiredPolicyReason(reason: string | undefined): string {
   if (reason === undefined || reason.trim().length === 0) {
     throw new Error("Missing --reason for provider policy audit.");
+  }
+  return reason;
+}
+
+function requiredRotationReason(reason: string | undefined): string {
+  if (reason === undefined || reason.trim().length === 0) {
+    throw new Error("Missing --reason for session rotation.");
   }
   return reason;
 }

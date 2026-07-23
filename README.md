@@ -191,10 +191,16 @@ Antigravity は互換性維持のため CLI 引数では `--agent gemini` を使
 ```powershell
 kairon agent session list
 kairon agent session show codex
+kairon agent session budget codex
+kairon agent session compact codex --dry-run
+kairon agent session compact codex --confirm CMP-...
+kairon agent session rotate codex --reason "hard limit reached"
 kairon agent session reset codex --date 2026-07-14
 ```
 
 Agentごとのhealth、連続失敗、retry backoff、setup_required履歴を `.kairon/sessions/YYYY-MM-DD/{agent}/health.json` に保存します。dispatcherはbackoff中の不健康なsessionを既定で避け、成功後は連続失敗をresetします。`session reset` はsession directoryをarchiveするため、healthを含む既存証跡は残ります。
+
+同日sessionのcontextはprompt byte数、job数、経過秒数、compaction回数で制限します。soft limitではbounded compaction planを生成し、hard limitでは次のdispatchを停止してsanitized handoff付きrotationを要求します。詳細は `docs/session-context-budget-v0.md` を参照してください。
 
 ### Provider Policy Health
 
