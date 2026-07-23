@@ -17,7 +17,28 @@ export type WorkflowNodeStatus =
   | "skipped"
   | "cancelled";
 
-export type WorkflowNodeKind = "approval_gate" | "task";
+export type WorkflowNodeKind =
+  | "approval_gate"
+  | "task"
+  | "manual_gate"
+  | "condition"
+  | "parallel"
+  | "join";
+
+export type WorkflowJoinPolicy = "all" | "any" | "threshold";
+
+export type WorkflowNodeCompensationState = {
+  task_id: string;
+  status:
+    | "available"
+    | "planned"
+    | "dispatched"
+    | "completed"
+    | "failed";
+  plan_id?: string;
+  queue_item_id?: string;
+  error?: string;
+};
 
 export type WorkflowResourceLock = {
   resource: string;
@@ -66,10 +87,16 @@ export type WorkflowNodeState = {
   kind: WorkflowNodeKind;
   status: WorkflowNodeStatus;
   dependencies: string[];
+  branch_id?: string;
   attempt: number;
   max_attempts: number;
   input_digest: string;
   output_digest?: string;
+  condition_result?: boolean;
+  join_policy?: WorkflowJoinPolicy;
+  join_threshold?: number;
+  resource_keys?: string[];
+  compensation?: WorkflowNodeCompensationState;
   task_id?: string;
   approval_id?: string;
   queue_item_id?: string;
@@ -108,6 +135,24 @@ export type WorkflowRunArtifact = {
   };
   nodes: WorkflowNodeState[];
   edges: WorkflowEdge[];
+  definition?: {
+    schema_version: "0.1";
+    artifact_path: string;
+    digest: string;
+    input_digest: string;
+    entry_node_id: string;
+  };
+  graph?: {
+    branch_ids: string[];
+    join_node_ids: string[];
+  };
+  compensation?: {
+    plan_id: string;
+    status: "planned" | "running" | "completed" | "failed";
+    approval_id?: string;
+    pending_steps: number;
+    updated_at: string;
+  };
   source: {
     kind: "new" | "experimental_workflow_runtime_spike" | "workflow_runtime_candidate";
     artifact_path?: string;
@@ -140,6 +185,17 @@ export type ProductionWorkflowQueueMetadata = {
   feature_flag: "KAIRON_WORKFLOW_RUNTIME";
   cancellation_token?: string;
   control_generation?: number;
+};
+
+export type ProductionWorkflowCompensationQueueMetadata = {
+  schema_version: "0.1";
+  workflow_id: string;
+  plan_id: string;
+  step_id: string;
+  source_node_id: string;
+  idempotency_key: string;
+  plan_artifact_path: string;
+  approval_id: string;
 };
 
 export type WorkflowNodeTransition =
@@ -245,7 +301,7 @@ export function deriveWorkflowStatus(nodes: WorkflowNodeState[]): WorkflowStatus
     nodes.some(
       (node) =>
         node.status === "failed" &&
-        (node.kind === "approval_gate" || node.attempt >= node.max_attempts)
+        (node.kind !== "task" || node.attempt >= node.max_attempts)
     )
   ) {
     return "failed";

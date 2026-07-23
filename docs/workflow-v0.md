@@ -497,3 +497,106 @@ T138では明示的なqueue接続だけを追加する。
 - recovery / rollback導線を `<workflow_id>-recovery.json` に保存する。
 - feature flagが無効なRuntimeLoopはworkflow metadata付きitemをclaimしない。
 - workflow runtimeはcanonical stateを直接更新せず、dispatch時は既存TaskRunner / QueueWorker境界を使う。
+
+## 22. Production Workflow Graph
+
+production workflow definitionはrun stateと分離し、次のartifactへ保存する。
+
+```text
+.kairon/workflows/definitions/<workflow_id>.json
+.kairon/workflows/runs/<workflow_id>.json
+.kairon/workflows/checkpoints/<workflow_id>-<sequence>.json
+.kairon/workflows/compensations/<plan_id>.json
+```
+
+definition nodeは`task | manual_gate | condition | parallel | join`のdiscriminated unionである。各nodeは`depends_on`を明示し、entryから到達できないnode、cycle、missing dependency、duplicate ID、不正なparallel branchとjoinを実行前に拒否する。
+
+```json
+{
+  "schema_version": "0.1",
+  "artifact_kind": "workflow_definition",
+  "workflow_id": "WF-EXAMPLE",
+  "objective": "Run checks in parallel.",
+  "entry_node_id": "condition_release",
+  "input": {
+    "release": {
+      "enabled": true
+    }
+  },
+  "nodes": [
+    {
+      "id": "condition_release",
+      "type": "condition",
+      "depends_on": [],
+      "expression": {
+        "source": "input",
+        "path": "release.enabled",
+        "operator": "eq",
+        "value": true
+      }
+    },
+    {
+      "id": "parallel_checks",
+      "type": "parallel",
+      "depends_on": ["condition_release"],
+      "when": {
+        "condition_node_id": "condition_release",
+        "equals": true
+      },
+      "branches": [
+        {
+          "id": "lint",
+          "entry_node_id": "lint_task"
+        },
+        {
+          "id": "test",
+          "entry_node_id": "test_task"
+        }
+      ]
+    },
+    {
+      "id": "lint_task",
+      "type": "task",
+      "depends_on": ["parallel_checks", "condition_release"],
+      "branch_id": "lint",
+      "when": {
+        "condition_node_id": "condition_release",
+        "equals": true
+      },
+      "task_id": "TASK-0001",
+      "resource_keys": ["src/lint-target.ts"]
+    },
+    {
+      "id": "test_task",
+      "type": "task",
+      "depends_on": ["parallel_checks", "condition_release"],
+      "branch_id": "test",
+      "when": {
+        "condition_node_id": "condition_release",
+        "equals": true
+      },
+      "task_id": "TASK-0002",
+      "resource_keys": ["src/test-target.ts"]
+    },
+    {
+      "id": "join_checks",
+      "type": "join",
+      "depends_on": ["lint_task", "test_task"],
+      "policy": "all"
+    }
+  ]
+}
+```
+
+conditionのsourceは`input`または既存node state、operatorは`eq | ne | gt | gte | lt | lte | in | contains | exists`に限定する。script、shell、`eval`、任意module importはschemaで拒否する。missing valueとtype mismatchは明示errorとしてnodeへ記録する。
+
+parallel nodeが完了すると、条件と依存を満たした複数taskを同一advanceでdispatchできる。各taskは`workflow/node/attempt`のidempotency keyとnode固有resource lockを持つ。joinは`all | any | threshold`を必須指定し、暗黙defaultを持たない。branch、join待ち、compensation statusはBoard projectionから確認できる。
+
+task nodeにcompensation taskを定義した場合、partial failure後に次の二段階で実行する。
+
+```text
+kairon workflow compensate WF-EXAMPLE --dry-run
+kairon workflow compensate WF-EXAMPLE --approval-id APR-0001 --confirm WF-EXAMPLE-COMP-000006
+```
+
+dry-runは完了nodeを逆トポロジ順に並べたplanだけを作成する。compensation taskはapprove済みapprovalとplan IDのexact confirmがない限りqueueへ投入しない。各stepはidempotency keyを持ち、前stepの完了後に次stepをdispatchする。approvalなしの自動compensation、任意code condition、distributed executionは対象外である。

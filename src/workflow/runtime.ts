@@ -30,9 +30,18 @@ import {
   resolveWorkflowRuntimeConfig,
   type WorkflowRuntimeConfigResolution
 } from "./config.js";
+import { evaluateWorkflowCondition } from "./conditions.js";
+import {
+  digestWorkflowDefinition,
+  persistWorkflowDefinition,
+  readValidatedWorkflowDefinition,
+  type WorkflowDefinition,
+  type WorkflowDefinitionNode
+} from "./definition.js";
 
 export type RunProductionWorkflowRequest = {
-  workflowId: string;
+  workflowId?: string;
+  definitionPath?: string;
   correlationId?: string;
   taskId?: string;
   approvalId?: string;
@@ -86,9 +95,28 @@ export class ProductionWorkflowRuntime {
 
   async run(request: RunProductionWorkflowRequest): Promise<WorkflowRuntimeResult> {
     const runtimeConfig = await this.assertEnabled();
-    assertWorkflowId(request.workflowId);
+    const definition =
+      request.definitionPath === undefined
+        ? undefined
+        : await readValidatedWorkflowDefinition(
+            path.resolve(this.projectRoot, request.definitionPath)
+          );
+    const workflowId = definition?.workflow_id ?? request.workflowId;
+    if (workflowId === undefined) {
+      throw new Error("Workflow run requires workflowId or definitionPath.");
+    }
+    if (
+      definition !== undefined &&
+      request.workflowId !== undefined &&
+      request.workflowId !== definition.workflow_id
+    ) {
+      throw new Error(
+        `Workflow id does not match definition: ${request.workflowId} != ${definition.workflow_id}`
+      );
+    }
+    assertWorkflowId(workflowId);
     const actions: string[] = [];
-    const loaded = await this.loadOrCreate(request);
+    const loaded = await this.loadOrCreate(request, workflowId, definition);
     const artifact = loaded.artifact;
     if (request.correlationId !== undefined) {
       artifact.correlation_id = request.correlationId;
@@ -374,25 +402,46 @@ export class ProductionWorkflowRuntime {
   }
 
   private async loadOrCreate(
-    request: RunProductionWorkflowRequest
+    request: RunProductionWorkflowRequest,
+    workflowId: string,
+    definition?: WorkflowDefinition
   ): Promise<{ artifact: WorkflowRunArtifact; created: boolean }> {
     try {
-      return { artifact: await this.loadArtifact(request.workflowId), created: false };
+      const artifact = await this.loadArtifact(workflowId);
+      if (
+        definition !== undefined &&
+        artifact.definition?.digest !== digestWorkflowDefinition(definition)
+      ) {
+        throw new Error(
+          `Workflow definition does not match existing run: ${workflowId}`
+        );
+      }
+      return { artifact, created: false };
     } catch (error) {
       if (!isMissingJsonFile(error)) {
         throw error;
       }
     }
 
+    if (definition !== undefined) {
+      return {
+        artifact: await this.createArtifactFromDefinition(
+          definition,
+          request.correlationId
+        ),
+        created: true
+      };
+    }
+
     if (request.taskId === undefined) {
       throw new Error(
-        `Workflow ${request.workflowId} does not exist; --task-id is required.`
+        `Workflow ${workflowId} does not exist; --task-id is required.`
       );
     }
 
     return {
       artifact: await this.createArtifact({
-        workflowId: request.workflowId,
+        workflowId,
         correlationId: request.correlationId,
         taskId: request.taskId,
         approvalId: request.approvalId,
@@ -403,6 +452,146 @@ export class ProductionWorkflowRuntime {
         source: { kind: "new" }
       }),
       created: true
+    };
+  }
+
+  private async createArtifactFromDefinition(
+    definition: WorkflowDefinition,
+    correlationId?: string
+  ): Promise<WorkflowRunArtifact> {
+    const taskNodes = definition.nodes.filter(
+      (node): node is Extract<WorkflowDefinitionNode, { type: "task" }> =>
+        node.type === "task"
+    );
+    if (taskNodes.length === 0) {
+      throw new Error("Workflow definition requires at least one task node.");
+    }
+    for (const node of taskNodes) {
+      await readJsonFile<TaskRecord>(
+        resolveInside(
+          getKaironPaths(this.projectRoot).tasksDir,
+          node.task_id,
+          "task.json"
+        )
+      );
+      if (node.compensation !== undefined) {
+        await readJsonFile<TaskRecord>(
+          resolveInside(
+            getKaironPaths(this.projectRoot).tasksDir,
+            node.compensation.task_id,
+            "task.json"
+          )
+        );
+      }
+    }
+
+    const storedDefinition = await persistWorkflowDefinition(
+      this.projectRoot,
+      definition
+    );
+    const runtimeConfig = (await this.resolveConfig()).config;
+    const now = this.now().toISOString();
+    const nodes = definition.nodes.map<WorkflowNodeState>((node) => {
+      const resourceKeys =
+        node.type === "task"
+          ? uniqueStrings(
+              node.resource_keys.length === 0
+                ? [`.kairon/tasks/${node.task_id}`]
+                : node.resource_keys
+            )
+          : undefined;
+      const retry =
+        node.type === "task" ? node.retry ?? runtimeConfig.retry : undefined;
+      return {
+        id: node.id,
+        kind: node.type,
+        status: "pending",
+        dependencies: [...node.depends_on],
+        branch_id: node.branch_id,
+        attempt: 0,
+        max_attempts: retry?.max_attempts ?? 1,
+        input_digest: digest({
+          node,
+          workflow_input_digest: digest(definition.input)
+        }),
+        join_policy: node.type === "join" ? node.policy : undefined,
+        join_threshold: node.type === "join" ? node.threshold : undefined,
+        resource_keys: resourceKeys,
+        compensation:
+          node.type === "task" && node.compensation !== undefined
+            ? {
+                task_id: node.compensation.task_id,
+                status: "available"
+              }
+            : undefined,
+        task_id: node.type === "task" ? node.task_id : undefined,
+        approval_id:
+          node.type === "manual_gate" ? node.approval_id : undefined,
+        resource_locks: [],
+        updated_at: now
+      };
+    });
+    const resourceKeys = uniqueStrings(
+      nodes.flatMap((node) => node.resource_keys ?? [])
+    );
+    const maxAttempts = Math.max(...nodes.map((node) => node.max_attempts));
+    const retryBackoffSeconds = Math.max(
+      runtimeConfig.retry.backoff_seconds,
+      ...taskNodes.map(
+        (node) => node.retry?.backoff_seconds ?? runtimeConfig.retry.backoff_seconds
+      )
+    );
+
+    return {
+      schema_version: "0.1",
+      artifact_kind: "workflow_run",
+      runtime: "kairon_workflow_runtime",
+      workflow_id: definition.workflow_id,
+      correlation_id: correlationId,
+      status: "ready",
+      sequence: 0,
+      objective: definition.objective,
+      task_id: taskNodes[0].task_id,
+      approval_id: definition.nodes.find(
+        (node) => node.type === "manual_gate"
+      )?.approval_id,
+      resource_keys: resourceKeys,
+      retry_policy: {
+        max_attempts: maxAttempts,
+        backoff_seconds: retryBackoffSeconds
+      },
+      nodes,
+      edges: definition.nodes.flatMap((node) =>
+        node.depends_on.map((dependencyId) => ({
+          from: dependencyId,
+          to: node.id
+        }))
+      ),
+      definition: {
+        schema_version: "0.1",
+        artifact_path: storedDefinition.project_path,
+        digest: storedDefinition.digest,
+        input_digest: digest(definition.input),
+        entry_node_id: definition.entry_node_id
+      },
+      graph: {
+        branch_ids: uniqueStrings(
+          definition.nodes
+            .map((node) => node.branch_id)
+            .filter((branchId): branchId is string => branchId !== undefined)
+        ),
+        join_node_ids: definition.nodes
+          .filter((node) => node.type === "join")
+          .map((node) => node.id)
+      },
+      source: { kind: "new" },
+      recovery: {
+        last_action: "created",
+        reconciled_queue_item_ids: []
+      },
+      control: createWorkflowControlState(),
+      created_at: now,
+      updated_at: now
     };
   }
 
@@ -648,12 +837,17 @@ export class ProductionWorkflowRuntime {
 
     for (let index = 0; index < artifact.nodes.length; index += 1) {
       let node = artifact.nodes[index];
+      const previousNodeDigest = digest(node);
       if (
-        node.kind === "approval_gate" &&
+        (node.kind === "approval_gate" || node.kind === "manual_gate") &&
         !["completed", "skipped", "failed", "cancelled"].includes(node.status)
       ) {
+        const previousStatus = node.status;
         node = this.reconcileApprovalNode(node, approvals, now, actions);
         artifact.nodes[index] = node;
+        if (node.status !== previousStatus) {
+          await this.persistGraphTransition(artifact);
+        }
         continue;
       }
 
@@ -667,7 +861,7 @@ export class ProductionWorkflowRuntime {
       }
       reconciled.add(queueItem.id);
 
-      if (queueItem.status === "ready") {
+      if (queueItem.status === "ready" && node.status !== "dispatched") {
         node.status = "dispatched";
         node.updated_at = now;
       } else if (queueItem.status === "claimed") {
@@ -700,6 +894,12 @@ export class ProductionWorkflowRuntime {
         }
       }
       artifact.nodes[index] = node;
+      if (
+        artifact.definition !== undefined &&
+        digest(node) !== previousNodeDigest
+      ) {
+        await this.persistGraphTransition(artifact);
+      }
     }
 
     artifact.recovery.reconciled_queue_item_ids = [...reconciled].sort();
@@ -769,28 +969,128 @@ export class ProductionWorkflowRuntime {
       );
       return;
     }
-    for (let index = 0; index < artifact.nodes.length; index += 1) {
-      const node = artifact.nodes[index];
-      if (node.status !== "pending") {
-        continue;
-      }
-      if (!dependenciesCompleted(node, artifact.nodes)) {
-        continue;
-      }
+    const definition = await this.loadArtifactDefinition(artifact);
+    let autoProgress = true;
+    while (autoProgress) {
+      autoProgress = false;
+      for (let index = 0; index < artifact.nodes.length; index += 1) {
+        const node = artifact.nodes[index];
+        if (node.status !== "pending") {
+          continue;
+        }
+        const definitionNode = definition?.nodes.find(
+          (candidate) => candidate.id === node.id
+        );
+        if (
+          definitionNode?.when !== undefined &&
+          conditionDependencyDoesNotMatch(
+            definitionNode.when,
+            artifact.nodes
+          )
+        ) {
+          artifact.nodes[index] = transitionWorkflowNode(node, {
+            type: "skip",
+            at: this.now().toISOString()
+          });
+          actions.push(`condition_skipped:${node.id}`);
+          await this.persistGraphTransition(artifact);
+          autoProgress = true;
+          continue;
+        }
 
-      if (node.kind === "approval_gate") {
-        artifact.nodes[index] = transitionWorkflowNode(node, {
-          type: "wait_approval",
-          at: this.now().toISOString(),
-          blocker: node.approval_id === undefined ? "approval_id_missing" : "approval_pending"
-        });
-        continue;
-      }
+        if (node.kind === "join") {
+          if (!joinSatisfied(node, artifact.nodes)) {
+            artifact.nodes[index] = {
+              ...node,
+              blocker: joinBlocker(node, artifact.nodes),
+              updated_at: this.now().toISOString()
+            };
+            continue;
+          }
+          artifact.nodes[index] = transitionWorkflowNode(node, {
+            type: "complete",
+            at: this.now().toISOString(),
+            outputDigest: digest({
+              policy: node.join_policy,
+              dependencies: node.dependencies
+            })
+          });
+          actions.push(`join_completed:${node.id}:${node.join_policy}`);
+          await this.persistGraphTransition(artifact);
+          autoProgress = true;
+          continue;
+        }
 
-      const dispatch = await this.dispatchTaskNode(artifact, node);
-      artifact.nodes[index] = dispatch.node;
-      actions.push(dispatch.action);
-      break;
+        if (!dependenciesCompleted(node, artifact.nodes)) {
+          continue;
+        }
+
+        if (node.kind === "approval_gate" || node.kind === "manual_gate") {
+          artifact.nodes[index] = transitionWorkflowNode(node, {
+            type: "wait_approval",
+            at: this.now().toISOString(),
+            blocker:
+              node.approval_id === undefined
+                ? "approval_id_missing"
+                : "approval_pending"
+          });
+          await this.persistGraphTransition(artifact);
+          continue;
+        }
+
+        if (node.kind === "condition") {
+          if (definition === undefined || definitionNode?.type !== "condition") {
+            artifact.nodes[index] = transitionWorkflowNode(node, {
+              type: "fail",
+              at: this.now().toISOString(),
+              error: "Condition node definition is missing."
+            });
+            actions.push(`failed:${node.id}:definition_missing`);
+            continue;
+          }
+          try {
+            const conditionResult = evaluateWorkflowCondition(
+              definitionNode.expression,
+              workflowConditionContext(definition, artifact.nodes)
+            );
+            const completed = transitionWorkflowNode(node, {
+              type: "complete",
+              at: this.now().toISOString(),
+              outputDigest: digest({ result: conditionResult })
+            });
+            completed.condition_result = conditionResult;
+            artifact.nodes[index] = completed;
+            actions.push(`condition_completed:${node.id}:${conditionResult}`);
+          } catch (error) {
+            artifact.nodes[index] = transitionWorkflowNode(node, {
+              type: "fail",
+              at: this.now().toISOString(),
+              error: String(error)
+            });
+            actions.push(`failed:${node.id}:condition_error`);
+          }
+          await this.persistGraphTransition(artifact);
+          autoProgress = true;
+          continue;
+        }
+
+        if (node.kind === "parallel") {
+          artifact.nodes[index] = transitionWorkflowNode(node, {
+            type: "complete",
+            at: this.now().toISOString(),
+            outputDigest: digest({ branches: artifact.graph?.branch_ids ?? [] })
+          });
+          actions.push(`parallel_started:${node.id}`);
+          await this.persistGraphTransition(artifact);
+          autoProgress = true;
+          continue;
+        }
+
+        const dispatch = await this.dispatchTaskNode(artifact, node);
+        artifact.nodes[index] = dispatch.node;
+        actions.push(dispatch.action);
+        await this.persistGraphTransition(artifact);
+      }
     }
 
     artifact.status = deriveControlledWorkflowStatus(
@@ -918,7 +1218,7 @@ export class ProductionWorkflowRuntime {
   ): Promise<{ acquired: true; locks: WorkflowResourceLock[] } | { acquired: false }> {
     const handles: ResourceLockHandle[] = [];
     try {
-      for (const resource of artifact.resource_keys) {
+      for (const resource of node.resource_keys ?? artifact.resource_keys) {
         handles.push(
           await acquireResourceLock(this.projectRoot, resource, {
             owner: `workflow:${artifact.workflow_id}:${node.id}`,
@@ -1068,6 +1368,31 @@ export class ProductionWorkflowRuntime {
     );
     return this.configResolution;
   }
+
+  private async loadArtifactDefinition(
+    artifact: WorkflowRunArtifact
+  ): Promise<WorkflowDefinition | undefined> {
+    if (artifact.definition === undefined) {
+      return undefined;
+    }
+    const definition = await readValidatedWorkflowDefinition(
+      resolveInside(this.projectRoot, artifact.definition.artifact_path)
+    );
+    if (digestWorkflowDefinition(definition) !== artifact.definition.digest) {
+      throw new Error(
+        `Workflow definition digest mismatch: ${artifact.workflow_id}`
+      );
+    }
+    return definition;
+  }
+
+  private async persistGraphTransition(
+    artifact: WorkflowRunArtifact
+  ): Promise<void> {
+    if (artifact.definition !== undefined) {
+      await this.persist(artifact, "run");
+    }
+  }
 }
 
 function createWorkflowControlState(): WorkflowControlState {
@@ -1149,12 +1474,18 @@ export function formatProductionWorkflowResult(
     `task_id=${artifact.task_id}`,
     `checkpoint=${result.checkpoint_path ?? artifact.recovery.last_checkpoint_path ?? "none"}`,
     `source=${artifact.source.kind}`,
+    `definition=${artifact.definition?.artifact_path ?? "none"}`,
+    `definition_digest=${artifact.definition?.digest ?? "none"}`,
+    `branches=${artifact.graph?.branch_ids.join(",") || "none"}`,
+    `joins=${artifact.graph?.join_node_ids.join(",") || "none"}`,
+    `compensation.status=${artifact.compensation?.status ?? "none"}`,
+    `compensation.plan_id=${artifact.compensation?.plan_id ?? "none"}`,
     `runtime.enabled=${result.runtime_config?.effective_enabled ?? "unknown"}`,
     `runtime.source=${result.runtime_config?.effective_source ?? "unknown"}`,
     `actions=${result.actions.length === 0 ? "none" : result.actions.join(",")}`,
     ...artifact.nodes.map(
       (node) =>
-        `node.${node.id}=status:${node.status};attempt:${node.attempt};queue:${node.queue_item_id ?? "none"};run:${node.run_id ?? "none"};blocker:${node.blocker ?? "none"}`
+        `node.${node.id}=kind:${node.kind};status:${node.status};branch:${node.branch_id ?? "none"};attempt:${node.attempt};queue:${node.queue_item_id ?? "none"};run:${node.run_id ?? "none"};blocker:${node.blocker ?? "none"};condition:${node.condition_result ?? "none"};compensation:${node.compensation?.status ?? "none"}`
     )
   ].join("\n");
 }
@@ -1179,6 +1510,71 @@ function dependenciesCompleted(
     const dependency = nodes.find((candidate) => candidate.id === dependencyId);
     return dependency !== undefined && ["completed", "skipped"].includes(dependency.status);
   });
+}
+
+function conditionDependencyDoesNotMatch(
+  condition: { condition_node_id: string; equals: boolean },
+  nodes: WorkflowNodeState[]
+): boolean {
+  const conditionNode = nodes.find(
+    (candidate) => candidate.id === condition.condition_node_id
+  );
+  return (
+    conditionNode?.status === "completed" &&
+    conditionNode.condition_result !== condition.equals
+  );
+}
+
+function joinSatisfied(
+  node: WorkflowNodeState,
+  nodes: WorkflowNodeState[]
+): boolean {
+  const dependencies = node.dependencies
+    .map((dependencyId) =>
+      nodes.find((candidate) => candidate.id === dependencyId)
+    )
+    .filter((dependency): dependency is WorkflowNodeState => dependency !== undefined);
+  const completed = dependencies.filter((dependency) =>
+    ["completed", "skipped"].includes(dependency.status)
+  ).length;
+  if (node.join_policy === "all") {
+    return completed === dependencies.length;
+  }
+  if (node.join_policy === "any") {
+    return completed >= 1;
+  }
+  return completed >= (node.join_threshold ?? Number.POSITIVE_INFINITY);
+}
+
+function joinBlocker(
+  node: WorkflowNodeState,
+  nodes: WorkflowNodeState[]
+): string {
+  const completed = node.dependencies.filter((dependencyId) => {
+    const dependency = nodes.find((candidate) => candidate.id === dependencyId);
+    return dependency !== undefined &&
+      ["completed", "skipped"].includes(dependency.status);
+  }).length;
+  return `join_waiting:${node.join_policy ?? "unknown"}:${completed}/${node.dependencies.length}`;
+}
+
+function workflowConditionContext(
+  definition: WorkflowDefinition,
+  nodes: WorkflowNodeState[]
+) {
+  return {
+    input: definition.input,
+    nodes: Object.fromEntries(
+      nodes.map((node) => [
+        node.id,
+        {
+          status: node.status,
+          attempt: node.attempt,
+          condition_result: node.condition_result
+        }
+      ])
+    )
+  };
 }
 
 function digest(value: unknown): string {

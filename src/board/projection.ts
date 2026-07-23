@@ -245,6 +245,21 @@ export type BoardWorkflowSummary = {
   status: string;
   task_id: string;
   current_node?: string;
+  current_node_kind?: string;
+  branches: Array<{
+    branch_id: string;
+    status: string;
+    completed: number;
+    total: number;
+  }>;
+  joins_waiting: Array<{
+    node_id: string;
+    policy: string;
+    blocker?: string;
+  }>;
+  compensation_status?: string;
+  compensation_plan_id?: string;
+  compensation_pending_steps?: number;
   progress_completed: number;
   progress_total: number;
   blocker?: string;
@@ -970,6 +985,24 @@ function summarizeWorkflow(
     status: artifact.status,
     task_id: artifact.task_id,
     current_node: currentNode?.id,
+    current_node_kind: currentNode?.kind,
+    branches: summarizeWorkflowBranches(artifact),
+    joins_waiting: artifact.nodes
+      .filter(
+        (node) =>
+          node.kind === "join" &&
+          node.status === "pending"
+      )
+      .map((node) =>
+        compact({
+          node_id: node.id,
+          policy: node.join_policy ?? "unknown",
+          blocker: node.blocker
+        })
+      ),
+    compensation_status: artifact.compensation?.status,
+    compensation_plan_id: artifact.compensation?.plan_id,
+    compensation_pending_steps: artifact.compensation?.pending_steps,
     progress_completed: artifact.nodes.filter((node) =>
       ["completed", "skipped"].includes(node.status)
     ).length,
@@ -1621,8 +1654,35 @@ function isWorkflowAttention(workflow: BoardWorkflowSummary): boolean {
   return (
     workflow.status === "failed" ||
     workflow.status === "paused" ||
+    workflow.compensation_status === "failed" ||
     workflow.control_mode === "cancellation_requested"
   );
+}
+
+function summarizeWorkflowBranches(
+  artifact: WorkflowRunArtifact
+): BoardWorkflowSummary["branches"] {
+  return (artifact.graph?.branch_ids ?? []).map((branchId) => {
+    const nodes = artifact.nodes.filter((node) => node.branch_id === branchId);
+    const completed = nodes.filter((node) =>
+      ["completed", "skipped"].includes(node.status)
+    ).length;
+    return {
+      branch_id: branchId,
+      status:
+        nodes.some((node) => node.status === "failed")
+          ? "failed"
+          : completed === nodes.length
+            ? "completed"
+            : nodes.some((node) =>
+                ["running", "dispatched"].includes(node.status)
+              )
+              ? "running"
+              : "pending",
+      completed,
+      total: nodes.length
+    };
+  });
 }
 
 function isOpenApprovalSummary(approval: BoardApprovalSummary): boolean {

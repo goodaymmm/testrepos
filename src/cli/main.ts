@@ -148,6 +148,7 @@ import {
 import { summarizeOperationTestsCommand } from "./commands/test-summary.js";
 import {
   workflowCancelCommand,
+  workflowCompensateCommand,
   workflowConfigProposeCommand,
   workflowConfigShowCommand,
   workflowListCommand,
@@ -156,7 +157,8 @@ import {
   workflowResumeCommand,
   workflowRetryCommand,
   workflowRunCommand,
-  workflowShowCommand
+  workflowShowCommand,
+  workflowValidateCommand
 } from "./commands/workflow.js";
 import {
   watchdogCheckCommand,
@@ -1212,6 +1214,14 @@ export function createProgram(): Command {
     });
 
   workflow
+    .command("validate")
+    .description("Validate a declarative workflow definition without executing it.")
+    .argument("<definitionFile>", "Workflow definition JSON file.")
+    .action(async (definitionFile: string) => {
+      console.log(await workflowValidateCommand(process.cwd(), definitionFile));
+    });
+
+  workflow
     .command("list")
     .description("List persistent workflows with progress and blockers.")
     .action(async () => {
@@ -1223,6 +1233,7 @@ export function createProgram(): Command {
     .description("Run a production workflow or an experimental candidate.")
     .argument("[workflowId]", "Production workflow id, for example WF-0001.")
     .option("--candidate", "Run the production-candidate workflow adapter.")
+    .option("--definition <file>", "Run a validated declarative workflow definition.")
     .option("--dry-run", "Write only experimental candidate artifacts. This is the default.")
     .option("--connect-queue", "Enqueue an approved candidate task behind the workflow feature flag.")
     .option("--workflow-id <workflowId>", "Workflow id. Defaults to EXP-WF-CANDIDATE-<timestamp>.")
@@ -1237,6 +1248,7 @@ export function createProgram(): Command {
       candidate?: boolean;
       dryRun?: boolean;
       connectQueue?: boolean;
+      definition?: string;
       workflowId?: string;
       taskId?: string;
       queueItemId?: string;
@@ -1251,6 +1263,26 @@ export function createProgram(): Command {
           ...options,
           workflowId: workflowId ?? options.workflowId
         })
+      );
+    });
+
+  workflow
+    .command("compensate")
+    .description("Plan or execute approved workflow compensation.")
+    .argument("<workflowId>", "Workflow id.")
+    .option("--dry-run", "Create or inspect a compensation plan without dispatch.")
+    .option("--approval-id <approvalId>", "Approved compensation decision.")
+    .option("--confirm <planId>", "Exact compensation plan id confirmation.")
+    .action(async (
+      workflowId: string,
+      options: {
+        dryRun?: boolean;
+        approvalId?: string;
+        confirm?: string;
+      }
+    ) => {
+      console.log(
+        await workflowCompensateCommand(process.cwd(), workflowId, options)
       );
     });
 

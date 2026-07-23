@@ -377,15 +377,21 @@ kairon workflow config show
 kairon workflow config propose --enable
 kairon config apply CFG-YYYYMMDDHHMMSS-xxxxxxxx --dry-run
 kairon config apply CFG-YYYYMMDDHHMMSS-xxxxxxxx
+kairon workflow validate .\workflow-definition.json
+kairon workflow run --definition .\workflow-definition.json
 kairon workflow list
 kairon workflow run WF-0001 --task-id TASK-0001
 kairon workflow show WF-0001
 kairon workflow recover WF-0001 --dry-run
 kairon workflow pause WF-0001 --reason "operator review"
 kairon workflow resume WF-0001
+kairon workflow compensate WF-0001 --dry-run
+kairon workflow compensate WF-0001 --approval-id APR-0001 --confirm WF-0001-COMP-000006
 ```
 
-production workflowは`.kairon/workflows/`へrunとtransition checkpointを保存し、queue idempotency、approval gate、resource lock、retry、pause / resume / cancel / recoverを既存TaskRunner境界へ接続します。`runtime.json.workflow.enabled=true`をproposal経由で適用した場合だけproduction workflow itemをruntimeがclaimし、既定は無効です。旧projectの`KAIRON_WORKFLOW_RUNTIME`はconfigに`enabled`がない場合だけ互換fallbackとして利用されます。`--candidate`を使う`.kairon/experimental/workflows/`経路は互換性とdry-run評価用であり、production canonical stateの代替ではありません。
+production workflowは`.kairon/workflows/`へdefinition、run、transition checkpoint、compensation planを分離して保存し、queue idempotency、manual gate、resource lock、retry、parallel branch、明示的な`all | any | threshold` join、pause / resume / cancel / recoverを既存TaskRunner境界へ接続します。conditionはJSON inputまたはnode stateをallowlist operatorで比較するだけで、JavaScript、shell、`eval`は実行しません。compensationはplan作成までがdry-runで、approve済みapprovalとplan IDのexact confirmが揃うまでtaskをdispatchしません。
+
+`runtime.json.workflow.enabled=true`をproposal経由で適用した場合だけproduction workflow itemをruntimeがclaimし、既定は無効です。旧projectの`KAIRON_WORKFLOW_RUNTIME`はconfigに`enabled`がない場合だけ互換fallbackとして利用されます。`--candidate`を使う`.kairon/experimental/workflows/`経路は互換性とdry-run評価用であり、production canonical stateの代替ではありません。
 
 ### Local Beta package / Readiness
 

@@ -92,9 +92,13 @@ kairon readiness check [--manifest <path>]
 kairon readiness report [--format json|markdown] [--output <path>]
 kairon workflow config show
 kairon workflow config propose --enable|--disable
+kairon workflow validate <definition-file>
+kairon workflow run --definition <definition-file>
 kairon workflow run <workflow-id> --task-id <task-id>
 kairon workflow show <workflow-id>
 kairon workflow recover <workflow-id> --dry-run
+kairon workflow compensate <workflow-id> --dry-run
+kairon workflow compensate <workflow-id> --approval-id <approval-id> --confirm <plan-id>
 ```
 
 ## kairon init
@@ -1058,11 +1062,15 @@ kairon workflow config propose --enable
 kairon workflow config propose --disable
 kairon config apply CFG-YYYYMMDDHHMMSS-xxxxxxxx --dry-run
 kairon config apply CFG-YYYYMMDDHHMMSS-xxxxxxxx
+kairon workflow validate .\workflow-definition.json
+kairon workflow run --definition .\workflow-definition.json
 kairon workflow run WF-0001 --task-id TASK-0001
 kairon workflow run WF-0002 --task-id TASK-0002 --approval-id APR-0001 --resource-lock src/shared.ts --retry-max-attempts 3
 kairon workflow show WF-0001
 kairon workflow recover WF-0001 --dry-run
 kairon workflow recover WF-0001
+kairon workflow compensate WF-0001 --dry-run
+kairon workflow compensate WF-0001 --approval-id APR-0002 --confirm WF-0001-COMP-000006
 ```
 
 production runtimeの正式な有効化設定。
@@ -1079,13 +1087,18 @@ production runtimeの正式な有効化設定。
 
 `workflow config show`は設定値、実効値、`config` / `environment` / `default`のsource、競合、legacy fallback、checkpoint / retry設定を表示する。`propose`は`runtime.json`を直接変更せず、riskとrestart要否を含むproposalを保存する。`KAIRON_WORKFLOW_RUNTIME`は`workflow.enabled`がない旧projectだけの互換fallbackである。
 
-`run`は未作成workflowを`--task-id`から開始し、既存workflowではapproval・queue状態を照合して続行する。`recover --dry-run`はartifactを変更せず復旧候補だけを表示する。実際の`recover`とRuntimeLoop起動時のrecoveryは、完了nodeを再投入せず未完了nodeだけを進める。
+`validate`はdefinition schema、duplicate / missing / cycle / unreachable edge、condition依存、parallel branch、join policyを検証し、任意JavaScript、shell、`eval`を受理しない。`run --definition`は検証済みdefinitionをcanonical definition artifactへ保存し、condition、parallel、manual gate、join、taskをrun artifactへ展開する。同時にreadyとなったbranch taskはnode単位idempotency keyとresource lockでdispatchされ、restart後も同じqueue itemを再利用する。
+
+従来の`run`は未作成workflowを`--task-id`から開始し、既存workflowではapproval・queue状態を照合して続行する。`recover --dry-run`はartifactを変更せず復旧候補だけを表示する。実際の`recover`とRuntimeLoop起動時のrecoveryは、完了nodeを再投入せず未完了nodeだけを進める。
 
 - run artifact: `.kairon/workflows/runs/<workflow_id>.json`
+- definition artifact: `.kairon/workflows/definitions/<workflow_id>.json`
 - checkpoint: `.kairon/workflows/checkpoints/<workflow_id>-<sequence>.json`
+- compensation plan: `.kairon/workflows/compensations/<plan_id>.json`
 - queue itemは`workflow/node/attempt`のidempotency keyを持つ。
 - nodeはattempt、queue item ID、run ID、input/output digest、fencing tokenを保持する。
-- approval待ちは`waiting_approval`、resource lock競合は`paused`として永続化する。
+- approval待ちは`waiting_approval`、join待ちは`join_waiting:<policy>:<completed>/<total>`、resource lock競合は`paused`として永続化する。
+- compensationは完了済みnodeを逆トポロジ順にplan化する。`--dry-run`ではqueueへ投入せず、approve済みapprovalと`--confirm <plan-id>`が揃った場合だけ1 stepずつidempotentにdispatchする。
 - workflow config無効時はproduction workflow itemをRuntimeLoopがclaimしない。
 
 experimental candidateとの互換経路も維持する。
