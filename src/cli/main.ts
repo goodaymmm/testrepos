@@ -27,6 +27,10 @@ import {
   showApprovalCommand
 } from "./commands/approval.js";
 import {
+  evaluateCapabilityCommand,
+  explainCapabilityCommand
+} from "./commands/capability.js";
+import {
   exportBoard,
   formatBoardServeResult,
   issueBoardAccessCommand,
@@ -227,6 +231,30 @@ export function createProgram(): Command {
     .option("--format <format>", "Output format: text or json.", "text")
     .action(async (options: { format?: string }) => {
       console.log(await runDoctorCommand(process.cwd(), options));
+    });
+
+  const capability = program
+    .command("capability")
+    .description("Evaluate effective Agent and connector capabilities.");
+
+  capability
+    .command("evaluate")
+    .description("Evaluate the effective capability decision for a task.")
+    .requiredOption("--task <taskId>", "Task id, for example TASK-0001.")
+    .option("--agent <agent>", "Evaluate a specific agent.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options) => {
+      console.log(await evaluateCapabilityCommand(process.cwd(), options));
+    });
+
+  capability
+    .command("explain")
+    .description("Explain requested, supported, allowed, and approved capabilities.")
+    .requiredOption("--task <taskId>", "Task id, for example TASK-0001.")
+    .option("--agent <agent>", "Explain a specific agent.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options) => {
+      console.log(await explainCapabilityCommand(process.cwd(), options));
     });
 
   const support = program

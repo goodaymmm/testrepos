@@ -36,6 +36,7 @@ import {
 } from "../readiness/beta-readiness.js";
 import { resolveWorkflowRuntimeConfig } from "../workflow/config.js";
 import { inspectWorkflowCheckpointStore } from "../workflow/checkpoint-manager.js";
+import { inspectCapabilityPolicyConfig } from "../policy/trust-policy.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -200,6 +201,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkConfigValidation(options.projectRoot));
   checks.push(await checkWorkflowRuntimeConfig(options.projectRoot, env));
   checks.push(await checkAgentConfig(options.projectRoot));
+  checks.push(await checkCapabilityTrustPolicy(options.projectRoot));
   checks.push(await checkProviderPolicyHealth(options.projectRoot));
   checks.push(await checkAgentCliAvailability(options.projectRoot, commandAvailability));
   checks.push(checkApiKeyContamination(env));
@@ -513,6 +515,33 @@ async function checkAgentConfig(projectRoot: string): Promise<DoctorCheck> {
   }
 
   return pass("config.agents", "Agent config", details);
+}
+
+async function checkCapabilityTrustPolicy(
+  projectRoot: string
+): Promise<DoctorCheck> {
+  const inspection = await inspectCapabilityPolicyConfig(projectRoot);
+  if (inspection.status === "invalid") {
+    return error(
+      "policy.capabilities",
+      "Capability and connector trust policy",
+      inspection.details,
+      "Remove untrusted write declarations and validate agents.json and policies.json."
+    );
+  }
+  if (inspection.status === "compatibility") {
+    return warning(
+      "policy.capabilities",
+      "Capability and connector trust policy",
+      inspection.details,
+      "Apply current config defaults or add explicit supported_capabilities and capability_policy declarations."
+    );
+  }
+  return pass(
+    "policy.capabilities",
+    "Capability and connector trust policy",
+    inspection.details
+  );
 }
 
 async function checkProviderPolicyHealth(projectRoot: string): Promise<DoctorCheck> {

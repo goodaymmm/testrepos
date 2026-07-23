@@ -14,7 +14,8 @@ export type CorrelationMemberKind =
   | "workflow"
   | "release_plan"
   | "release_result"
-  | "incident";
+  | "incident"
+  | "capability_decision";
 
 export type CorrelationMember = {
   kind: CorrelationMemberKind;

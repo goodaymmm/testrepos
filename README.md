@@ -202,6 +202,8 @@ Agentごとのhealth、連続失敗、retry backoff、setup_required履歴を `.
 
 同日sessionのcontextはprompt byte数、job数、経過秒数、compaction回数で制限します。soft limitではbounded compaction planを生成し、hard limitでは次のdispatchを停止してsanitized handoff付きrotationを要求します。詳細は `docs/session-context-budget-v0.md` を参照してください。
 
+task capabilityはAgent起動前にproject policyへ照合します。未知capability / connectorはdefault deny、`git_write` / `external_write` / `privileged`は既定でApproval必須です。Agent promptへ渡すのは`effective` setだけで、prompt hint自体は権限を付与しません。`kairon capability evaluate|explain`と`.kairon/runs/RUN-xxxx/capability-decision.json`で判定を確認できます。詳細は[docs/capability-trust-policy-v0.md](docs/capability-trust-policy-v0.md)を参照してください。
+
 ### Provider Policy Health
 
 ```powershell
@@ -222,7 +224,7 @@ kairon task create --title "調査結果を整理する" --persona researcher --
 kairon task run TASK-0001 --timeout-ms 120000
 ```
 
-`task create` は `.kairon/tasks/TASK-xxxx/task.json` を作成します。`task run` は `agent.run` queue itemを作り、dispatcherでAgentを選択し、既存のCLI runnerへ投入します。Agentが書いた `outbox.json` は State Applier に渡され、message / approval / task status へ反映されます。
+`task create` は `.kairon/tasks/TASK-xxxx/task.json` を作成します。`task run` は `agent.run` queue itemを作り、dispatcherでAgentを選択した後、capability / connector trust policyを評価します。`allowed`の場合だけ既存のCLI runnerへ投入し、Agentが書いた `outbox.json` を State Applier に渡します。`approval_required`、`setup_required`、`denied`ではAgent processを起動せず、decision artifactとblocked run証跡を残します。
 
 ### レビュー実行
 

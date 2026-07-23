@@ -18,6 +18,7 @@ describe("createProgram", () => {
       "agent",
       "approval",
       "board",
+      "capability",
       "cleanup",
       "config",
       "daemon",
@@ -48,6 +49,29 @@ describe("createProgram", () => {
       "watchdog",
       "workflow"
     ]);
+  });
+
+  it("registers capability evaluate and explain commands", () => {
+    const capability = createProgram().commands.find(
+      (command) => command.name() === "capability"
+    );
+    const evaluate = capability?.commands.find(
+      (command) => command.name() === "evaluate"
+    );
+    const explain = capability?.commands.find(
+      (command) => command.name() === "explain"
+    );
+
+    expect(capability?.commands.map((command) => command.name()).sort()).toEqual([
+      "evaluate",
+      "explain"
+    ]);
+    expect(evaluate?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining(["--task", "--agent", "--format"])
+    );
+    expect(explain?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining(["--task", "--agent", "--format"])
+    );
   });
 
   it("detects npm link entrypoints through their real path", () => {

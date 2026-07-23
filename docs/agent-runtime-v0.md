@@ -7,6 +7,11 @@ Agent Runtime は、Codex CLI、Claude Code、AntigravityCLI を公式 CLI proce
 Control Protocol は「何を満たすべきか」を定義する。
 Agent Runtime は「どう起動し、どう読み取り、どう終了または継続するか」を扱う。
 
+Agent process起動前にはcapability / connector trust policy gateを通過する必要がある。
+task要求、Agent support、project / persona policy、human approvalから`effective` setを算出し、
+promptにはそのsetだけを説明情報として渡す。prompt上のhintは権限付与の根拠にならない。
+判定仕様は`docs/capability-trust-policy-v0.md`を正規説明とする。
+
 ## 基本方針
 
 - 公式 CLI だけを起動する。

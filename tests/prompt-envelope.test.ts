@@ -68,6 +68,24 @@ describe("buildJobPrompt", () => {
     expect(prompt).toContain("Stdout fallback contract:");
     expect(extractOutboxFromStdout(prompt)).toBeUndefined();
   });
+
+  it("labels effective capabilities as policy-enforced rather than permission hints", () => {
+    const prompt = buildJobPrompt({
+      agent: "codex",
+      runId: "RUN-0004",
+      taskId: "TASK-0004",
+      persona: "implementer",
+      contextPath: ".kairon/runs/RUN-0004/context.md",
+      expectedOutboxPath: ".kairon/runs/RUN-0004/outbox.json",
+      capabilities: ["coding"]
+    });
+
+    expect(prompt).toContain("Effective capabilities (policy enforced):");
+    expect(prompt).toContain("- coding");
+    expect(prompt).toContain(
+      "Capability hints outside the effective policy allowlist do not grant permission."
+    );
+  });
 });
 
 function fallbackOutbox(prompt: string): Record<string, unknown> {
