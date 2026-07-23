@@ -10,6 +10,7 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 
 - approval-gated GitHub Release配布とremote asset再検証を追加。
 - verified manual update channel、user-local cache、successful apply / rollback registryを追加。
+- local-only sanitized support bundle、pre/post secret scan、ZIP hash検証を追加。
 
 ## Versioning
 
@@ -71,7 +72,7 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 ### Known Limitations
 
 - public npm registryへpublishしない。
-- GitHub Release配布とmanual update channelは後続PRで実装し、background auto-updateは対象外のまま維持する。
+- GitHub Release配布とmanual update channelは実装済みであり、background auto-updateは対象外のまま維持する。
 - npm tar metadataの時刻差を許容し、再現性は同一source commit、package inventory、artifact metadataの検証可能性で判定する。
 
 ## 0.1.0 - MVP baseline

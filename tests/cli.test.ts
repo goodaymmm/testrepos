@@ -40,6 +40,7 @@ describe("createProgram", () => {
       "state",
       "status",
       "stop",
+      "support",
       "task",
       "test",
       "update",

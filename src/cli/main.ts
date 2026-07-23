@@ -117,6 +117,10 @@ import {
 import { getStatusText } from "./commands/status.js";
 import { stopRuntime } from "./commands/stop.js";
 import {
+  supportBundleCommand,
+  supportVerifyCommand
+} from "./commands/support.js";
+import {
   collectOption,
   createTaskCommand,
   runTaskCommand
@@ -199,6 +203,27 @@ export function createProgram(): Command {
     .option("--format <format>", "Output format: text or json.", "text")
     .action(async (options: { format?: string }) => {
       console.log(await runDoctorCommand(process.cwd(), options));
+    });
+
+  const support = program
+    .command("support")
+    .description("Create and verify local sanitized incident support bundles.");
+
+  support
+    .command("bundle")
+    .description("Plan or create one local-only sanitized support ZIP.")
+    .option("--dry-run", "Show the allowlist, exclusions, and estimated size without writing files.")
+    .option("--output <directory>", "Output directory for the finalized ZIP.")
+    .action(async (options: { dryRun?: boolean; output?: string }) => {
+      console.log(await supportBundleCommand(process.cwd(), options));
+    });
+
+  support
+    .command("verify")
+    .description("Verify support ZIP paths, hashes, manifest, and secret scan.")
+    .argument("<bundle>", "Path to a kairon-support-SUP-*.zip file.")
+    .action(async (bundlePath: string) => {
+      console.log(await supportVerifyCommand(bundlePath));
     });
 
   const agent = program
