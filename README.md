@@ -25,6 +25,7 @@ Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Age
 - Discord Gateway / HTTP Interactions、approval reply、idempotency、decision audit、correlation追跡
 - approval queue CLI
 - runtime loop、Windows Task Scheduler daemon、24時間certification、runtime recovery
+- runtime watchdog、deduplicated alert、cooldown付きDiscord通知
 - daily report、agent handoff、retention、cleanup proposal / apply / archive
 - state integrity、snapshot / restore、event compaction、deterministic backup / rehearsal
 - read-only Board projection、loopback / remote-readonly server、short-lived access token
@@ -38,7 +39,7 @@ Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Age
 
 Local Beta後の主な開発範囲:
 
-- watchdog、incident lifecycle
+- incident lifecycle
 - workflow branch / join / compensationとdurable checkpoint store
 - session context budget、capability / MCP trust policy、hybrid local RAG
 - multi-project read-only supervisorと固定remote profile
@@ -99,6 +100,7 @@ node C:\Users\hikar\Documents\AutoRunner\dist\cli\main.js init
   runs/
   sessions/
   runtime/
+  watchdog/
   reports/
   recovery/
   rag/
@@ -385,8 +387,19 @@ local packageはpublic npm registryへpublishせず、tarball、checksum manifes
 kairon status
 ```
 
-schedule mode、runtime lock、daemon health、queue、approval、recovery target、session、Discord gateway、最新artifact の状態を表示します。
+schedule mode、runtime lock、daemon health、watchdog alert、queue、approval、recovery target、session、Discord gateway、最新artifact の状態を表示します。
 daily report / cleanup proposal / recovery artifact / next-day plan / board projection / daemon log が存在する場合は、次に確認するパスも `artifacts.*` として表示します。
+
+### Runtime Watchdog
+
+```powershell
+kairon watchdog check
+kairon watchdog list --status open
+kairon watchdog show <alert-id>
+kairon watchdog resolve <alert-id> --reason "operator confirmed recovery"
+```
+
+Watchdogはdaemon heartbeat、fatal error、restart loop、queue backlog、Discord通知失敗、provider suspend、Windows Task Scheduler登録状態を評価し、`.kairon/watchdog/`へdeduplicate済みalertを保存します。同じ異常はfingerprintでまとめ、cooldown中の再通知を抑制します。検知失敗はruntime tickの成否を変更せず、Watchdog自身は自動再起動、queue変更、provider切替を行いません。詳細は [docs/runtime-watchdog-v0.md](docs/runtime-watchdog-v0.md) を参照してください。
 
 ### Active Work 終了
 

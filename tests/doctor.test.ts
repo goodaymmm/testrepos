@@ -15,6 +15,7 @@ import { trackCorrelationMember } from "../src/correlation/store.js";
 import { buildRagIndex, type RagIndex } from "../src/rag/lexical-index.js";
 import { createTempProject } from "./test-utils.js";
 import { suspendProvider } from "../src/agents/provider-policy.js";
+import { runWatchdogCheck } from "../src/runtime/watchdog.js";
 
 const discordIds = {
   application: "111111111111111111",
@@ -43,6 +44,7 @@ describe("runDoctor", () => {
     expect(statusById(result, "discord.config")).toBe("pass");
     expect(statusById(result, "board.secret_scan")).toBe("pass");
     expect(statusById(result, "runtime.recovery")).toBe("pass");
+    expect(statusById(result, "watchdog.alerts")).toBe("pass");
     expect(checkById(result, "discord.config")?.details).toContain(
       "live_status=not_configured"
     );
@@ -61,6 +63,9 @@ describe("runDoctor", () => {
       reason: "authentication token=SHOULD_NOT_LEAK",
       now: new Date("2026-07-16T07:00:00.000Z")
     });
+    await runWatchdogCheck(root, {
+      now: new Date("2026-07-16T07:00:01.000Z")
+    });
 
     const result = await runDoctor({
       projectRoot: root,
@@ -70,6 +75,7 @@ describe("runDoctor", () => {
     const text = formatDoctorResult(result);
 
     expect(statusById(result, "agent.provider_policy")).toBe("warning");
+    expect(statusById(result, "watchdog.alerts")).toBe("warning");
     expect(text).toContain("status=suspended");
     expect(text).not.toContain("SHOULD_NOT_LEAK");
   });

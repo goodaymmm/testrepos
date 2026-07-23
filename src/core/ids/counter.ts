@@ -16,7 +16,8 @@ export type CounterKey =
   | "correlation"
   | "release"
   | "update_download"
-  | "support_bundle";
+  | "support_bundle"
+  | "watchdog_alert";
 
 export type Counters = Record<CounterKey, number>;
 
@@ -33,7 +34,8 @@ const defaultCounters: Counters = {
   correlation: 0,
   release: 0,
   update_download: 0,
-  support_bundle: 0
+  support_bundle: 0,
+  watchdog_alert: 0
 };
 
 const prefixes: Record<CounterKey, string> = {
@@ -49,7 +51,8 @@ const prefixes: Record<CounterKey, string> = {
   correlation: "COR",
   release: "REL",
   update_download: "UPD",
-  support_bundle: "SUP"
+  support_bundle: "SUP",
+  watchdog_alert: "ALT"
 };
 
 export function formatId(key: CounterKey, value: number): string {

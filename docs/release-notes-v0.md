@@ -11,6 +11,7 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 - approval-gated GitHub Release配布とremote asset再検証を追加。
 - verified manual update channel、user-local cache、successful apply / rollback registryを追加。
 - local-only sanitized support bundle、pre/post secret scan、ZIP hash検証を追加。
+- runtime heartbeat、queue、provider、notification、Task Schedulerを監視するdeduplicated Watchdog alertとDiscord routingを追加。
 
 ## Versioning
 

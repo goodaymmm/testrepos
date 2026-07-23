@@ -148,6 +148,12 @@ import {
   workflowRunCommand,
   workflowShowCommand
 } from "./commands/workflow.js";
+import {
+  watchdogCheckCommand,
+  watchdogListCommand,
+  watchdogResolveCommand,
+  watchdogShowCommand
+} from "./commands/watchdog.js";
 
 export type StateSnapshotRestoreCliOptions = {
   dryRun?: boolean;
@@ -647,6 +653,40 @@ export function createProgram(): Command {
     .description("Show runtime, queue, session, approval, and artifact status.")
     .action(async () => {
       console.log(await getStatusText(process.cwd()));
+    });
+
+  const watchdog = program
+    .command("watchdog")
+    .description("Detect, inspect, and resolve deduplicated runtime alerts.");
+
+  watchdog
+    .command("check")
+    .description("Evaluate runtime watchdog rules and persist alert transitions.")
+    .action(async () => {
+      console.log(await watchdogCheckCommand(process.cwd()));
+    });
+
+  watchdog
+    .command("list")
+    .description("List persisted watchdog alerts.")
+    .option("--status <status>", "Filter by open, acknowledged, or resolved.")
+    .action(async (options: { status?: string }) => {
+      console.log(await watchdogListCommand(process.cwd(), options));
+    });
+
+  watchdog
+    .command("show <alert-id>")
+    .description("Show one sanitized watchdog alert.")
+    .action(async (alertId: string) => {
+      console.log(await watchdogShowCommand(process.cwd(), alertId));
+    });
+
+  watchdog
+    .command("resolve <alert-id>")
+    .description("Resolve one watchdog alert with an operator reason.")
+    .requiredOption("--reason <text>", "Resolution reason.")
+    .action(async (alertId: string, options: { reason: string }) => {
+      console.log(await watchdogResolveCommand(process.cwd(), alertId, options.reason));
     });
 
   const daemon = program

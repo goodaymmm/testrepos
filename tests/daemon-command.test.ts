@@ -102,6 +102,36 @@ describe("daemonTaskCommand", () => {
     expect(output).toContain("task.exists=false");
   });
 
+  it("persists normalized Task Scheduler status separately from daemon health", async () => {
+    let statusArtifact:
+      | {
+          projectRoot: string;
+          status: string;
+          taskName: string;
+          action: string;
+          reason?: string;
+        }
+      | undefined;
+
+    await daemonTaskCommand("C:\\work\\project", "status", {
+      platform: "win32",
+      taskName: "Kairon Runtime Test",
+      helperPath: "C:\\kairon\\scripts\\kairon-daemon-task.ps1",
+      commandRunner: async (invocation) =>
+        commandResult(invocation, { stdout: "task.exists=false\n" }),
+      taskStatusWriter: async (projectRoot, input) => {
+        statusArtifact = { projectRoot, ...input };
+      }
+    });
+
+    expect(statusArtifact).toEqual({
+      projectRoot: "C:\\work\\project",
+      status: "missing",
+      taskName: "Kairon Runtime Test",
+      action: "status"
+    });
+  });
+
   it("delegates uninstall dry runs without mutation arguments", async () => {
     const invocations: CliInvocation[] = [];
 

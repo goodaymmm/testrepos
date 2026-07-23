@@ -215,6 +215,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkConfigBackups(options.projectRoot));
   checks.push(await checkRuntimeRecovery(options.projectRoot));
   checks.push(await checkDaemonHealth(options.projectRoot));
+  checks.push(await checkWatchdogAlerts(options.projectRoot));
   checks.push(await checkRagStatus(options.projectRoot));
   if (await readinessManifestExists(options.projectRoot)) {
     checks.push(await checkBetaReadiness(options.projectRoot));
@@ -1057,6 +1058,36 @@ async function checkDaemonHealth(projectRoot: string): Promise<DoctorCheck> {
       "Daemon health",
       ["status=unavailable", "remediation_status=setup_required"],
       "Run kairon status and kairon recovery run, then retry kairon doctor. Guide: docs/windows-daemon-ops-v0.md."
+    );
+  }
+}
+
+async function checkWatchdogAlerts(projectRoot: string): Promise<DoctorCheck> {
+  try {
+    const watchdog = (await getRuntimeStatus(projectRoot)).watchdog;
+    const details = [
+      `open=${watchdog.open}`,
+      `acknowledged=${watchdog.acknowledged}`,
+      `resolved=${watchdog.resolved}`,
+      `highest_severity=${watchdog.highest_severity}`,
+      `notifications_pending=${watchdog.notifications_pending}`,
+      `last_checked_at=${watchdog.last_checked_at ?? "never"}`
+    ];
+    if (watchdog.open === 0 && watchdog.acknowledged === 0) {
+      return pass("watchdog.alerts", "Runtime watchdog alerts", details);
+    }
+    return warning(
+      "watchdog.alerts",
+      "Runtime watchdog alerts",
+      details,
+      "Run kairon watchdog list, inspect each alert, and resolve only after remediation."
+    );
+  } catch {
+    return warning(
+      "watchdog.alerts",
+      "Runtime watchdog alerts",
+      ["status=unavailable"],
+      "Run kairon watchdog check, then retry kairon doctor."
     );
   }
 }
