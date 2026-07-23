@@ -42,6 +42,7 @@ describe("runDoctor", () => {
     expect(statusById(result, "agent.provider_policy")).toBe("pass");
     expect(statusById(result, "env.api_keys")).toBe("pass");
     expect(statusById(result, "discord.config")).toBe("pass");
+    expect(statusById(result, "workflow.config")).toBe("pass");
     expect(statusById(result, "board.secret_scan")).toBe("pass");
     expect(statusById(result, "runtime.recovery")).toBe("pass");
     expect(statusById(result, "watchdog.alerts")).toBe("pass");
@@ -995,6 +996,33 @@ describe("runDoctor", () => {
       ])
     );
     expect(check?.next_action).toContain(".kairon/correlations");
+  });
+
+  it("warns when workflow config conflicts with its legacy environment fallback", async () => {
+    const root = await createInitializedGitProject();
+    const runtimePath = path.join(root, ".kairon", "config", "runtime.json");
+    const runtime = await readJsonFile<Record<string, unknown>>(runtimePath);
+    const workflow = runtime.workflow as Record<string, unknown>;
+    workflow.enabled = false;
+    workflow.enabled_env = "KAIRON_WORKFLOW_RUNTIME";
+    await writeJsonFileAtomic(runtimePath, runtime);
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: { KAIRON_WORKFLOW_RUNTIME: "1" }
+    });
+    const check = checkById(result, "workflow.config");
+
+    expect(result.ok).toBe(true);
+    expect(check?.status).toBe("warning");
+    expect(check?.details).toEqual(
+      expect.arrayContaining([
+        "effective_source=config",
+        "conflict=true",
+        "legacy_enabled_env=true"
+      ])
+    );
   });
 });
 

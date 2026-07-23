@@ -512,10 +512,14 @@ describe("createProgram", () => {
       (command) => command.name() === "workflow"
     );
     const run = workflow?.commands.find((command) => command.name() === "run");
+    const config = workflow?.commands.find(
+      (command) => command.name() === "config"
+    );
 
     expect(workflow?.description()).toContain("persistent Kairon workflows");
     expect(workflow?.commands.map((command) => command.name()).sort()).toEqual([
       "cancel",
+      "config",
       "list",
       "pause",
       "recover",
@@ -525,6 +529,15 @@ describe("createProgram", () => {
       "show"
     ]);
     expect(run?.description()).toContain("production workflow");
+    expect(config?.commands.map((command) => command.name()).sort()).toEqual([
+      "propose",
+      "show"
+    ]);
+    expect(
+      config?.commands
+        .find((command) => command.name() === "propose")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--enable", "--disable"]));
     expect(run?.options.map((option) => option.long)).toEqual(
       expect.arrayContaining([
         "--candidate",

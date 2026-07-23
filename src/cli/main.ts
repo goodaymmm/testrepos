@@ -148,6 +148,8 @@ import {
 import { summarizeOperationTestsCommand } from "./commands/test-summary.js";
 import {
   workflowCancelCommand,
+  workflowConfigProposeCommand,
+  workflowConfigShowCommand,
   workflowListCommand,
   workflowPauseCommand,
   workflowRecoverCommand,
@@ -1188,6 +1190,26 @@ export function createProgram(): Command {
   const workflow = program
     .command("workflow")
     .description("Run and inspect persistent Kairon workflows.");
+
+  const workflowConfig = workflow
+    .command("config")
+    .description("Inspect and propose production workflow runtime configuration.");
+
+  workflowConfig
+    .command("show")
+    .description("Show configured and effective workflow runtime enablement.")
+    .action(async () => {
+      console.log(await workflowConfigShowCommand(process.cwd()));
+    });
+
+  workflowConfig
+    .command("propose")
+    .description("Create a runtime.json workflow config proposal.")
+    .option("--enable", "Enable production workflow after proposal apply and restart.")
+    .option("--disable", "Disable production workflow after proposal apply and restart.")
+    .action(async (options: { enable?: boolean; disable?: boolean }) => {
+      console.log(await workflowConfigProposeCommand(process.cwd(), options));
+    });
 
   workflow
     .command("list")

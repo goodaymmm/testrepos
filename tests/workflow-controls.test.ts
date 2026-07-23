@@ -160,7 +160,7 @@ describe("WorkflowControls", () => {
     expect(retried.artifact.nodes[1]).toMatchObject({
       status: "dispatched",
       attempt: 2,
-      max_attempts: 2,
+      max_attempts: 3,
       idempotency_key: `WF-0152-RETRY:${failedNode.id}:2`
     });
     expect(queue.map((item) => item.idempotency_key)).toEqual([
@@ -201,6 +201,11 @@ describe("WorkflowControls", () => {
 async function createInitializedProject(): Promise<string> {
   const root = await createTempProject();
   await initializeProject({ projectRoot: root });
+  const runtimePath = path.join(root, ".kairon", "config", "runtime.json");
+  const runtime = await readJsonFile<Record<string, unknown>>(runtimePath);
+  const workflow = runtime.workflow as Record<string, unknown>;
+  workflow.enabled = true;
+  await writeJsonFileAtomic(runtimePath, runtime);
   await writeJsonFileAtomic(path.join(root, ".kairon", "config", "schedule.json"), {
     schema_version: "0.1",
     timezone: "UTC",

@@ -270,7 +270,7 @@ kairon config apply CFG-YYYYMMDDHHMMSS-xxxxxxxx --dry-run
 kairon config apply CFG-YYYYMMDDHHMMSS-xxxxxxxx
 ```
 
-`config propose` はドッキング解析結果を `.kairon/config/proposals/` に保存します。`config apply` は保存済みproposalを `project.json` に反映します。実適用時は事前に `.bak-YYYYMMDDHHMMSS` backupを作り、proposalが古い場合や対象projectが違う場合は拒否します。
+`config propose` はドッキング解析結果を `.kairon/config/proposals/` に保存します。`workflow config propose`はproduction workflow用の`runtime.json` proposalを保存します。`config apply`はどちらの保存済みproposalも対象にでき、実適用時は事前に `.bak-YYYYMMDDHHMMSS` backupを作ります。proposalが古い場合や対象projectが違う場合は拒否します。
 
 ### 起動
 
@@ -373,6 +373,10 @@ full rebuildは最初に`--dry-run --compare`で現在indexを変更せずcandid
 ### Production workflow
 
 ```powershell
+kairon workflow config show
+kairon workflow config propose --enable
+kairon config apply CFG-YYYYMMDDHHMMSS-xxxxxxxx --dry-run
+kairon config apply CFG-YYYYMMDDHHMMSS-xxxxxxxx
 kairon workflow list
 kairon workflow run WF-0001 --task-id TASK-0001
 kairon workflow show WF-0001
@@ -381,7 +385,7 @@ kairon workflow pause WF-0001 --reason "operator review"
 kairon workflow resume WF-0001
 ```
 
-production workflowは`.kairon/workflows/`へrunとtransition checkpointを保存し、queue idempotency、approval gate、resource lock、retry、pause / resume / cancel / recoverを既存TaskRunner境界へ接続します。現行baselineでは`KAIRON_WORKFLOW_RUNTIME=1`が明示された場合だけproduction workflow itemをruntimeがclaimします。`--candidate`を使う`.kairon/experimental/workflows/`経路は互換性とdry-run評価用であり、production canonical stateの代替ではありません。
+production workflowは`.kairon/workflows/`へrunとtransition checkpointを保存し、queue idempotency、approval gate、resource lock、retry、pause / resume / cancel / recoverを既存TaskRunner境界へ接続します。`runtime.json.workflow.enabled=true`をproposal経由で適用した場合だけproduction workflow itemをruntimeがclaimし、既定は無効です。旧projectの`KAIRON_WORKFLOW_RUNTIME`はconfigに`enabled`がない場合だけ互換fallbackとして利用されます。`--candidate`を使う`.kairon/experimental/workflows/`経路は互換性とdry-run評価用であり、production canonical stateの代替ではありません。
 
 ### Local Beta package / Readiness
 

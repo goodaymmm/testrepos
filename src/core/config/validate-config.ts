@@ -35,6 +35,27 @@ const watchdogRuleSchema = z
 
 const runtimeConfigSchema = schemaVersion
   .extend({
+    workflow: z
+      .object({
+        enabled: z.boolean().optional(),
+        enabled_env: z.string().trim().min(1).optional(),
+        mode: z.literal("production").optional(),
+        checkpoint_store: z.literal("file").optional(),
+        resource_lock_ttl_seconds: z
+          .number()
+          .int()
+          .positive()
+          .max(604_800)
+          .optional(),
+        checkpoint_on_transition: z.boolean().optional(),
+        retry: z
+          .object({
+            max_attempts: z.number().int().min(1).max(10),
+            backoff_seconds: z.number().int().min(0).max(3_600)
+          })
+          .optional()
+      })
+      .optional(),
     watchdog: z
       .object({
         enabled: z.boolean(),
@@ -269,7 +290,11 @@ export function validateConfigFile(fileName: string, value: unknown): Validation
   if (fileName === "runtime.json") {
     const result = runtimeConfigSchema.safeParse(value);
     if (!result.success) {
-      errors.push(`${fileName}: runtime watchdog settings are invalid`);
+      errors.push(`${fileName}: runtime workflow or watchdog settings are invalid`);
+    } else if (result.data.workflow?.enabled_env !== undefined) {
+      warnings.push(
+        `${fileName}: workflow.enabled_env is legacy; use workflow.enabled`
+      );
     }
   }
 

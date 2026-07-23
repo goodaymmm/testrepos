@@ -43,9 +43,15 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
         graceful_shutdown_seconds: 30
       },
       workflow: {
-        enabled_env: "KAIRON_WORKFLOW_RUNTIME",
+        enabled: false,
+        mode: "production",
+        checkpoint_store: "file",
         resource_lock_ttl_seconds: 86400,
-        checkpoint_on_transition: true
+        checkpoint_on_transition: true,
+        retry: {
+          max_attempts: 3,
+          backoff_seconds: 30
+        }
       },
       watchdog: {
         enabled: true,

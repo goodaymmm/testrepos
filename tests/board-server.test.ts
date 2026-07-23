@@ -9,7 +9,10 @@ import { startBoardServer } from "../src/board/server.js";
 import { renderBoardHtml } from "../src/board/html.js";
 import { createBoardProjection } from "../src/board/projection.js";
 import { initializeProject } from "../src/cli/commands/init.js";
-import { writeJsonFileAtomic } from "../src/core/fs/json-file.js";
+import {
+  readJsonFile,
+  writeJsonFileAtomic
+} from "../src/core/fs/json-file.js";
 import { TaskRunner } from "../src/tasks/task-runner.js";
 import { WorkflowControls } from "../src/workflow/controls.js";
 import { ProductionWorkflowRuntime } from "../src/workflow/runtime.js";
@@ -19,6 +22,10 @@ describe("Board workflow observability", () => {
   it("renders workflow progress, blocker, retry count, and latest event", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
+    const runtimePath = path.join(root, ".kairon", "config", "runtime.json");
+    const runtime = await readJsonFile<Record<string, unknown>>(runtimePath);
+    (runtime.workflow as Record<string, unknown>).enabled = true;
+    await writeJsonFileAtomic(runtimePath, runtime);
     await writeJsonFileAtomic(path.join(root, ".kairon", "config", "schedule.json"), {
       schema_version: "0.1",
       timezone: "UTC",

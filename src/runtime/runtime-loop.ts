@@ -41,9 +41,9 @@ import {
 import { formatRuntimeStatus, getRuntimeStatus } from "./status.js";
 import { isWorkflowRuntimeCandidateEnabled } from "../experimental/workflow-runtime.js";
 import {
-  isProductionWorkflowRuntimeEnabled,
   ProductionWorkflowRuntime
 } from "../workflow/runtime.js";
+import { resolveWorkflowRuntimeConfig } from "../workflow/config.js";
 import {
   auditDiscordRuntimeCommandCompletion,
   sanitizeDiscordAuditText
@@ -152,6 +152,12 @@ export class RuntimeLoop {
       now: () => now,
       env: this.options.env
     }).recoverActive();
+    const productionWorkflowEnabled = (
+      await resolveWorkflowRuntimeConfig(
+        this.projectRoot,
+        this.options.env ?? process.env
+      )
+    ).effective_enabled;
 
     const queueResult = await this.createQueueWorker(
       now,
@@ -160,7 +166,8 @@ export class RuntimeLoop {
     ).processNext(workerId, {
       scheduleMode: schedule.mode,
       now,
-      blocked: (item) => this.isWorkflowRuntimeItemBlocked(item)
+      blocked: (item) =>
+        this.isWorkflowRuntimeItemBlocked(item, productionWorkflowEnabled)
     });
     return this.recordTick({
       ...this.baseTick(schedule, workerId, now, sessions),
@@ -273,13 +280,16 @@ export class RuntimeLoop {
     return this.options.now?.() ?? new Date();
   }
 
-  private isWorkflowRuntimeItemBlocked(item: QueueItem): boolean {
+  private isWorkflowRuntimeItemBlocked(
+    item: QueueItem,
+    productionWorkflowEnabled: boolean
+  ): boolean {
     const env = this.options.env ?? process.env;
     return (
       (item.metadata?.workflow_runtime !== undefined &&
         !isWorkflowRuntimeCandidateEnabled(env)) ||
       (item.metadata?.production_workflow !== undefined &&
-        !isProductionWorkflowRuntimeEnabled(env))
+        !productionWorkflowEnabled)
     );
   }
 }

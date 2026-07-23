@@ -8,10 +8,23 @@
 ## 実装status
 
 <!-- kairon:production-workflow -->
-T159時点のproduction workflowは`src/workflow/`に実装され、run、transition checkpoint、queue idempotency、approval gate、resource lock、retry、pause / resume / cancel / recoverを`.kairon/workflows/`へ永続化する。production itemのclaimは現行baselineでは`KAIRON_WORKFLOW_RUNTIME=1`による明示opt-inを必要とする。
+T167時点のproduction workflowは`src/workflow/`に実装され、run、transition checkpoint、queue idempotency、approval gate、resource lock、retry、pause / resume / cancel / recoverを`.kairon/workflows/`へ永続化する。production itemのclaimは`runtime.json.workflow.enabled`を正式な設定とし、既定値は`false`である。旧projectの`enabled_env`は互換fallbackとして読み取るが、明示configが常に優先される。
 
 <!-- kairon:experimental-workflow-compatibility -->
 `src/experimental/workflow-runtime.ts`と`.kairon/experimental/workflows/`はcandidate評価・互換経路である。dry-runではcanonical stateを変更せず、production workflowの保存先や通常運用経路として扱わない。
+
+### Production workflow config
+
+```text
+kairon workflow config show
+kairon workflow config propose --enable
+kairon config apply <proposal-id> --dry-run
+kairon config apply <proposal-id>
+```
+
+`config propose`は`runtime.json`を直接変更せず、24時間有効なproposalを`.kairon/config/proposals/`へ保存する。適用時はbackupを作成し、runtime再起動後に新しい設定を使用する。`KAIRON_WORKFLOW_RUNTIME`は`workflow.enabled`が未定義の旧configでだけ有効なfallbackであり、configとの競合は`kairon doctor`の`workflow.config`でwarningになる。
+
+production artifactは`.kairon/workflows/runs/`、experimental互換artifactは`.kairon/experimental/workflows/`として別々に診断する。checkpoint storeは現時点では`file`だけをサポートする。
 
 ## 0. 初回プリインストール
 

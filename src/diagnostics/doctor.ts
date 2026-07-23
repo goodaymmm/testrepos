@@ -1,4 +1,5 @@
 import { access, readFile, readdir } from "node:fs/promises";
+import { constants } from "node:fs";
 import path from "node:path";
 import { defaultAgentAdapters } from "../agents/adapters/index.js";
 import { agentDisplayName } from "../agents/display.js";
@@ -33,6 +34,7 @@ import {
   evaluateBetaReadiness,
   readinessManifestExists
 } from "../readiness/beta-readiness.js";
+import { resolveWorkflowRuntimeConfig } from "../workflow/config.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -195,6 +197,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkGitRepository(options.projectRoot));
   checks.push(await checkGitignore(options.projectRoot));
   checks.push(await checkConfigValidation(options.projectRoot));
+  checks.push(await checkWorkflowRuntimeConfig(options.projectRoot, env));
   checks.push(await checkAgentConfig(options.projectRoot));
   checks.push(await checkProviderPolicyHealth(options.projectRoot));
   checks.push(await checkAgentCliAvailability(options.projectRoot, commandAvailability));
@@ -346,6 +349,115 @@ async function checkConfigValidation(projectRoot: string): Promise<DoctorCheck> 
       [String(validationError)],
       "Run kairon init or restore missing config files."
     );
+  }
+}
+
+async function checkWorkflowRuntimeConfig(
+  projectRoot: string,
+  env: NodeJS.ProcessEnv
+): Promise<DoctorCheck> {
+  try {
+    const runtime = await loadConfigFile<{
+      schema_version?: string;
+    }>(projectRoot, "runtime.json");
+    if (runtime.schema_version !== "0.1") {
+      return error(
+        "workflow.config",
+        "Workflow runtime config",
+        [`schema_version=${runtime.schema_version ?? "missing"}`],
+        "Migrate runtime.json to the supported schema before enabling workflow runtime."
+      );
+    }
+
+    const resolution = await resolveWorkflowRuntimeConfig(projectRoot, env);
+    const checkpointsPath = resolveInside(
+      getKaironPaths(projectRoot).kaironDir,
+      "workflows",
+      "checkpoints"
+    );
+    const [checkpointAvailable, productionArtifacts, legacyArtifacts] =
+      await Promise.all([
+        pathAccessible(checkpointsPath),
+        countJsonFiles(
+          resolveInside(
+            getKaironPaths(projectRoot).kaironDir,
+            "workflows",
+            "runs"
+          )
+        ),
+        countJsonFiles(
+          resolveInside(
+            getKaironPaths(projectRoot).kaironDir,
+            "experimental",
+            "workflows"
+          )
+        )
+      ]);
+    const details = [
+      `configured_enabled=${resolution.config.enabled}`,
+      `effective_enabled=${resolution.effective_enabled}`,
+      `effective_source=${resolution.effective_source}`,
+      `environment_name=${resolution.environment_name}`,
+      `environment_value=${resolution.environment_value ?? "unset"}`,
+      `conflict=${resolution.conflict}`,
+      `legacy_enabled_env=${resolution.legacy_enabled_env}`,
+      `checkpoint_store=${resolution.config.checkpoint_store}`,
+      `checkpoint_store_available=${checkpointAvailable}`,
+      `production_artifacts=${productionArtifacts}`,
+      `legacy_experimental_artifacts=${legacyArtifacts}`,
+      ...resolution.warnings.map((value) => `warning=${value}`)
+    ];
+
+    if (!checkpointAvailable) {
+      return error(
+        "workflow.config",
+        "Workflow runtime config",
+        details,
+        "Restore write access to .kairon/workflows/checkpoints."
+      );
+    }
+    if (
+      resolution.conflict ||
+      resolution.effective_source === "environment" ||
+      resolution.legacy_enabled_env ||
+      legacyArtifacts > 0
+    ) {
+      return warning(
+        "workflow.config",
+        "Workflow runtime config",
+        details,
+        "Review `kairon workflow config show` and apply an explicit workflow config proposal."
+      );
+    }
+    return pass("workflow.config", "Workflow runtime config", details);
+  } catch (workflowConfigError) {
+    return error(
+      "workflow.config",
+      "Workflow runtime config",
+      [String(workflowConfigError)],
+      "Fix runtime.json or restore workflow runtime directories."
+    );
+  }
+}
+
+async function pathAccessible(targetPath: string): Promise<boolean> {
+  try {
+    await access(targetPath, constants.W_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function countJsonFiles(directory: string): Promise<number> {
+  try {
+    return (await readdir(directory)).filter((name) => name.endsWith(".json"))
+      .length;
+  } catch (directoryError) {
+    if ((directoryError as NodeJS.ErrnoException).code === "ENOENT") {
+      return 0;
+    }
+    throw directoryError;
   }
 }
 

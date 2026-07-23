@@ -4,6 +4,7 @@ import { getConfigPath, normalizeProjectRoot, toPosixPath } from "../fs/paths.js
 import { readJsonFile, writeJsonFileAtomic } from "../fs/json-file.js";
 import { validateAllConfigs } from "./load-config.js";
 import type { ValidationResult } from "./validate-config.js";
+import { normalizeWorkflowRuntimeConfig } from "../../workflow/config.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -27,6 +28,12 @@ export type ConfigMigrationResult = {
   changes: ConfigMigrationChange[];
   backups: string[];
   validation: ValidationResult;
+};
+
+export type WorkflowRuntimeConfigMigrationPlan = {
+  migration_required: boolean;
+  runtime_config: JsonObject;
+  changes: ConfigMigrationChange[];
 };
 
 export async function migrateConfigs(
@@ -93,6 +100,70 @@ export function formatMigrationResult(result: ConfigMigrationResult): string {
   }
 
   return lines.join("\n");
+}
+
+export function planWorkflowRuntimeConfigMigration(
+  runtimeConfig: JsonObject,
+  enabled: boolean
+): WorkflowRuntimeConfigMigrationPlan {
+  const workflow = asObject(runtimeConfig.workflow) ?? {};
+  const normalized = normalizeWorkflowRuntimeConfig(
+    workflow as Parameters<typeof normalizeWorkflowRuntimeConfig>[0],
+    enabled
+  );
+  const nextRuntimeConfig = structuredClone(runtimeConfig);
+  nextRuntimeConfig.workflow = normalized;
+  const changes: ConfigMigrationChange[] = [];
+
+  if (typeof workflow.enabled !== "boolean") {
+    changes.push({
+      file: "runtime.json",
+      path: "workflow.enabled",
+      from: workflow.enabled,
+      to: enabled,
+      reason:
+        "Production workflow enablement is graduated to an explicit config value."
+    });
+  } else if (workflow.enabled !== enabled) {
+    changes.push({
+      file: "runtime.json",
+      path: "workflow.enabled",
+      from: workflow.enabled,
+      to: enabled,
+      reason: "Production workflow enablement is changed by operator proposal."
+    });
+  }
+
+  for (const [key, value] of Object.entries(normalized)) {
+    if (key === "enabled" || valuesEqual(workflow[key], value)) {
+      continue;
+    }
+    changes.push({
+      file: "runtime.json",
+      path: `workflow.${key}`,
+      from: workflow[key],
+      to: value,
+      reason: "Production workflow config is normalized to the supported schema."
+    });
+  }
+
+  if (workflow.enabled_env !== undefined) {
+    changes.push({
+      file: "runtime.json",
+      path: "workflow.enabled_env",
+      from: workflow.enabled_env,
+      to: undefined,
+      reason:
+        "Legacy environment enablement remains a runtime fallback only until this proposal is applied."
+    });
+  }
+
+  return {
+    migration_required:
+      workflow.enabled_env !== undefined || typeof workflow.enabled !== "boolean",
+    runtime_config: nextRuntimeConfig,
+    changes
+  };
 }
 
 function migrateGeminiToAntigravity(
@@ -180,4 +251,8 @@ function pad(value: number): string {
 
 function formatValue(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value);
+}
+
+function valuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
