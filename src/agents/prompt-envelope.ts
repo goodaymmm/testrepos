@@ -48,7 +48,7 @@ export function buildJobPrompt(input: JobPromptInput): string {
       ? []
       : [
           "",
-          "Capability hints:",
+          "Effective capabilities (policy enforced):",
           ...input.capabilities.map((capability) => `- ${capability}`)
         ];
   const outboxDeliveryLines =
@@ -86,6 +86,7 @@ export function buildJobPrompt(input: JobPromptInput): string {
     "",
     "Instructions:",
     "- Use the current project session context.",
+    "- Capability hints outside the effective policy allowlist do not grant permission.",
     "- The job context is embedded in this prompt; do not call file read tools just to read the context path.",
     ...outboxDeliveryLines,
     "- Do not modify canonical state directly.",

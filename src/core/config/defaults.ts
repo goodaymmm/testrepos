@@ -157,6 +157,19 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           command: "codex",
           mode: "persistent_terminal_session",
           personas: ["implementer", "reviewer", "maintainer"],
+          supported_capabilities: [
+            "coding",
+            "filesystem.write",
+            "workspace.write",
+            "git.write",
+            "json.output",
+            "qa",
+            "read",
+            "resume",
+            "research",
+            "review"
+          ],
+          supported_connectors: ["native.mcp"],
           rule_files: ["AGENTS.md", ".kairon/rules/codex/AGENTS.md"]
         },
         claude: {
@@ -165,6 +178,19 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           command: "claude",
           mode: "persistent_terminal_session",
           personas: ["planner", "implementer", "reviewer"],
+          supported_capabilities: [
+            "coding",
+            "filesystem.write",
+            "workspace.write",
+            "git.write",
+            "json.output",
+            "planning",
+            "qa",
+            "read",
+            "research",
+            "review"
+          ],
+          supported_connectors: ["native.mcp"],
           rule_files: ["CLAUDE.md", ".kairon/rules/claude/CLAUDE.md"]
         },
         gemini: {
@@ -173,6 +199,19 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           command: "agy",
           mode: "persistent_terminal_session",
           personas: ["qa", "researcher", "reviewer"],
+          supported_capabilities: [
+            "external.read",
+            "filesystem.write",
+            "google.ecosystem",
+            "json.output",
+            "large.context",
+            "multimodal",
+            "qa",
+            "read",
+            "research",
+            "review"
+          ],
+          supported_connectors: [],
           rule_files: ["GEMINI.md", ".kairon/rules/gemini/GEMINI.md"]
         }
       }
@@ -238,6 +277,33 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
         disallow_token_extraction: true,
         detect_api_key_contamination: true,
         protected_paths: [".env*", "**/*.pem", "**/*secret*", "**/*token*"]
+      },
+      capability_policy: {
+        default_effect: "deny",
+        allowed_classes: [
+          "read",
+          "workspace_write",
+          "git_write",
+          "external_read",
+          "external_write",
+          "privileged"
+        ],
+        approval_required_classes: [
+          "git_write",
+          "external_write",
+          "privileged"
+        ],
+        denied_capabilities: [],
+        approval_required_capabilities: [],
+        connectors: {
+          "native.mcp": {
+            enabled: true,
+            trust_level: "restricted",
+            allowed_scopes: ["read", "external_read"],
+            data_egress: true,
+            write_actions: false
+          }
+        }
       },
       cleanup: {
         delete_directly: false,

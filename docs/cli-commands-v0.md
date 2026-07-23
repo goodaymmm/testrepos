@@ -749,6 +749,22 @@ status=ready
 persona=implementer
 ```
 
+## kairon capability evaluate / explain
+
+task、Agent support、project / persona policy、Approval、connector trust宣言から
+effective capabilityをread-only評価する。
+
+```text
+kairon capability evaluate --task TASK-0001
+kairon capability explain --task TASK-0001 --agent codex
+kairon capability explain --task TASK-0001 --agent codex --format json
+```
+
+`evaluate`はstatusとeffective / denied / approval_required / setup_requiredを表示する。
+`explain`はrequested、supported、policy_allowed、approved、reasonを追加表示する。
+CLI自体はApprovalを作成せず、`task run`の実行前gateが必要なApprovalを作成する。
+未知capability、未知connector、過剰scopeはdefault denyである。
+
 ## kairon task run
 
 指定 task をqueueへ積み、dispatcher / runner / state applierへ同期的に流す。
@@ -775,6 +791,9 @@ enqueue agent.run queue item
 claim queued item
 build dispatch request from persona / capabilities / tags
 select agent through AgentDispatcher
+evaluate capability / connector trust policy
+write capability-decision.json
+stop before Agent launch when approval_required / setup_required / denied
 build run context
 invoke CliSessionRunner
 collect required outbox
@@ -782,7 +801,8 @@ apply outbox through StateApplier
 complete or fail queue item
 ```
 
-実行結果は `.kairon/runs/RUN-xxxx/runner.json` と `.kairon/runs/RUN-xxxx/outbox.json` に残る。
+実行結果は `.kairon/runs/RUN-xxxx/runner.json`、`.kairon/runs/RUN-xxxx/outbox.json`、
+`.kairon/runs/RUN-xxxx/capability-decision.json` に残る。
 code-producing taskでは、既存のreview loop境界に接続される。
 
 ## kairon review run

@@ -40,6 +40,7 @@ describe("runDoctor", () => {
     expect(statusById(result, "git.gitignore")).toBe("pass");
     expect(statusById(result, "cli.availability")).toBe("pass");
     expect(statusById(result, "agent.provider_policy")).toBe("pass");
+    expect(statusById(result, "policy.capabilities")).toBe("pass");
     expect(statusById(result, "env.api_keys")).toBe("pass");
     expect(statusById(result, "discord.config")).toBe("pass");
     expect(statusById(result, "workflow.config")).toBe("pass");

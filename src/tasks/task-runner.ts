@@ -13,7 +13,8 @@ import type { InteractiveSessionRunner } from "../agents/interactive-session-run
 import type { CommandAvailabilityChecker } from "../agents/session-host.js";
 import type { AgentId } from "../agents/types.js";
 import { nextId } from "../core/ids/counter.js";
-import { readJsonFile } from "../core/fs/json-file.js";
+import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
+import { loadConfigFile } from "../core/config/load-config.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import {
   WorkQueue,
@@ -27,6 +28,12 @@ import {
   ReviewLoopManager,
   type ReviewLoopState
 } from "../review/review-loop-manager.js";
+import {
+  ensureCapabilityApproval,
+  evaluateCapabilityPolicy,
+  writeCapabilityDecision,
+  type CapabilityPolicyDecision
+} from "../policy/trust-policy.js";
 
 export type CreateTaskRequest = {
   title: string;
@@ -110,6 +117,8 @@ export type RunTaskResult = {
   review_loop?: TaskReviewLoopSummary;
   command: string;
   command_available: boolean;
+  capability_status: CapabilityPolicyDecision["status"];
+  capability_decision_path: string;
 };
 
 export type TaskReviewLoopSummary = NonNullable<CliSessionRunRecord["review_loop"]> & {
@@ -304,6 +313,36 @@ export class TaskRunner {
           : { allowedAgents: [reviewFix.loop.implementer] }
     });
     const runId = await nextId(this.projectRoot, "run");
+    const capabilityDecision = await ensureCapabilityApproval(
+      this.projectRoot,
+      await evaluateCapabilityPolicy(this.projectRoot, {
+        taskId: task.id,
+        persona,
+        agent: decision.agent,
+        requestedCapabilities: capabilities,
+        now: this.now()
+      })
+    );
+    const capabilityDecisionPath = await writeCapabilityDecision(
+      this.projectRoot,
+      runId,
+      capabilityDecision
+    );
+
+    if (capabilityDecision.status !== "allowed") {
+      return this.recordCapabilityBlockedRun({
+        item,
+        task,
+        runId,
+        persona,
+        agent: decision.agent,
+        dispatchReason: decision.reason,
+        capabilityDecision,
+        capabilityDecisionPath,
+        date: request.date ?? localDateKey(this.now())
+      });
+    }
+
     const record = await new CliSessionRunner(this.projectRoot, {
       commandAvailability: this.options.commandAvailability,
       commandRunner: this.options.commandRunner,
@@ -316,7 +355,7 @@ export class TaskRunner {
       taskId: task.id,
       persona,
       timeoutMs,
-      capabilities,
+      capabilities: capabilityDecision.effective,
       extraSources:
         reviewFix === undefined ? undefined : [reviewFix.instruction_path],
       tags,
@@ -347,8 +386,120 @@ export class TaskRunner {
       applied_event_ids: applied.appliedEventIds,
       review_loop: reviewLoop ?? record.review_loop,
       command: record.command,
-      command_available: record.command_available
+      command_available: record.command_available,
+      capability_status: capabilityDecision.status,
+      capability_decision_path: capabilityDecisionPath
     };
+  }
+
+  private async recordCapabilityBlockedRun(input: {
+    item: QueueItem;
+    task: TaskRecord;
+    runId: string;
+    persona: string;
+    agent: AgentId;
+    dispatchReason: string;
+    capabilityDecision: CapabilityPolicyDecision;
+    capabilityDecisionPath: string;
+    date: string;
+  }): Promise<RunTaskResult> {
+    const runDir = path.join(getKaironPaths(this.projectRoot).runsDir, input.runId);
+    await mkdir(runDir, { recursive: true });
+    const outboxPath = path.join(runDir, "outbox.json");
+    const runnerPath = path.join(runDir, "runner.json");
+    const stdoutPath = path.join(runDir, "stdout.log");
+    const stderrPath = path.join(runDir, "stderr.log");
+    const promptPath = path.join(runDir, "stdin.md");
+    const contextPath = path.join(runDir, "context.md");
+    const createdAt = this.now().toISOString();
+    const status =
+      input.capabilityDecision.status === "approval_required"
+        ? "permission_required"
+        : input.capabilityDecision.status === "setup_required"
+          ? "setup_required"
+          : "failed";
+    const command = await this.agentCommand(input.agent);
+
+    await Promise.all([
+      writeFile(stdoutPath, "", "utf8"),
+      writeFile(stderrPath, "", "utf8"),
+      writeFile(promptPath, "", "utf8"),
+      writeFile(contextPath, "", "utf8"),
+      writeJsonFileAtomic(outboxPath, {
+        schema_version: "0.1",
+        run_id: input.runId,
+        task_id: input.task.id,
+        agent: input.agent,
+        persona: input.persona,
+        status,
+        events: [
+          {
+            type: "message.created",
+            payload: {
+              message_type: "agent.run.capability_blocked",
+              capability_status: input.capabilityDecision.status,
+              reasons: input.capabilityDecision.reasons,
+              approval_id: input.capabilityDecision.approval_id,
+              capability_decision_path: input.capabilityDecisionPath
+            }
+          }
+        ]
+      }),
+      writeJsonFileAtomic(runnerPath, {
+        schema_version: "0.1",
+        kind: "job",
+        status,
+        agent: input.agent,
+        date: input.date,
+        run_id: input.runId,
+        task_id: input.task.id,
+        persona: input.persona,
+        command,
+        args: [],
+        command_available: false,
+        pid: null,
+        exit_code: null,
+        signal: null,
+        timed_out: false,
+        failure_reason: `capability_policy_${input.capabilityDecision.status}`,
+        prompt_path: toProjectPath(this.projectRoot, promptPath),
+        stdout_log: toProjectPath(this.projectRoot, stdoutPath),
+        stderr_log: toProjectPath(this.projectRoot, stderrPath),
+        outbox_path: toProjectPath(this.projectRoot, outboxPath),
+        context_path: toProjectPath(this.projectRoot, contextPath),
+        runner_metadata_path: toProjectPath(this.projectRoot, runnerPath),
+        capability_decision_path: input.capabilityDecisionPath,
+        created_at: createdAt,
+        finished_at: createdAt
+      })
+    ]);
+
+    const applied = await new StateApplier(this.projectRoot).applyOutbox(outboxPath);
+
+    return {
+      schema_version: "0.1",
+      task_id: input.task.id,
+      queue_item_id: input.item.id,
+      run_id: input.runId,
+      status,
+      agent: input.agent,
+      persona: input.persona,
+      dispatch_reason: `${input.dispatchReason}; capability ${input.capabilityDecision.status}`,
+      runner_metadata_path: toProjectPath(this.projectRoot, runnerPath),
+      outbox_path: toProjectPath(this.projectRoot, outboxPath),
+      applied_event_ids: applied.appliedEventIds,
+      command,
+      command_available: false,
+      capability_status: input.capabilityDecision.status,
+      capability_decision_path: input.capabilityDecisionPath
+    };
+  }
+
+  private async agentCommand(agent: AgentId): Promise<string> {
+    const config = await loadConfigFile<{
+      agents?: Record<string, { command?: string }>;
+    }>(this.projectRoot, "agents.json");
+    return config.agents?.[agent]?.command ?? agent;
   }
 
   private async loadReviewFixContext(
@@ -460,6 +611,8 @@ export function formatRunTaskResult(result: RunTaskResult): string {
     `status=${result.status}`,
     `command=${result.command}`,
     `command_available=${result.command_available}`,
+    `capability_status=${result.capability_status}`,
+    `capability_decision=${result.capability_decision_path}`,
     `runner=${result.runner_metadata_path}`,
     `outbox=${result.outbox_path}`,
     `applied_events=${result.applied_event_ids.length}`,

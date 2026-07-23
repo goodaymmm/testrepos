@@ -10,6 +10,10 @@ import type { AgentSessionHealthStatus } from "./session-health.js";
 import type { SessionBudgetStatus } from "./session-budget.js";
 import type { AgentId, RunnerMode, SessionScope } from "./types.js";
 import { agentIds, isAgentId } from "./types.js";
+import {
+  defaultAgentCapabilities,
+  resolveCapability
+} from "../policy/capabilities.js";
 
 export type AgentSessionAvailability = {
   agent: AgentId;
@@ -43,6 +47,7 @@ export type DispatchRequest = {
   allowInteractiveAgents?: boolean;
   avoidUnhealthyAgents?: boolean;
   unattended?: boolean;
+  persistProviderHealth?: boolean;
   now?: Date;
   policy?: {
     allowedAgents?: AgentId[];
@@ -67,6 +72,8 @@ type AgentsConfig = {
       command?: string;
       mode?: RunnerMode;
       personas?: string[];
+      supported_capabilities?: string[];
+      supported_connectors?: string[];
     }
   >;
 };
@@ -92,41 +99,6 @@ const antigravitySignals = [
   "large-context"
 ];
 
-const capabilityMatrix: Record<AgentId, string[]> = {
-  codex: [
-    "coding",
-    "filesystem.write",
-    "workspace.write",
-    "json.output",
-    "native.mcp",
-    "qa",
-    "resume",
-    "research",
-    "review"
-  ],
-  claude: [
-    "coding",
-    "filesystem.write",
-    "workspace.write",
-    "json.output",
-    "native.mcp",
-    "planning",
-    "qa",
-    "research",
-    "review"
-  ],
-  gemini: [
-    "filesystem.write",
-    "google.ecosystem",
-    "json.output",
-    "large.context",
-    "multimodal",
-    "qa",
-    "research",
-    "review"
-  ]
-};
-
 export class AgentDispatcher {
   constructor(private readonly projectRoot: string) {}
 
@@ -138,7 +110,10 @@ export class AgentDispatcher {
       Promise.all(
         agentIds.map(async (agent) => [
           agent,
-          await getProviderPolicyHealth(this.projectRoot, agent, { now })
+          await getProviderPolicyHealth(this.projectRoot, agent, {
+            now,
+            persist: request.persistProviderHealth !== false
+          })
         ] as const)
       )
     ]);
@@ -213,7 +188,14 @@ export class AgentDispatcher {
           return false;
         }
 
-        if (!supportsRequiredCapabilities(agent, request.requiredCapabilities)) {
+        if (
+          !supportsRequiredCapabilities(
+            agent,
+            request.requiredCapabilities,
+            config.supported_capabilities,
+            config.supported_connectors
+          )
+        ) {
           return false;
         }
 
@@ -326,27 +308,42 @@ function prefersAntigravity(request: DispatchRequest): boolean {
 
 function supportsRequiredCapabilities(
   agent: AgentId,
-  capabilities: string[] | undefined
+  capabilities: string[] | undefined,
+  supportedCapabilities: string[] | undefined,
+  supportedConnectors: string[] | undefined
 ): boolean {
   if (capabilities === undefined) {
     return true;
   }
 
   const normalizedCapabilities = new Set(
-    capabilityMatrix[agent].map(normalizeCapability)
+    (supportedCapabilities ?? defaultAgentCapabilities[agent]).map(
+      (capability) => resolveCapability(capability).id
+    )
   );
-  const knownCapabilities = new Set(
-    Object.values(capabilityMatrix).flat().map(normalizeCapability)
-  );
+  const normalizedConnectors =
+    supportedConnectors === undefined
+      ? undefined
+      : new Set(
+          supportedConnectors.map((connector) =>
+            connector.trim().toLowerCase()
+          )
+        );
 
   return capabilities
-    .map(normalizeCapability)
-    .filter((capability) => knownCapabilities.has(capability))
-    .every((capability) => normalizedCapabilities.has(capability));
-}
-
-function normalizeCapability(capability: string): string {
-  return capability.toLowerCase().replace(/[_-]/g, ".");
+    .map(resolveCapability)
+    .every((capability) => {
+      if (!capability.known) {
+        return true;
+      }
+      if (capability.kind === "connector") {
+        return (
+          normalizedConnectors === undefined ||
+          normalizedConnectors.has(capability.connector.id)
+        );
+      }
+      return normalizedCapabilities.has(capability.id);
+    });
 }
 
 function buildReason(

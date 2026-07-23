@@ -130,6 +130,19 @@ const sessionBudgetSchema = z
     { message: "session budget soft limits must be below hard limits" }
   );
 
+const capabilityClassSchema = z.enum([
+  "read",
+  "workspace_write",
+  "git_write",
+  "external_read",
+  "external_write",
+  "privileged"
+]);
+
+const supportedCapabilitiesSchema = z
+  .array(z.string().trim().min(1))
+  .min(1);
+
 const agentsConfigSchema = schemaVersion.extend({
   session_budget: sessionBudgetSchema.optional(),
   provider_policies: z
@@ -140,9 +153,27 @@ const agentsConfigSchema = schemaVersion.extend({
     })
     .optional(),
   agents: z.object({
-    codex: z.object({ enabled: z.literal(true) }).passthrough(),
-    claude: z.object({ enabled: z.literal(true) }).passthrough(),
-    gemini: z.object({ enabled: z.literal(true) }).passthrough()
+    codex: z
+      .object({
+        enabled: z.literal(true),
+        supported_capabilities: supportedCapabilitiesSchema.optional(),
+        supported_connectors: z.array(z.string().trim().min(1)).optional()
+      })
+      .passthrough(),
+    claude: z
+      .object({
+        enabled: z.literal(true),
+        supported_capabilities: supportedCapabilitiesSchema.optional(),
+        supported_connectors: z.array(z.string().trim().min(1)).optional()
+      })
+      .passthrough(),
+    gemini: z
+      .object({
+        enabled: z.literal(true),
+        supported_capabilities: supportedCapabilitiesSchema.optional(),
+        supported_connectors: z.array(z.string().trim().min(1)).optional()
+      })
+      .passthrough()
   })
 });
 
@@ -207,6 +238,83 @@ const policiesConfigSchema = schemaVersion.extend({
       required_for_code: z.literal(true)
     })
     .passthrough(),
+  capability_policy: z
+    .object({
+      default_effect: z.literal("deny"),
+      allowed_classes: z.array(capabilityClassSchema).min(1),
+      approval_required_classes: z.array(capabilityClassSchema),
+      denied_capabilities: z.array(z.string().trim().min(1)),
+      approval_required_capabilities: z.array(z.string().trim().min(1)),
+      personas: z
+        .record(
+          z.string(),
+          z.object({
+            allowed_capabilities: z
+              .array(z.string().trim().min(1))
+              .optional(),
+            allowed_classes: z.array(capabilityClassSchema).optional()
+          })
+        )
+        .optional(),
+      connectors: z.record(
+        z.string(),
+        z
+          .object({
+            enabled: z.boolean(),
+            trust_level: z.enum([
+              "untrusted",
+              "restricted",
+              "trusted",
+              "privileged"
+            ]),
+            allowed_scopes: z.array(capabilityClassSchema),
+            data_egress: z.boolean(),
+            write_actions: z.boolean()
+          })
+          .refine(
+            (connector) =>
+              connector.trust_level !== "untrusted" ||
+              !connector.write_actions,
+            {
+              message: "untrusted connector cannot enable write_actions"
+            }
+          )
+          .refine(
+            (connector) =>
+              connector.allowed_scopes.every((scope) =>
+                connectorTrustAllowsScope(connector.trust_level, scope)
+              ),
+            {
+              message: "connector trust_level is insufficient for allowed_scopes"
+            }
+          )
+          .refine(
+            (connector) =>
+              !connector.allowed_scopes.some(
+                (scope) =>
+                  scope === "external_read" || scope === "external_write"
+              ) || connector.data_egress,
+            {
+              message: "external connector scopes require data_egress"
+            }
+          )
+          .refine(
+            (connector) =>
+              !connector.allowed_scopes.some((scope) =>
+                [
+                  "workspace_write",
+                  "git_write",
+                  "external_write",
+                  "privileged"
+                ].includes(scope)
+              ) || connector.write_actions,
+            {
+              message: "write connector scopes require write_actions"
+            }
+          )
+      )
+    })
+    .optional(),
   cleanup: z
     .object({
       delete_directly: z.literal(false),
@@ -215,6 +323,33 @@ const policiesConfigSchema = schemaVersion.extend({
     })
     .passthrough()
 });
+
+function connectorTrustAllowsScope(
+  trustLevel: "untrusted" | "restricted" | "trusted" | "privileged",
+  scope:
+    | "read"
+    | "workspace_write"
+    | "git_write"
+    | "external_read"
+    | "external_write"
+    | "privileged"
+): boolean {
+  const trustRank = {
+    untrusted: 0,
+    restricted: 1,
+    trusted: 2,
+    privileged: 3
+  } as const;
+  const scopeRank = {
+    read: 0,
+    external_read: 1,
+    workspace_write: 2,
+    git_write: 2,
+    external_write: 2,
+    privileged: 3
+  } as const;
+  return trustRank[trustLevel] >= scopeRank[scope];
+}
 
 const notificationsConfigSchema = schemaVersion.extend({
   primary_provider: z.literal("discord"),

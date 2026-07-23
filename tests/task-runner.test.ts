@@ -5,6 +5,7 @@ import type {
   CommandRunResult
 } from "../src/agents/command-runner.js";
 import { initializeProject } from "../src/cli/commands/init.js";
+import { ApprovalQueue } from "../src/approvals/approval-queue.js";
 import {
   createTaskCommand
 } from "../src/cli/commands/task.js";
@@ -576,6 +577,109 @@ describe("TaskRunner", () => {
         }
       }
     ]);
+  });
+
+  it("blocks unknown capabilities before starting an Agent process", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const invocations: CliInvocation[] = [];
+    const runner = new TaskRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) => {
+        invocations.push(invocation);
+        return commandResult(invocation);
+      }
+    });
+    const task = await runner.createTask({
+      title: "Reject unknown capability",
+      persona: "implementer",
+      capabilities: ["unknown.superpower"]
+    });
+
+    const result = await runner.runTask({
+      taskId: task.task_id,
+      date: "2026-07-24"
+    });
+
+    expect(invocations).toEqual([]);
+    expect(result).toMatchObject({
+      status: "failed",
+      capability_status: "denied",
+      capability_decision_path:
+        ".kairon/runs/RUN-0001/capability-decision.json",
+      command_available: false
+    });
+    await expect(
+      readJsonFile(path.join(root, result.capability_decision_path))
+    ).resolves.toMatchObject({
+      status: "denied",
+      denied: ["unknown.superpower"]
+    });
+  });
+
+  it("requires an Approval Queue decision before git_write reaches the Agent", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const invocations: CliInvocation[] = [];
+    const runner = new TaskRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) => {
+        invocations.push(invocation);
+        const prompt = promptFromInvocation(invocation);
+        const runId = /KAIRON_JOB_START (RUN-\d+)/.exec(prompt)?.[1] ?? "";
+        const taskId = /Task: (TASK-\d+)/.exec(prompt)?.[1] ?? "";
+        const outboxPath = /Expected outbox: (.+)/.exec(prompt)?.[1] ?? "";
+        await writeTaskOutbox(root, {
+          outboxPath,
+          runId,
+          taskId,
+          agent: "codex",
+          persona: "implementer",
+          status: "completed"
+        });
+        return commandResult(invocation);
+      }
+    });
+    const task = await runner.createTask({
+      title: "Approved git write",
+      persona: "implementer",
+      capabilities: ["git.write"]
+    });
+
+    const blocked = await runner.runTask({
+      taskId: task.task_id,
+      date: "2026-07-24"
+    });
+
+    expect(invocations).toEqual([]);
+    expect(blocked).toMatchObject({
+      status: "permission_required",
+      capability_status: "approval_required"
+    });
+    await expect(new ApprovalQueue(root).show("APR-0001")).resolves.toMatchObject({
+      type: "capability_policy",
+      task_id: task.task_id,
+      status: "pending",
+      requested_capabilities: ["git.write"]
+    });
+
+    await new ApprovalQueue(root).decide({
+      approvalId: "APR-0001",
+      action: "approve"
+    });
+    const completed = await runner.runTask({
+      taskId: task.task_id,
+      date: "2026-07-24"
+    });
+
+    expect(invocations).toHaveLength(1);
+    expect(completed).toMatchObject({
+      status: "completed",
+      capability_status: "allowed"
+    });
+    expect(promptFromInvocation(invocations[0])).toContain(
+      "Effective capabilities (policy enforced):"
+    );
   });
 
   it("formats create command output", async () => {
