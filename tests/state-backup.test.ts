@@ -41,6 +41,21 @@ describe("state backup", () => {
       path.join(root, ".kairon", "config", "service-token.json"),
       { schema_version: "0.1", token: "SHOULD_NOT_BE_BACKED_UP" }
     );
+    await writeFile(
+      path.join(root, ".kairon", "workflows", "checkpoints.sqlite"),
+      "generated checkpoint mirror",
+      "utf8"
+    );
+    await writeJsonFileAtomic(
+      path.join(
+        root,
+        ".kairon",
+        "workflows",
+        "checkpoints",
+        "WF-T169-BACKUP-000001.json"
+      ),
+      { schema_version: "0.1", workflow_id: "WF-T169-BACKUP", sequence: 1 }
+    );
 
     const now = () => new Date("2026-07-15T00:00:00.000Z");
     const first = await planStateBackup(root, { now });
@@ -53,6 +68,11 @@ describe("state backup", () => {
         expect.objectContaining({
           path: ".kairon/state/sample.json",
           category: "state",
+          schema_version: "0.1"
+        }),
+        expect.objectContaining({
+          path:
+            ".kairon/workflows/checkpoints/WF-T169-BACKUP-000001.json",
           schema_version: "0.1"
         })
       ])
@@ -69,6 +89,10 @@ describe("state backup", () => {
         {
           path: ".kairon/config/service-token.json",
           reason: "secret_like_path"
+        },
+        {
+          path: ".kairon/workflows/checkpoints.sqlite",
+          reason: "generated"
         }
       ])
     );

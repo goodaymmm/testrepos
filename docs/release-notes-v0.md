@@ -5,6 +5,7 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 
 ## Unreleased
 
+- T169: canonical JSON checkpointを維持する`WorkflowCheckpointStore`、optional Node SQLite mirror、checksum / fencing検証、degraded継続、exact-confirm付きindex rebuildを追加。
 <!-- kairon:release-notes-unreleased -->
 現時点の未release変更は、各PR本文とmerge履歴を一次記録とします。local operation resultやgenerated evidenceはrelease notesへ埋め込まず、再実行方法と判定結果だけを記録します。
 

@@ -600,3 +600,37 @@ kairon workflow compensate WF-EXAMPLE --approval-id APR-0001 --confirm WF-EXAMPL
 ```
 
 dry-runは完了nodeを逆トポロジ順に並べたplanだけを作成する。compensation taskはapprove済みapprovalとplan IDのexact confirmがない限りqueueへ投入しない。各stepはidempotency keyを持ち、前stepの完了後に次stepをdispatchする。approvalなしの自動compensation、任意code condition、distributed executionは対象外である。
+
+## 23. Durable Workflow Checkpoint Store
+
+workflow checkpointは次の二層で扱う。
+
+| 層 | 役割 | canonical |
+| --- | --- | --- |
+| file adapter | `.kairon/workflows/checkpoints/<workflow_id>-<sequence>.json`をatomic writeする | yes |
+| SQLite adapter | workflow ID / sequence / state hash / fencing token / path / timestampを検索用rowへmirrorする | no |
+
+既定の`checkpoint_store=file`は従来どおりfileだけで動作する。optional mirrorを使う場合は次のように設定する。
+
+```json
+{
+  "workflow": {
+    "checkpoint_store": "file+sqlite",
+    "checkpoint_sqlite_path": ".kairon/workflows/checkpoints.sqlite",
+    "checkpoint_sqlite_busy_timeout_ms": 5000
+  }
+}
+```
+
+runtime transitionはcanonical checkpointとrun artifactのwrite成功後にSQLiteを更新する。SQLiteがbusy、locked、corrupt、schema unsupported、unavailableの場合でもworkflow runは失敗扱いにしない。`.kairon/workflows/checkpoint-store-status.json`へ`degraded`と`rebuild_required`を記録し、file replayを継続する。
+
+```text
+kairon workflow checkpoint status
+kairon workflow checkpoint verify
+kairon workflow checkpoint rebuild --dry-run
+kairon workflow checkpoint rebuild --confirm <rebuild-id>
+```
+
+`verify`はcanonical file自体のstate hash / fencing tokenと、SQLite rowとの差分、missing row、orphan rowを検出する。canonical fileに不整合がある場合、SQLite rebuildは実行できない。`rebuild --dry-run`はfile record setのdigestを固定したplanを`.kairon/workflows/checkpoint-rebuild/`へ保存する。実行時は同じrebuild IDのexact confirm、source digestのfreshness確認、resource lockを要求し、一時DBを作成してから置換する。
+
+SQLiteはNode 22標準`node:sqlite`を使用するoptional生成indexである。DB、WAL、SHMはstate backup対象外であり、削除または破損してもcanonical JSONから再構築できる。remote database、canonical state全面DB移行、自作SQLite parserは対象外である。

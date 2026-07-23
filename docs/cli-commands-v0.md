@@ -97,6 +97,10 @@ kairon workflow run --definition <definition-file>
 kairon workflow run <workflow-id> --task-id <task-id>
 kairon workflow show <workflow-id>
 kairon workflow recover <workflow-id> --dry-run
+kairon workflow checkpoint status
+kairon workflow checkpoint verify
+kairon workflow checkpoint rebuild --dry-run
+kairon workflow checkpoint rebuild --confirm <rebuild-id>
 kairon workflow compensate <workflow-id> --dry-run
 kairon workflow compensate <workflow-id> --approval-id <approval-id> --confirm <plan-id>
 ```
@@ -1069,6 +1073,10 @@ kairon workflow run WF-0002 --task-id TASK-0002 --approval-id APR-0001 --resourc
 kairon workflow show WF-0001
 kairon workflow recover WF-0001 --dry-run
 kairon workflow recover WF-0001
+kairon workflow checkpoint status
+kairon workflow checkpoint verify
+kairon workflow checkpoint rebuild --dry-run
+kairon workflow checkpoint rebuild --confirm WCR-20260723010203004-0123456789ab
 kairon workflow compensate WF-0001 --dry-run
 kairon workflow compensate WF-0001 --approval-id APR-0002 --confirm WF-0001-COMP-000006
 ```
@@ -1080,12 +1088,16 @@ production runtimeの正式な有効化設定。
   "workflow": {
     "enabled": true,
     "mode": "production",
-    "checkpoint_store": "file"
+    "checkpoint_store": "file",
+    "checkpoint_sqlite_path": ".kairon/workflows/checkpoints.sqlite",
+    "checkpoint_sqlite_busy_timeout_ms": 5000
   }
 }
 ```
 
 `workflow config show`は設定値、実効値、`config` / `environment` / `default`のsource、競合、legacy fallback、checkpoint / retry設定を表示する。`propose`は`runtime.json`を直接変更せず、riskとrestart要否を含むproposalを保存する。`KAIRON_WORKFLOW_RUNTIME`は`workflow.enabled`がない旧projectだけの互換fallbackである。
+
+`checkpoint_store=file`はcanonical JSON checkpointだけを使用する既定値である。`file+sqlite`はcanonical file write成功後にNode 22標準SQLiteへ検索用rowをmirrorする。SQLite更新失敗はworkflow runを失敗させず、store statusを`degraded`または`rebuild_required`へ更新する。`checkpoint verify`はfileとrowのworkflow ID、sequence、state hash、fencing token、pathを比較する。`checkpoint rebuild --dry-run`はcanonical fileのdigestを固定したplanを作成し、同じrebuild IDを`--confirm`した場合だけSQLite indexを置換する。
 
 `validate`はdefinition schema、duplicate / missing / cycle / unreachable edge、condition依存、parallel branch、join policyを検証し、任意JavaScript、shell、`eval`を受理しない。`run --definition`は検証済みdefinitionをcanonical definition artifactへ保存し、condition、parallel、manual gate、join、taskをrun artifactへ展開する。同時にreadyとなったbranch taskはnode単位idempotency keyとresource lockでdispatchされ、restart後も同じqueue itemを再利用する。
 

@@ -1,3 +1,4 @@
+import path from "node:path";
 import { z } from "zod";
 import {
   isValidCidr,
@@ -40,7 +41,32 @@ const runtimeConfigSchema = schemaVersion
         enabled: z.boolean().optional(),
         enabled_env: z.string().trim().min(1).optional(),
         mode: z.literal("production").optional(),
-        checkpoint_store: z.literal("file").optional(),
+        checkpoint_store: z.enum(["file", "file+sqlite"]).optional(),
+        checkpoint_sqlite_path: z
+          .string()
+          .trim()
+          .min(1)
+          .refine((value) => !path.isAbsolute(value), {
+            message: "workflow checkpoint sqlite path must be project-relative"
+          })
+          .refine((value) => {
+            const normalized = value.replaceAll("\\", "/");
+            return (
+              normalized.startsWith(".kairon/workflows/") &&
+              normalized.endsWith(".sqlite") &&
+              !normalized.split("/").includes("..")
+            );
+          }, {
+            message:
+              "workflow checkpoint sqlite path must be a .sqlite file under .kairon/workflows"
+          })
+          .optional(),
+        checkpoint_sqlite_busy_timeout_ms: z
+          .number()
+          .int()
+          .min(100)
+          .max(60_000)
+          .optional(),
         resource_lock_ttl_seconds: z
           .number()
           .int()

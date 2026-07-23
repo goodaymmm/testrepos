@@ -46,6 +46,8 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
         enabled: false,
         mode: "production",
         checkpoint_store: "file",
+        checkpoint_sqlite_path: ".kairon/workflows/checkpoints.sqlite",
+        checkpoint_sqlite_busy_timeout_ms: 5000,
         resource_lock_ttl_seconds: 86400,
         checkpoint_on_transition: true,
         retry: {
@@ -354,6 +356,7 @@ export const kaironDirectories = [
   "workflows",
   "workflows/runs",
   "workflows/checkpoints",
+  "workflows/checkpoint-rebuild",
   "workflows/events",
   "workflows/compensations",
   "git",
