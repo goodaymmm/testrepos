@@ -401,10 +401,28 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
       enabled: false,
       storage: {
         base_dir: ".kairon/rag",
-        vector: "placeholder",
-        lexical: "placeholder"
+        vector: "local",
+        lexical: "local"
       },
       embedding_profile: "local_default",
+      vector: {
+        enabled: false,
+        provider: "local_hash",
+        model_id: "kairon-local-hash-v1",
+        dimension: 256
+      },
+      retrieval: {
+        default_mode: "lexical",
+        hybrid: {
+          lexical: 0.45,
+          vector: 0.45,
+          freshness: 0.1,
+          source_diversity_penalty: 0.08
+        }
+      },
+      evaluation: {
+        profiles: {}
+      },
       integrity: {
         query_samples: ["approval routing", "runtime recovery", "review findings"],
         context_budget_tokens: 12000,

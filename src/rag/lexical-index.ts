@@ -142,6 +142,13 @@ export type RagSearchResult = {
 
 export type RagSearchExplain = {
   lexical_score: number;
+  vector_score?: number;
+  hybrid_score?: number;
+  normalized_lexical_score?: number;
+  normalized_vector_score?: number;
+  freshness_score?: number;
+  source_diversity_penalty?: number;
+  retrieval_mode?: "lexical" | "vector" | "hybrid";
   matched_terms: string[];
   term_hits: Record<string, number>;
   phrase_bonus: number;
@@ -605,7 +612,7 @@ export async function searchRagIndexData(
   request: RagSearchRequest,
   options: { projectRoot?: string } = {}
 ): Promise<RagSearchResult[]> {
-  const queryTerms = tokenize(request.query);
+  const queryTerms = tokenizeRagText(request.query);
   if (queryTerms.length === 0) {
     return [];
   }
@@ -615,7 +622,7 @@ export async function searchRagIndexData(
   const now = request.now?.() ?? new Date();
 
   const matches = index.chunks
-    .filter((chunk) => matchesSearchFilters(chunk, request.filters))
+    .filter((chunk) => matchesRagSearchFilters(chunk, request.filters))
     .map((chunk) => ({ chunk, scoring: scoreChunk(chunk.text, queryTerms) }))
     .filter((entry) => entry.scoring.score > 0)
     .sort((left, right) => right.scoring.score - left.scoring.score)
@@ -1468,7 +1475,7 @@ function splitLongText(text: string): string[] {
 }
 
 function scoreChunk(text: string, queryTerms: string[]): RagLexicalScore {
-  const chunkTerms = tokenize(text);
+  const chunkTerms = tokenizeRagText(text);
   const termCounts = new Map<string, number>();
   for (const term of chunkTerms) {
     termCounts.set(term, (termCounts.get(term) ?? 0) + 1);
@@ -1579,8 +1586,8 @@ function parseDate(value: string | undefined): Date | undefined {
   return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
-function matchesSearchFilters(
-  chunk: RagIndexChunk,
+export function matchesRagSearchFilters(
+  chunk: Pick<RagIndexChunk, "source_type" | "metadata">,
   filters: RagSearchRequest["filters"] | undefined
 ): boolean {
   if (filters === undefined) {
@@ -1605,7 +1612,7 @@ function matchesSearchFilters(
   );
 }
 
-function tokenize(value: string): string[] {
+export function tokenizeRagText(value: string): string[] {
   return [...value.toLowerCase().matchAll(/[\p{L}\p{N}_-]+/gu)]
     .map((match) => match[0])
     .filter((term) => term.length > 1);

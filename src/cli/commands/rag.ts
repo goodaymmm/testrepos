@@ -6,7 +6,6 @@ import {
   type RagCollection,
   type RagSearchExplain,
   type RagSearchRequest,
-  searchRagIndex,
   type RagSourceType
 } from "../../rag/lexical-index.js";
 import {
@@ -15,6 +14,16 @@ import {
   planRagRebuild,
   verifyRagIndex
 } from "../../rag/integrity.js";
+import { evaluateRagRetrieval } from "../../rag/evaluation.js";
+import {
+  retrieveRag,
+  type RagRetrievalMode
+} from "../../rag/retriever.js";
+import {
+  executeRagVectorBuild,
+  getRagVectorProviderStatus,
+  planRagVectorBuild
+} from "../../rag/vector-provider.js";
 
 export type RagRefreshCommandOptions = {
   since?: string;
@@ -30,6 +39,7 @@ export type RagCompactCommandOptions = {
 };
 
 export type RagQueryCommandOptions = {
+  mode?: string;
   type?: string;
   collection?: string;
   limit?: string;
@@ -46,6 +56,12 @@ export type RagQueryCommandOptions = {
 export type RagRebuildCommandOptions = {
   dryRun?: boolean;
   compare?: boolean;
+  execute?: boolean;
+  confirm?: string;
+};
+
+export type RagVectorBuildCommandOptions = {
+  dryRun?: boolean;
   execute?: boolean;
   confirm?: string;
 };
@@ -210,14 +226,26 @@ export async function queryRagIndexCommand(
   query: string,
   options: RagQueryCommandOptions
 ): Promise<string> {
-  const request: RagSearchRequest = {
+  const mode = parseRetrievalMode(options.mode);
+  const request: RagSearchRequest & { mode?: RagRetrievalMode } = {
     query,
     topK: parseLimit(options.limit),
     explain: options.explain === true,
-    filters: buildFilters(options)
+    filters: buildFilters(options),
+    mode
   };
-  const results = await searchRagIndex(projectRoot, request);
-  const lines = ["Kairon RAG query completed.", `matches=${results.length}`];
+  const retrieval = await retrieveRag(projectRoot, request);
+  const results = retrieval.results;
+  const lines = [
+    "Kairon RAG query completed.",
+    `requested_mode=${retrieval.requested_mode}`,
+    `effective_mode=${retrieval.effective_mode}`,
+    `status=${retrieval.status}`,
+    ...(retrieval.fallback_reason === undefined
+      ? []
+      : [`fallback_reason=${retrieval.fallback_reason}`]),
+    `matches=${results.length}`
+  ];
 
   for (const [index, result] of results.entries()) {
     lines.push(
@@ -233,6 +261,76 @@ export async function queryRagIndexCommand(
   }
 
   return lines.join("\n");
+}
+
+export async function statusRagProviderCommand(
+  projectRoot: string
+): Promise<string> {
+  const result = await getRagVectorProviderStatus(projectRoot);
+  return [
+    "Kairon RAG provider status.",
+    `status=${result.capability === "ready" ? "READY" : "SETUP_REQUIRED"}`,
+    `provider=${result.provider}`,
+    `enabled=${result.enabled}`,
+    `local_only=${result.local_only}`,
+    `external_network=${result.external_network}`,
+    `model_id=${result.model_id}`,
+    `dimension=${result.dimension}`,
+    ...(result.reason === undefined ? [] : [`reason=${result.reason}`]),
+    ...(result.setup_hint === undefined
+      ? []
+      : [`setup_hint=${result.setup_hint}`])
+  ].join("\n");
+}
+
+export async function buildRagVectorCommand(
+  projectRoot: string,
+  options: RagVectorBuildCommandOptions
+): Promise<string> {
+  if (options.execute === true) {
+    if (options.dryRun === true) {
+      throw new Error("RAG vector build cannot combine --dry-run and --execute.");
+    }
+    if (options.confirm === undefined) {
+      throw new Error(
+        "RAG vector build --execute requires --confirm <build-id>."
+      );
+    }
+    return formatVectorBuild(
+      await executeRagVectorBuild(projectRoot, options.confirm),
+      "executed"
+    );
+  }
+  if (options.dryRun !== true) {
+    throw new Error("RAG vector build requires --dry-run or --execute.");
+  }
+  return formatVectorBuild(await planRagVectorBuild(projectRoot), "planned");
+}
+
+export async function evaluateRagCommand(
+  projectRoot: string,
+  profile = "default"
+): Promise<string> {
+  const result = await evaluateRagRetrieval(projectRoot, profile);
+  return [
+    "Kairon RAG evaluation completed.",
+    `evaluation_id=${result.evaluation_id}`,
+    `profile=${result.profile}`,
+    `status=${result.status}`,
+    `queries=${result.query_count}`,
+    `passed=${result.passed_query_count}`,
+    `unpassed=${result.unpassed_query_count}`,
+    `setup_required=${result.setup_required_query_count}`,
+    `mean_precision_at_k=${result.mean_precision_at_k.toFixed(4)}`,
+    `artifact=${result.artifact_path}`,
+    ...result.results.flatMap((query) => [
+      `query.${query.id}.status=${query.status}`,
+      `query.${query.id}.required_hit=${query.required_hit}`,
+      `query.${query.id}.forbidden_hits=${query.forbidden_hit_count}`,
+      `query.${query.id}.precision_at_k=${query.precision_at_k.toFixed(4)}`,
+      `query.${query.id}.retrieval_status=${query.retrieval_status}`
+    ])
+  ].join("\n");
 }
 
 export async function verifyRagIndexCommand(projectRoot: string): Promise<string> {
@@ -327,6 +425,41 @@ function formatRagRebuild(
   ].join("\n");
 }
 
+function formatVectorBuild(
+  result: Awaited<ReturnType<typeof planRagVectorBuild>>,
+  action: "planned" | "executed"
+): string {
+  return [
+    `Kairon RAG vector build ${action}.`,
+    `build_id=${result.build_id}`,
+    `status=${result.status === "setup_required" ? "SETUP_REQUIRED" : result.status}`,
+    `provider=${result.provider.provider}`,
+    `model_id=${result.provider.model_id}`,
+    `dimension=${result.provider.dimension}`,
+    `local_only=${result.provider.local_only}`,
+    `index=${result.index_path}`,
+    `manifest=${result.manifest_path}`,
+    `entries=${result.entry_count}`,
+    `reused_entries=${result.reused_entry_count}`,
+    `embedded_entries=${result.embedded_entry_count}`,
+    ...(result.source_manifest_checksum === undefined
+      ? []
+      : [`source_manifest_checksum=${result.source_manifest_checksum}`]),
+    ...(result.lexical_index_checksum === undefined
+      ? []
+      : [`lexical_index_checksum=${result.lexical_index_checksum}`]),
+    ...(result.candidate_index_checksum === undefined
+      ? []
+      : [`candidate_index_checksum=${result.candidate_index_checksum}`]),
+    ...(result.provider.reason === undefined
+      ? []
+      : [`reason=${result.provider.reason}`]),
+    ...(result.executed_at === undefined
+      ? []
+      : [`executed_at=${result.executed_at}`])
+  ].join("\n");
+}
+
 function buildFilters(options: RagQueryCommandOptions): RagSearchRequest["filters"] {
   const filters: NonNullable<RagSearchRequest["filters"]> = {};
   const sourceTypeFilter = parseEnumList(options.type, sourceTypes, "source type");
@@ -365,6 +498,18 @@ function buildFilters(options: RagQueryCommandOptions): RagSearchRequest["filter
 
 function parseLimit(value: string | undefined): number {
   return parseOptionalLimit(value) ?? 5;
+}
+
+function parseRetrievalMode(value: string | undefined): RagRetrievalMode | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!["lexical", "vector", "hybrid"].includes(value)) {
+    throw new Error(
+      `Invalid RAG retrieval mode: ${value}. Allowed values: lexical,vector,hybrid`
+    );
+  }
+  return value as RagRetrievalMode;
 }
 
 function parseOptionalLimit(value: string | undefined): number | undefined {
@@ -478,6 +623,39 @@ function formatExplain(explain: RagSearchExplain | undefined): string[] {
 
   return [
     `explain.lexical_score=${formatScore(explain.lexical_score)}`,
+    ...(explain.vector_score === undefined
+      ? []
+      : [`explain.vector_score=${formatScore(explain.vector_score)}`]),
+    ...(explain.hybrid_score === undefined
+      ? []
+      : [`explain.hybrid_score=${formatScore(explain.hybrid_score)}`]),
+    ...(explain.normalized_lexical_score === undefined
+      ? []
+      : [
+          `explain.normalized_lexical_score=${formatScore(
+            explain.normalized_lexical_score
+          )}`
+        ]),
+    ...(explain.normalized_vector_score === undefined
+      ? []
+      : [
+          `explain.normalized_vector_score=${formatScore(
+            explain.normalized_vector_score
+          )}`
+        ]),
+    ...(explain.freshness_score === undefined
+      ? []
+      : [`explain.freshness_score=${formatScore(explain.freshness_score)}`]),
+    ...(explain.source_diversity_penalty === undefined
+      ? []
+      : [
+          `explain.source_diversity_penalty=${formatScore(
+            explain.source_diversity_penalty
+          )}`
+        ]),
+    ...(explain.retrieval_mode === undefined
+      ? []
+      : [`explain.retrieval_mode=${explain.retrieval_mode}`]),
     `explain.matched_terms=${explain.matched_terms.join(",")}`,
     `explain.term_hits=${formatTermHits(explain.term_hits)}`,
     `explain.phrase_bonus=${formatScore(explain.phrase_bonus)}`,

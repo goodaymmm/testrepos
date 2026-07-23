@@ -18,6 +18,11 @@ import {
   type RagIndex
 } from "../src/rag/lexical-index.js";
 import { createRagIndexManifest } from "../src/rag/manifest.js";
+import {
+  executeRagVectorBuild,
+  planRagVectorBuild,
+  type RagVectorIndex
+} from "../src/rag/vector-provider.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("RAG integrity and rebuild", () => {
@@ -27,6 +32,18 @@ describe("RAG integrity and rebuild", () => {
       path.join(root, ".kairon", "config", "rag.json")
     );
     expect(validateConfigFile("rag.json", config)).toMatchObject({ ok: true });
+    const invalidVector = structuredClone(config);
+    invalidVector.vector.dimension = 4;
+    expect(validateConfigFile("rag.json", invalidVector)).toMatchObject({
+      ok: false
+    });
+    const invalidWeights = structuredClone(config);
+    invalidWeights.retrieval.hybrid.lexical = 0;
+    invalidWeights.retrieval.hybrid.vector = 0;
+    invalidWeights.retrieval.hybrid.freshness = 0;
+    expect(validateConfigFile("rag.json", invalidWeights)).toMatchObject({
+      ok: false
+    });
     config.integrity.max_duplicate_ratio = 2;
     expect(validateConfigFile("rag.json", config)).toMatchObject({
       ok: false,
@@ -223,6 +240,30 @@ describe("RAG integrity and rebuild", () => {
     expect(stats.duplicate_ratio).toBeGreaterThan(0);
     expect(stats.context_budget_tokens).toBe(1);
     expect(stats.chunks_exceeding_context_budget).toBeGreaterThan(0);
+  });
+
+  it("includes vector drift in the RAG integrity artifact", async () => {
+    const root = await createProjectWithDocument();
+    const configPath = path.join(root, ".kairon", "config", "rag.json");
+    const config = await readJsonFile<Record<string, any>>(configPath);
+    config.vector.enabled = true;
+    await writeJsonFileAtomic(configPath, config);
+    await buildRagIndex(root);
+    const plan = await planRagVectorBuild(root);
+    await executeRagVectorBuild(root, plan.build_id);
+
+    const vectorPath = path.join(root, ".kairon", "rag", "vector", "index.json");
+    const vector = await readJsonFile<RagVectorIndex>(vectorPath);
+    vector.entries.pop();
+    await writeJsonFileAtomic(vectorPath, vector);
+
+    await expect(verifyRagIndex(root)).resolves.toMatchObject({
+      status: "UNPASSED",
+      issues: expect.arrayContaining([
+        expect.objectContaining({ code: "vector_index_checksum_mismatch" }),
+        expect.objectContaining({ code: "vector_entry_count_mismatch" })
+      ])
+    });
   });
 
   it("uses the same resource lock for compact and rebuild candidates", async () => {

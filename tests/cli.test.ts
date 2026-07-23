@@ -621,13 +621,27 @@ describe("createProgram", () => {
 
     expect(rag?.commands.map((command) => command.name()).sort()).toEqual([
       "compact",
+      "evaluate",
+      "provider",
       "query",
       "rebuild",
       "refresh",
       "stats",
       "status",
+      "vector",
       "verify"
     ]);
+    expect(
+      rag?.commands
+        .find((command) => command.name() === "provider")
+        ?.commands.map((command) => command.name())
+    ).toEqual(["status"]);
+    expect(
+      rag?.commands
+        .find((command) => command.name() === "vector")
+        ?.commands.find((command) => command.name() === "build")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--dry-run", "--execute", "--confirm"]));
     expect(
       rag?.commands
         .find((command) => command.name() === "refresh")
@@ -666,6 +680,7 @@ describe("createProgram", () => {
         "--review-loop-id",
         "--date",
         "--severity",
+        "--mode",
         "--explain"
       ])
     );

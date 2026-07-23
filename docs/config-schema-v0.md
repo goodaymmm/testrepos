@@ -249,10 +249,28 @@
   "enabled": false,
   "storage": {
     "base_dir": ".kairon/rag",
-    "vector": "placeholder",
-    "lexical": "placeholder"
+    "vector": "local",
+    "lexical": "local"
   },
   "embedding_profile": "local_default",
+  "vector": {
+    "enabled": false,
+    "provider": "local_hash",
+    "model_id": "kairon-local-hash-v1",
+    "dimension": 256
+  },
+  "retrieval": {
+    "default_mode": "lexical",
+    "hybrid": {
+      "lexical": 0.45,
+      "vector": 0.45,
+      "freshness": 0.1,
+      "source_diversity_penalty": 0.08
+    }
+  },
+  "evaluation": {
+    "profiles": {}
+  },
   "security": {
     "exclude_paths": [".env*", "**/*.pem", "**/*secret*", "**/*token*"]
   }
@@ -272,4 +290,6 @@
 - `policies.review.required_for_code` は true。
 - Discord は env が揃わない限り disabled でもよい。secret値はenvを優先し、必要な場合だけ `secrets.*.provider=windows_credential` でWindows Credential Manager targetを参照できる。
 - Discord Gateway の詳細は `docs/discord-gateway-v0.md` に分離する。
-- RAG は既定disabledで開始してよい。local lexical indexは `kairon rag refresh` または `kairon maintenance run --build-rag` で作成できる。
+- RAG とvector providerは既定disabledで開始してよい。local lexical indexは`kairon rag refresh`または`kairon maintenance run --build-rag`で作成できる。
+- `vector.provider`はlocal-onlyの`local_hash|local_onnx`だけを許可する。`local_onnx` runtime未導入時は`SETUP_REQUIRED`となり、外部embedding APIへfallbackしない。
+- `evaluation.profiles.*`はmode、top-K、minimum precision、queryごとのexpected / forbidden pathを定義する。secret値やgolden answer本文は設定しない。

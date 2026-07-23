@@ -83,10 +83,13 @@ import { closeActiveWork } from "./commands/leave.js";
 import { runMaintenance } from "./commands/maintenance.js";
 import { runMigrations } from "./commands/migrate.js";
 import {
+  buildRagVectorCommand,
   compactRagIndexCommand,
+  evaluateRagCommand,
   queryRagIndexCommand,
   rebuildRagIndexCommand,
   refreshRagIndexCommand,
+  statusRagProviderCommand,
   statsRagIndexCommand,
   statusRagIndexCommand,
   verifyRagIndexCommand
@@ -1949,6 +1952,35 @@ export function createProgram(): Command {
       console.log(await statusRagIndexCommand(process.cwd()));
     });
 
+  const ragProvider = rag
+    .command("provider")
+    .description("Inspect local RAG embedding provider capabilities.");
+
+  ragProvider
+    .command("status")
+    .description("Show local-only vector provider readiness.")
+    .action(async () => {
+      console.log(await statusRagProviderCommand(process.cwd()));
+    });
+
+  const ragVector = rag
+    .command("vector")
+    .description("Plan or execute a local vector index build.");
+
+  ragVector
+    .command("build")
+    .description("Build the local vector index with explicit confirmation.")
+    .option("--dry-run", "Plan the vector build without replacing the index.")
+    .option("--execute", "Execute a previously planned vector build.")
+    .option("--confirm <buildId>", "Exact build id from the dry-run plan.")
+    .action(async (options: {
+      dryRun?: boolean;
+      execute?: boolean;
+      confirm?: string;
+    }) => {
+      console.log(await buildRagVectorCommand(process.cwd(), options));
+    });
+
   rag
     .command("verify")
     .description("Verify the RAG index manifest, references, and source freshness.")
@@ -1995,9 +2027,18 @@ export function createProgram(): Command {
     .option("--review-loop-id <reviewLoopId>", "Review loop id filter.")
     .option("--date <date>", "Date filter in YYYY-MM-DD form.")
     .option("--severity <severity>", "Severity filter.")
+    .option("--mode <mode>", "Retrieval mode: lexical, vector, or hybrid.")
     .option("--explain", "Show lexical scoring and source freshness details.")
     .action(async (query: string, options) => {
       console.log(await queryRagIndexCommand(process.cwd(), query, options));
+    });
+
+  rag
+    .command("evaluate")
+    .description("Evaluate representative RAG queries without golden answer text.")
+    .option("--profile <profile>", "Evaluation profile name. Defaults to default.", "default")
+    .action(async (options: { profile: string }) => {
+      console.log(await evaluateRagCommand(process.cwd(), options.profile));
     });
 
   return program;
