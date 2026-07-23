@@ -35,6 +35,7 @@ import {
   readinessManifestExists
 } from "../readiness/beta-readiness.js";
 import { resolveWorkflowRuntimeConfig } from "../workflow/config.js";
+import { inspectWorkflowCheckpointStore } from "../workflow/checkpoint-manager.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -375,9 +376,10 @@ async function checkWorkflowRuntimeConfig(
       "workflows",
       "checkpoints"
     );
-    const [checkpointAvailable, productionArtifacts, legacyArtifacts] =
+    const [checkpointAvailable, checkpointStore, productionArtifacts, legacyArtifacts] =
       await Promise.all([
         pathAccessible(checkpointsPath),
+        inspectWorkflowCheckpointStore(projectRoot, env),
         countJsonFiles(
           resolveInside(
             getKaironPaths(projectRoot).kaironDir,
@@ -403,6 +405,10 @@ async function checkWorkflowRuntimeConfig(
       `legacy_enabled_env=${resolution.legacy_enabled_env}`,
       `checkpoint_store=${resolution.config.checkpoint_store}`,
       `checkpoint_store_available=${checkpointAvailable}`,
+      `checkpoint_store_status=${checkpointStore.status}`,
+      `checkpoint_sqlite_available=${checkpointStore.sqlite_available}`,
+      `checkpoint_rebuild_required=${checkpointStore.rebuild_required}`,
+      `checkpoint_error_code=${checkpointStore.error_code ?? "none"}`,
       `production_artifacts=${productionArtifacts}`,
       `legacy_experimental_artifacts=${legacyArtifacts}`,
       ...resolution.warnings.map((value) => `warning=${value}`)
@@ -414,6 +420,16 @@ async function checkWorkflowRuntimeConfig(
         "Workflow runtime config",
         details,
         "Restore write access to .kairon/workflows/checkpoints."
+      );
+    }
+    if (checkpointStore.status !== "healthy") {
+      return warning(
+        "workflow.config",
+        "Workflow runtime config",
+        details,
+        checkpointStore.rebuild_required
+          ? "Run `kairon workflow checkpoint verify`, then plan and confirm a checkpoint rebuild."
+          : "Repair canonical workflow checkpoints before rebuilding optional indexes."
       );
     }
     if (

@@ -1024,6 +1024,51 @@ describe("runDoctor", () => {
       ])
     );
   });
+
+  it("warns when the optional workflow checkpoint mirror requires rebuild", async () => {
+    const root = await createInitializedGitProject();
+    const runtimePath = path.join(root, ".kairon", "config", "runtime.json");
+    const runtime = await readJsonFile<Record<string, unknown>>(runtimePath);
+    const workflow = runtime.workflow as Record<string, unknown>;
+    workflow.checkpoint_store = "file+sqlite";
+    workflow.checkpoint_sqlite_busy_timeout_ms = 200;
+    await writeJsonFileAtomic(runtimePath, runtime);
+    await writeJsonFileAtomic(
+      path.join(
+        root,
+        ".kairon",
+        "workflows",
+        "checkpoints",
+        "WF-T169-DOCTOR-000001.json"
+      ),
+      {
+        schema_version: "0.1",
+        artifact_kind: "workflow_run",
+        workflow_id: "WF-T169-DOCTOR",
+        sequence: 1,
+        nodes: [],
+        updated_at: "2026-07-23T00:00:00.000Z"
+      }
+    );
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+    const check = checkById(result, "workflow.config");
+
+    expect(result.ok).toBe(true);
+    expect(check?.status).toBe("warning");
+    expect(check?.details).toEqual(
+      expect.arrayContaining([
+        "checkpoint_store=file+sqlite",
+        "checkpoint_store_status=rebuild_required",
+        "checkpoint_rebuild_required=true"
+      ])
+    );
+    expect(check?.next_action).toContain("workflow checkpoint verify");
+  });
 });
 
 type DoctorResult = Awaited<ReturnType<typeof runDoctor>>;

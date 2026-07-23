@@ -204,6 +204,9 @@ const excludedPrefixes: Array<{
   { path: ".kairon/worktrees", reason: "generated" },
   { path: ".kairon/rag", reason: "generated" },
   { path: ".kairon/board", reason: "generated" },
+  { path: ".kairon/workflows/checkpoints.sqlite", reason: "generated" },
+  { path: ".kairon/workflows/checkpoints.sqlite-wal", reason: "generated" },
+  { path: ".kairon/workflows/checkpoints.sqlite-shm", reason: "generated" },
   { path: ".kairon/snapshots", reason: "snapshot_storage" },
   { path: ".kairon/backups", reason: "backup_storage" }
 ];

@@ -180,6 +180,16 @@ describe("workflow runtime configuration", () => {
   });
 
   it("rejects unsupported workflow mode and checkpoint store values", () => {
+    const supported = validateConfigFile("runtime.json", {
+      schema_version: "0.1",
+      workflow: {
+        enabled: true,
+        mode: "production",
+        checkpoint_store: "file+sqlite",
+        checkpoint_sqlite_path: ".kairon/workflows/checkpoints.sqlite",
+        checkpoint_sqlite_busy_timeout_ms: 5_000
+      }
+    });
     const validation = validateConfigFile("runtime.json", {
       schema_version: "0.1",
       workflow: {
@@ -188,8 +198,17 @@ describe("workflow runtime configuration", () => {
         checkpoint_store: "sqlite"
       }
     });
+    const unsafePath = validateConfigFile("runtime.json", {
+      schema_version: "0.1",
+      workflow: {
+        checkpoint_store: "file+sqlite",
+        checkpoint_sqlite_path: ".kairon/config/runtime.json"
+      }
+    });
 
+    expect(supported.ok).toBe(true);
     expect(validation.ok).toBe(false);
+    expect(unsafePath.ok).toBe(false);
     expect(validation.errors).toContain(
       "runtime.json: runtime workflow or watchdog settings are invalid"
     );

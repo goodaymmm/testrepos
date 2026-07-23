@@ -38,6 +38,10 @@ import {
   type WorkflowDefinition,
   type WorkflowDefinitionNode
 } from "./definition.js";
+import { WorkflowCheckpointCoordinator } from "./checkpoint-manager.js";
+import {
+  workflowCheckpointPath as checkpointPathForRecord
+} from "./checkpoint-store.js";
 
 export type RunProductionWorkflowRequest = {
   workflowId?: string;
@@ -1300,25 +1304,32 @@ export class ProductionWorkflowRuntime {
     );
     artifact.recovery.last_action = action;
     await this.ensureCorrelation(artifact);
-    const checkpointEnabled = (await this.resolveConfig()).config
-      .checkpoint_on_transition;
+    const workflowConfig = (await this.resolveConfig()).config;
+    const checkpointEnabled = workflowConfig.checkpoint_on_transition;
     let checkpointPath: string | undefined;
+    let checkpointWrite:
+      | Awaited<ReturnType<WorkflowCheckpointCoordinator["persistCanonical"]>>
+      | undefined;
+    let checkpointCoordinator: WorkflowCheckpointCoordinator | undefined;
     if (checkpointEnabled) {
-      checkpointPath = workflowCheckpointPath(
+      checkpointCoordinator = new WorkflowCheckpointCoordinator(
         this.projectRoot,
-        artifact.workflow_id,
-        artifact.sequence
+        workflowConfig,
+        () => new Date(artifact.updated_at)
       );
-      artifact.recovery.last_checkpoint_path = toProjectPath(
+      checkpointWrite = await checkpointCoordinator.persistCanonical(artifact);
+      checkpointPath = resolveInside(
         this.projectRoot,
-        checkpointPath
+        checkpointWrite.record.checkpoint_path
       );
-      await writeJsonFileAtomic(checkpointPath, artifact);
     }
     await writeJsonFileAtomic(
       workflowRunArtifactPath(this.projectRoot, artifact.workflow_id),
       artifact
     );
+    if (checkpointCoordinator !== undefined && checkpointWrite !== undefined) {
+      await checkpointCoordinator.mirror(checkpointWrite);
+    }
     return checkpointPath === undefined
       ? undefined
       : artifact.recovery.last_checkpoint_path;
@@ -1448,10 +1459,7 @@ export function workflowCheckpointPath(
   workflowId: string,
   sequence: number
 ): string {
-  return resolveInside(
-    workflowCheckpointsDirectory(projectRoot),
-    `${workflowId}-${String(sequence).padStart(6, "0")}.json`
-  );
+  return checkpointPathForRecord(projectRoot, workflowId, sequence);
 }
 
 export function isProductionWorkflowRuntimeEnabled(
@@ -1492,14 +1500,6 @@ export function formatProductionWorkflowResult(
 
 function workflowRunsDirectory(projectRoot: string): string {
   return resolveInside(getKaironPaths(projectRoot).kaironDir, "workflows", "runs");
-}
-
-function workflowCheckpointsDirectory(projectRoot: string): string {
-  return resolveInside(
-    getKaironPaths(projectRoot).kaironDir,
-    "workflows",
-    "checkpoints"
-  );
 }
 
 function dependenciesCompleted(

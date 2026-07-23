@@ -29,6 +29,15 @@ import {
   formatWorkflowCompensationResult,
   WorkflowCompensationManager
 } from "../../workflow/compensation.js";
+import {
+  executeWorkflowCheckpointRebuild,
+  formatWorkflowCheckpointRebuild,
+  formatWorkflowCheckpointStoreHealth,
+  formatWorkflowCheckpointVerification,
+  inspectWorkflowCheckpointStore,
+  planWorkflowCheckpointRebuild,
+  verifyWorkflowCheckpointStore
+} from "../../workflow/checkpoint-manager.js";
 
 export type WorkflowRunCommandOptions = {
   candidate?: boolean;
@@ -50,6 +59,11 @@ export type WorkflowConfigProposeCommandOptions = {
   disable?: boolean;
 };
 
+export type WorkflowCheckpointRebuildCommandOptions = {
+  dryRun?: boolean;
+  confirm?: string;
+};
+
 export async function workflowConfigShowCommand(
   projectRoot: string,
   env: NodeJS.ProcessEnv = process.env
@@ -67,6 +81,8 @@ export async function workflowConfigShowCommand(
     `conflict=${resolution.conflict}`,
     `mode=${resolution.config.mode}`,
     `checkpoint_store=${resolution.config.checkpoint_store}`,
+    `checkpoint_sqlite_path=${resolution.config.checkpoint_sqlite_path}`,
+    `checkpoint_sqlite_busy_timeout_ms=${resolution.config.checkpoint_sqlite_busy_timeout_ms}`,
     `checkpoint_on_transition=${resolution.config.checkpoint_on_transition}`,
     `resource_lock_ttl_seconds=${resolution.config.resource_lock_ttl_seconds}`,
     `retry.max_attempts=${resolution.config.retry.max_attempts}`,
@@ -89,6 +105,49 @@ export async function workflowConfigProposeCommand(
       projectRoot,
       enabled: options.enable === true
     })
+  );
+}
+
+export async function workflowCheckpointStatusCommand(
+  projectRoot: string,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
+  return formatWorkflowCheckpointStoreHealth(
+    await inspectWorkflowCheckpointStore(projectRoot, env)
+  );
+}
+
+export async function workflowCheckpointVerifyCommand(
+  projectRoot: string,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
+  return formatWorkflowCheckpointVerification(
+    await verifyWorkflowCheckpointStore(projectRoot, env)
+  );
+}
+
+export async function workflowCheckpointRebuildCommand(
+  projectRoot: string,
+  options: WorkflowCheckpointRebuildCommandOptions,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
+  if (options.dryRun === true && options.confirm !== undefined) {
+    throw new Error(
+      "Workflow checkpoint rebuild --dry-run cannot be combined with --confirm."
+    );
+  }
+  if (options.dryRun === true) {
+    return formatWorkflowCheckpointRebuild(
+      await planWorkflowCheckpointRebuild(projectRoot, env)
+    );
+  }
+  if (options.confirm === undefined) {
+    throw new Error(
+      "Workflow checkpoint rebuild requires --dry-run or --confirm <rebuild-id>."
+    );
+  }
+  return formatWorkflowCheckpointRebuild(
+    await executeWorkflowCheckpointRebuild(projectRoot, options.confirm, env)
   );
 }
 

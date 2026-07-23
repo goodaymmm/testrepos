@@ -148,6 +148,9 @@ import {
 import { summarizeOperationTestsCommand } from "./commands/test-summary.js";
 import {
   workflowCancelCommand,
+  workflowCheckpointRebuildCommand,
+  workflowCheckpointStatusCommand,
+  workflowCheckpointVerifyCommand,
   workflowCompensateCommand,
   workflowConfigProposeCommand,
   workflowConfigShowCommand,
@@ -1211,6 +1214,35 @@ export function createProgram(): Command {
     .option("--disable", "Disable production workflow after proposal apply and restart.")
     .action(async (options: { enable?: boolean; disable?: boolean }) => {
       console.log(await workflowConfigProposeCommand(process.cwd(), options));
+    });
+
+  const workflowCheckpoint = workflow
+    .command("checkpoint")
+    .description("Inspect, verify, and rebuild the workflow checkpoint mirror.");
+
+  workflowCheckpoint
+    .command("status")
+    .description("Show canonical file and optional SQLite checkpoint health.")
+    .action(async () => {
+      console.log(await workflowCheckpointStatusCommand(process.cwd()));
+    });
+
+  workflowCheckpoint
+    .command("verify")
+    .description("Compare canonical checkpoint files with the configured mirror.")
+    .action(async () => {
+      console.log(await workflowCheckpointVerifyCommand(process.cwd()));
+    });
+
+  workflowCheckpoint
+    .command("rebuild")
+    .description("Plan or execute an exact-confirm SQLite checkpoint rebuild.")
+    .option("--dry-run", "Create a rebuild plan from canonical checkpoint files.")
+    .option("--confirm <rebuildId>", "Execute the exact rebuild plan id.")
+    .action(async (options: { dryRun?: boolean; confirm?: string }) => {
+      console.log(
+        await workflowCheckpointRebuildCommand(process.cwd(), options)
+      );
     });
 
   workflow

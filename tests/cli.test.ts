@@ -515,10 +515,14 @@ describe("createProgram", () => {
     const config = workflow?.commands.find(
       (command) => command.name() === "config"
     );
+    const checkpoint = workflow?.commands.find(
+      (command) => command.name() === "checkpoint"
+    );
 
     expect(workflow?.description()).toContain("persistent Kairon workflows");
     expect(workflow?.commands.map((command) => command.name()).sort()).toEqual([
       "cancel",
+      "checkpoint",
       "compensate",
       "config",
       "list",
@@ -535,6 +539,16 @@ describe("createProgram", () => {
       "propose",
       "show"
     ]);
+    expect(checkpoint?.commands.map((command) => command.name()).sort()).toEqual([
+      "rebuild",
+      "status",
+      "verify"
+    ]);
+    expect(
+      checkpoint?.commands
+        .find((command) => command.name() === "rebuild")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--dry-run", "--confirm"]));
     expect(
       config?.commands
         .find((command) => command.name() === "propose")

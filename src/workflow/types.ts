@@ -146,6 +146,13 @@ export type WorkflowRunArtifact = {
     branch_ids: string[];
     join_node_ids: string[];
   };
+  checkpoint?: {
+    schema_version: "0.1";
+    state_hash: string;
+    fencing_token: string;
+    checkpoint_path: string;
+    recorded_at: string;
+  };
   compensation?: {
     plan_id: string;
     status: "planned" | "running" | "completed" | "failed";

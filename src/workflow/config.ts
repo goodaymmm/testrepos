@@ -5,7 +5,9 @@ export const workflowRuntimeEnvName = "KAIRON_WORKFLOW_RUNTIME";
 export type WorkflowRuntimeConfig = {
   enabled: boolean;
   mode: "production";
-  checkpoint_store: "file";
+  checkpoint_store: "file" | "file+sqlite";
+  checkpoint_sqlite_path: string;
+  checkpoint_sqlite_busy_timeout_ms: number;
   resource_lock_ttl_seconds: number;
   checkpoint_on_transition: boolean;
   retry: {
@@ -43,6 +45,8 @@ export const defaultWorkflowRuntimeConfig: WorkflowRuntimeConfig = {
   enabled: false,
   mode: "production",
   checkpoint_store: "file",
+  checkpoint_sqlite_path: ".kairon/workflows/checkpoints.sqlite",
+  checkpoint_sqlite_busy_timeout_ms: 5_000,
   resource_lock_ttl_seconds: 86_400,
   checkpoint_on_transition: true,
   retry: {
@@ -128,6 +132,12 @@ export function normalizeWorkflowRuntimeConfig(
     mode: workflow?.mode ?? defaultWorkflowRuntimeConfig.mode,
     checkpoint_store:
       workflow?.checkpoint_store ?? defaultWorkflowRuntimeConfig.checkpoint_store,
+    checkpoint_sqlite_path:
+      readNonEmptyString(workflow?.checkpoint_sqlite_path) ??
+      defaultWorkflowRuntimeConfig.checkpoint_sqlite_path,
+    checkpoint_sqlite_busy_timeout_ms:
+      workflow?.checkpoint_sqlite_busy_timeout_ms ??
+      defaultWorkflowRuntimeConfig.checkpoint_sqlite_busy_timeout_ms,
     resource_lock_ttl_seconds:
       workflow?.resource_lock_ttl_seconds ??
       defaultWorkflowRuntimeConfig.resource_lock_ttl_seconds,
