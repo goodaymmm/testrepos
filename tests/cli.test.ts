@@ -26,6 +26,7 @@ describe("createProgram", () => {
       "docking",
       "doctor",
       "git",
+      "incident",
       "init",
       "leave",
       "maintenance",
@@ -442,6 +443,29 @@ describe("createProgram", () => {
         .find((command) => command.name() === "resolve")
         ?.options.map((option) => option.long)
     ).toContain("--reason");
+  });
+
+  it("registers incident lifecycle and guarded recovery commands", () => {
+    const incident = createProgram().commands.find(
+      (command) => command.name() === "incident"
+    );
+
+    expect(incident?.commands.map((command) => command.name())).toEqual([
+      "list",
+      "show",
+      "acknowledge",
+      "bundle",
+      "recover",
+      "resolve"
+    ]);
+    const recover = incident?.commands.find(
+      (command) => command.name() === "recover"
+    );
+    expect(recover?.options.map((option) => option.long)).toEqual([
+      "--dry-run",
+      "--approval-id",
+      "--confirm"
+    ]);
   });
 
   it("registers operation test summary command", () => {

@@ -359,8 +359,11 @@ describe("runtime recovery", () => {
     const inspection = await inspectRuntimeRecoveryTargets(root, {
       now: new Date("2026-06-01T00:20:00.000Z")
     });
-    expect(inspection.summary.targets).toBe(0);
-    expect(inspection.summary.resolved_targets).toBe(1);
+    expect(inspection.summary.targets).toBe(1);
+    expect(inspection.summary.resolved_targets).toBe(0);
+    expect(inspection.issues[0]?.fingerprint).toBe(
+      "git_transaction_mid_state:git_transaction:GTX-0001"
+    );
     const serializedResolution = JSON.stringify(
       await readJsonFile(
         path.join(

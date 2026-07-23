@@ -64,6 +64,8 @@ project-root/
     sessions/
     worktrees/
     runtime/
+    watchdog/
+    incidents/
     rag/
     reports/
     cleanup/
@@ -89,6 +91,7 @@ Kairon Runtime Host
   ├─ Session Manager
   ├─ Context Builder
   ├─ State Applier
+  ├─ Incident Lifecycle
   ├─ Git Workspace Manager
   ├─ RAG Memory Service
   ├─ Discord Approval Gateway
@@ -109,6 +112,7 @@ Kairon Runtime Host
 | Session Manager | 同日 Agent session と context manifest を保持する |
 | Context Builder | task、message、RAG、session scratch から context bundle を作る |
 | State Applier | outbox を検証し、canonical state に反映する |
+| Incident Lifecycle | Watchdog alertとrecovery targetを参照で集約し、timelineと承認付き復旧を管理する |
 | Git Workspace Manager | worktree、branch、commit、push、rollback metadata を扱う |
 | RAG Memory Service | canonical source から derived index を生成・検索する |
 | Discord Approval Gateway | Discord interaction を approval decision command に変換する |

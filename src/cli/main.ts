@@ -64,6 +64,14 @@ import {
 } from "./commands/git-pr.js";
 import { mergeGitPrCommand } from "../git/pr-merge.js";
 import { initializeProject } from "./commands/init.js";
+import {
+  acknowledgeIncidentCommand,
+  bundleIncidentCommand,
+  listIncidentsCommand,
+  recoverIncidentCommand,
+  resolveIncidentCommand,
+  showIncidentCommand
+} from "./commands/incident.js";
 import { closeActiveWork } from "./commands/leave.js";
 import { runMaintenance } from "./commands/maintenance.js";
 import { runMigrations } from "./commands/migrate.js";
@@ -402,6 +410,79 @@ export function createProgram(): Command {
         );
       }
     );
+
+  const incident = program
+    .command("incident")
+    .description("Inspect incidents and run guarded assisted recovery.");
+
+  incident
+    .command("list")
+    .description("List incident artifacts.")
+    .option("--status <status>", "all, open, acknowledged, recovering, or resolved.", "all")
+    .action(async (options: { status?: string }) => {
+      console.log(await listIncidentsCommand(process.cwd(), options));
+    });
+
+  incident
+    .command("show")
+    .description("Show one incident and its append-only timeline.")
+    .argument("<incident-id>", "Incident id, for example INC-0001.")
+    .action(async (incidentId: string) => {
+      console.log(await showIncidentCommand(process.cwd(), incidentId));
+    });
+
+  incident
+    .command("acknowledge")
+    .description("Record operator acknowledgement without resolving health conditions.")
+    .argument("<incident-id>", "Incident id, for example INC-0001.")
+    .requiredOption("--reason <reason>", "Audited acknowledgement reason.")
+    .action(async (incidentId: string, options: { reason?: string }) => {
+      console.log(await acknowledgeIncidentCommand(process.cwd(), incidentId, options));
+    });
+
+  incident
+    .command("bundle")
+    .description("Plan or create an incident-scoped sanitized support bundle.")
+    .argument("<incident-id>", "Incident id, for example INC-0001.")
+    .option("--dry-run", "Show the incident-scoped bundle plan without creating a ZIP.")
+    .option("--output <directory>", "Output directory for the finalized ZIP.")
+    .action(
+      async (
+        incidentId: string,
+        options: { dryRun?: boolean; output?: string }
+      ) => {
+        console.log(await bundleIncidentCommand(process.cwd(), incidentId, options));
+      }
+    );
+
+  incident
+    .command("recover")
+    .description("Plan or execute approval-gated assisted recovery.")
+    .argument("<incident-id>", "Incident id, for example INC-0001.")
+    .option("--dry-run", "Create a recovery plan and approval request.")
+    .option("--approval-id <approval-id>", "Approved incident recovery approval id.")
+    .option("--confirm <plan-id>", "Exact recovery plan id confirmation.")
+    .action(
+      async (
+        incidentId: string,
+        options: {
+          dryRun?: boolean;
+          approvalId?: string;
+          confirm?: string;
+        }
+      ) => {
+        console.log(await recoverIncidentCommand(process.cwd(), incidentId, options));
+      }
+    );
+
+  incident
+    .command("resolve")
+    .description("Resolve an incident after all active conditions are cleared.")
+    .argument("<incident-id>", "Incident id, for example INC-0001.")
+    .requiredOption("--reason <reason>", "Audited resolution reason.")
+    .action(async (incidentId: string, options: { reason?: string }) => {
+      console.log(await resolveIncidentCommand(process.cwd(), incidentId, options));
+    });
 
   const board = program
     .command("board")

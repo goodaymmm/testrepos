@@ -8,6 +8,8 @@ import {
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeProject } from "../src/cli/commands/init.js";
+import { bundleIncidentLifecycle } from "../src/incidents/lifecycle.js";
+import { attachIncidentResource } from "../src/incidents/store.js";
 import {
   createSupportBundle,
   planSupportBundle,
@@ -154,6 +156,51 @@ describe("sanitized support bundle", () => {
       dependencies()
     ))
       .rejects.toThrow(/symlink|junction|not a link/iu);
+  });
+
+  it("creates an incident-scoped bundle and attaches only sanitized references", async () => {
+    const root = await createProject();
+    const incident = await attachIncidentResource(root, {
+      fingerprint: "recovery:RUN-0001",
+      severity: "high",
+      title: "Partial outbox",
+      summary: "Recovery needs operator review.",
+      resource: {
+        kind: "recovery_target",
+        id: "RUN-0001",
+        status: "open",
+        fingerprint: "partial_outbox:run:RUN-0001",
+        details: { api_token: "SHOULD_NOT_LEAK" }
+      }
+    });
+
+    const result = await bundleIncidentLifecycle(
+      root,
+      incident.incident_id,
+      {},
+      dependencies()
+    );
+    const archive = (await readFile(result.bundle.archive_path!)).toString("utf8");
+
+    expect(result.bundle.manifest).toMatchObject({
+      incident_id: incident.incident_id
+    });
+    expect(result.bundle.manifest?.files.map((entry) => entry.path)).toContain(
+      "diagnostics/incident.json"
+    );
+    expect(result.incident.resources).toContainEqual(
+      expect.objectContaining({
+        kind: "support_bundle",
+        id: result.bundle.plan.bundle_id,
+        status: "completed"
+      })
+    );
+    expect(archive).toContain(incident.incident_id);
+    expect(archive).not.toContain("SHOULD_NOT_LEAK");
+    await expect(verifySupportBundle(result.bundle.archive_path!)).resolves.toMatchObject({
+      ok: true,
+      bundle_id: result.bundle.plan.bundle_id
+    });
   });
 });
 

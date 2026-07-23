@@ -367,6 +367,8 @@ export const kaironDirectories = [
   "runtime/discord",
   "watchdog",
   "watchdog/alerts",
+  "incidents",
+  "incidents/plans",
   "recovery",
   "recovery/resolutions",
   "state",

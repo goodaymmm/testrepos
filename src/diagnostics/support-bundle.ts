@@ -21,6 +21,10 @@ import { KAIRON_VERSION } from "../index.js";
 import { verifyRagIndex, type RagIntegrityArtifact } from "../rag/integrity.js";
 import { getRuntimeStatus, type RuntimeStatus } from "../runtime/status.js";
 import {
+  getIncident,
+  readIncidentTimeline
+} from "../incidents/store.js";
+import {
   sanitizeSupportText,
   sanitizeSupportValue,
   scanSupportEntries,
@@ -35,6 +39,7 @@ export type SupportCategory =
   | "provider"
   | "workflow"
   | "notification"
+  | "incident"
   | "integrity";
 
 export type SupportBundlePlanFile = {
@@ -52,6 +57,7 @@ export type SupportBundlePlan = {
   created_at: string;
   output_directory: string;
   archive_name: string;
+  incident_id?: string;
   files: SupportBundlePlanFile[];
   exclusions: Array<{ kind: string; reason: string }>;
   estimated_payload_size_bytes: number;
@@ -66,6 +72,7 @@ export type SupportBundleManifest = {
   schema_version: "0.1";
   artifact_kind: "support_bundle";
   bundle_id: string;
+  incident_id?: string;
   created_at: string;
   generator: { name: "kairon"; version: string };
   local_only: true;
@@ -111,6 +118,11 @@ export type SupportBundleDependencies = {
   now?: () => Date;
 };
 
+export type SupportBundleOptions = {
+  outputDirectory?: string;
+  incidentId?: string;
+};
+
 type SupportEntry = {
   path: string;
   category: SupportCategory | "summary";
@@ -144,21 +156,34 @@ const exclusions = [
 
 export async function planSupportBundle(
   projectRoot: string,
-  options: { outputDirectory?: string } = {},
+  options: SupportBundleOptions = {},
   dependencies: SupportBundleDependencies = {}
 ): Promise<SupportBundleResult> {
   const now = dependencies.now?.() ?? new Date();
   const bundleId = "SUP-DRY-RUN";
   const outputDirectory = resolveOutputDirectory(projectRoot, options.outputDirectory);
-  const entries = await collectSupportEntries(projectRoot, now, dependencies);
+  const entries = await collectSupportEntries(
+    projectRoot,
+    now,
+    dependencies,
+    options.incidentId
+  );
   return {
-    plan: createPlan(projectRoot, bundleId, "dry_run", outputDirectory, now, entries)
+    plan: createPlan(
+      projectRoot,
+      bundleId,
+      "dry_run",
+      outputDirectory,
+      now,
+      entries,
+      options.incidentId
+    )
   };
 }
 
 export async function createSupportBundle(
   projectRoot: string,
-  options: { outputDirectory?: string } = {},
+  options: SupportBundleOptions = {},
   dependencies: SupportBundleDependencies = {}
 ): Promise<SupportBundleResult> {
   const now = dependencies.now?.() ?? new Date();
@@ -180,7 +205,12 @@ export async function createSupportBundle(
 
   try {
     await assertNoLinkedSegments(paths.tmpDir);
-    const entries = await collectSupportEntries(projectRoot, now, dependencies);
+    const entries = await collectSupportEntries(
+      projectRoot,
+      now,
+      dependencies,
+      options.incidentId
+    );
     const redaction = mergeRedaction(entries.map((entry) => entry.redaction));
     const payloadEntries: SupportEntry[] = entries.map((entry) => ({
       path: entry.path,
@@ -190,7 +220,13 @@ export async function createSupportBundle(
     const preArchiveScan = scanSupportEntries(payloadEntries);
     assertSecretScanPassed(preArchiveScan, "sanitized payload");
 
-    const manifest = createManifest(bundleId, now, payloadEntries, redaction);
+    const manifest = createManifest(
+      bundleId,
+      now,
+      payloadEntries,
+      redaction,
+      options.incidentId
+    );
     const manifestContent = jsonBuffer(manifest);
     const hashesContent = createHashesFile(manifest);
     const finalEntries: SupportEntry[] = [
@@ -220,7 +256,8 @@ export async function createSupportBundle(
       "completed",
       outputDirectory,
       now,
-      payloadEntries
+      payloadEntries,
+      options.incidentId
     );
     plan.archive = {
       path: toProjectOrExternalPath(projectRoot, archivePath),
@@ -259,6 +296,7 @@ export function formatSupportBundle(result: SupportBundleResult): string {
       ? "Kairon support bundle dry run."
       : "Kairon support bundle created.",
     `bundle_id=${plan.bundle_id}`,
+    ...(plan.incident_id === undefined ? [] : [`incident_id=${plan.incident_id}`]),
     `status=${plan.status}`,
     `archive=${result.archive_path ?? "not_created"}`,
     `output_directory=${plan.output_directory}`,
@@ -298,7 +336,8 @@ export function supportPlanPath(projectRoot: string, bundleId: string): string {
 async function collectSupportEntries(
   projectRoot: string,
   now: Date,
-  dependencies: SupportBundleDependencies
+  dependencies: SupportBundleDependencies,
+  incidentId?: string
 ): Promise<Array<SupportEntry & { redaction: SupportRedactionSummary }>> {
   const doctorCollector = dependencies.doctor ?? ((root: string) => runDoctor({
     projectRoot: root,
@@ -482,6 +521,27 @@ async function collectSupportEntries(
       redaction: sanitized.redaction
     };
   });
+  if (incidentId !== undefined) {
+    const [incident, timeline] = await Promise.all([
+      getIncident(projectRoot, incidentId),
+      readIncidentTimeline(projectRoot, incidentId)
+    ]);
+    const sanitizedIncident = sanitizeSupportValue(
+      {
+        schema_version: "0.1",
+        category: "incident",
+        incident,
+        timeline
+      },
+      { projectRoot }
+    );
+    entries.push({
+      path: "diagnostics/incident.json",
+      category: "incident",
+      content: jsonBuffer(sanitizedIncident.value),
+      redaction: sanitizedIncident.redaction
+    });
+  }
   const summary = buildSummary(now, entries);
   const sanitizedSummary = sanitizeSupportValue(summary, { projectRoot });
   entries.push({
@@ -573,7 +633,8 @@ function createPlan(
   statusValue: SupportBundlePlan["status"],
   outputDirectory: string,
   now: Date,
-  entries: Array<Pick<SupportEntry, "path" | "category" | "content">>
+  entries: Array<Pick<SupportEntry, "path" | "category" | "content">>,
+  incidentId?: string
 ): SupportBundlePlan {
   const files = entries.map((entry) => ({
     path: entry.path,
@@ -589,6 +650,7 @@ function createPlan(
     created_at: now.toISOString(),
     output_directory: toProjectOrExternalPath(projectRoot, outputDirectory),
     archive_name: `kairon-support-${bundleId}.zip`,
+    ...(incidentId === undefined ? {} : { incident_id: incidentId }),
     files,
     exclusions,
     estimated_payload_size_bytes: files.reduce(
@@ -602,12 +664,14 @@ function createManifest(
   bundleId: string,
   now: Date,
   entries: SupportEntry[],
-  redaction: SupportRedactionSummary
+  redaction: SupportRedactionSummary,
+  incidentId?: string
 ): SupportBundleManifest {
   return {
     schema_version: "0.1",
     artifact_kind: "support_bundle",
     bundle_id: bundleId,
+    ...(incidentId === undefined ? {} : { incident_id: incidentId }),
     created_at: now.toISOString(),
     generator: { name: "kairon", version: KAIRON_VERSION },
     local_only: true,
@@ -832,14 +896,21 @@ function verifySupportBundleBytes(
     entries = parseZip(bytes);
     checks.push({ id: "archive", status: "pass", details: "ZIP structure and CRC values are valid" });
     const paths = entries.map((entry) => entry.path);
+    const hasIncidentEntry = paths.includes("diagnostics/incident.json");
     const allowed = paths.every((entryPath) =>
       entryPath === "manifest.json" || entryPath === "summary.md" ||
-      entryPath === "hashes.sha256" || requiredDiagnosticPaths.includes(
+      entryPath === "hashes.sha256" ||
+      entryPath === "diagnostics/incident.json" ||
+      requiredDiagnosticPaths.includes(
         entryPath as typeof requiredDiagnosticPaths[number]
       ));
     const required = ["manifest.json", "summary.md", "hashes.sha256", ...requiredDiagnosticPaths]
       .every((requiredPath) => paths.includes(requiredPath));
-    if (!allowed || !required || paths.length !== requiredDiagnosticPaths.length + 3) {
+    if (
+      !allowed ||
+      !required ||
+      paths.length !== requiredDiagnosticPaths.length + 3 + (hasIncidentEntry ? 1 : 0)
+    ) {
       throw new Error("Support ZIP file allowlist is invalid.");
     }
     checks.push({ id: "paths", status: "pass", details: "all required allowlisted files are present" });
@@ -848,6 +919,9 @@ function verifySupportBundleBytes(
     manifest = JSON.parse(manifestEntry.content.toString("utf8")) as SupportBundleManifest;
     if (!isSupportManifest(manifest)) {
       throw new Error("Support manifest schema is invalid.");
+    }
+    if ((manifest.incident_id !== undefined) !== hasIncidentEntry) {
+      throw new Error("Support incident scope does not match the bundle payload.");
     }
     const payloadEntries = entries.filter((entry) =>
       entry.path !== "manifest.json" && entry.path !== "hashes.sha256");
@@ -907,6 +981,9 @@ function isSupportManifest(value: unknown): value is SupportBundleManifest {
   return manifest.schema_version === "0.1" &&
     manifest.artifact_kind === "support_bundle" &&
     typeof manifest.bundle_id === "string" && bundleIdPattern.test(manifest.bundle_id) &&
+    (manifest.incident_id === undefined ||
+      (typeof manifest.incident_id === "string" &&
+        /^INC-\d{4}$/u.test(manifest.incident_id))) &&
     typeof manifest.created_at === "string" && !Number.isNaN(Date.parse(manifest.created_at)) &&
     manifest.generator?.name === "kairon" && typeof manifest.generator.version === "string" &&
     manifest.local_only === true && manifest.upload_performed === false &&
@@ -1076,6 +1153,9 @@ function requireZipEntry(entries: ZipEntry[], entryPath: string): ZipEntry {
 function expectedCategory(entryPath: string): SupportCategory | "summary" | undefined {
   if (entryPath === "summary.md") {
     return "summary";
+  }
+  if (entryPath === "diagnostics/incident.json") {
+    return "incident";
   }
   const match = /^diagnostics\/(system|runtime|queue|provider|workflow|notification|integrity)\.json$/u
     .exec(entryPath);

@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { readJsonLines } from "../src/core/fs/jsonl-file.js";
+import { listIncidents } from "../src/incidents/store.js";
 import {
   notifyPendingDiscordWatchdogAlerts
 } from "../src/discord/watchdog-notifier.js";
@@ -189,6 +190,20 @@ describe("runtime watchdog", () => {
     });
     expect(alert.occurrence_count).toBe(5);
     expect(await listWatchdogAlerts(root)).toHaveLength(1);
+    expect(await listIncidents(root)).toMatchObject([
+      {
+        incident_id: "INC-0001",
+        fingerprint: alert.fingerprint,
+        status: "open",
+        resources: [
+          {
+            kind: "watchdog_alert",
+            id: alertId,
+            status: "open"
+          }
+        ]
+      }
+    ]);
   });
 
   it("sanitizes alert evidence and operator resolution reasons", async () => {
