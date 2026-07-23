@@ -13,6 +13,7 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 - local-only sanitized support bundle、pre/post secret scan、ZIP hash検証を追加。
 - runtime heartbeat、queue、provider、notification、Task Schedulerを監視するdeduplicated Watchdog alertとDiscord routingを追加。
 - Watchdog alertとruntime recovery targetを集約するIncident lifecycle、append-only timeline、Incident限定support bundle、approval-gated assisted recoveryを追加。
+- production workflowを明示`runtime.json`設定、proposal適用、env互換fallback、doctor競合診断を持つ正式configへ昇格。
 
 ## Versioning
 

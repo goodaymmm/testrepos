@@ -13,6 +13,13 @@ import {
   formatWorkflowControlResult,
   WorkflowControls
 } from "../../workflow/controls.js";
+import {
+  resolveWorkflowRuntimeConfig
+} from "../../workflow/config.js";
+import {
+  createWorkflowConfigProposal,
+  formatWorkflowConfigProposalCreateResult
+} from "../../core/config/config-proposals.js";
 
 export type WorkflowRunCommandOptions = {
   candidate?: boolean;
@@ -27,6 +34,53 @@ export type WorkflowRunCommandOptions = {
   retryMaxAttempts?: string | number;
   retryBackoffSeconds?: string | number;
 };
+
+export type WorkflowConfigProposeCommandOptions = {
+  enable?: boolean;
+  disable?: boolean;
+};
+
+export async function workflowConfigShowCommand(
+  projectRoot: string,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
+  const resolution = await resolveWorkflowRuntimeConfig(projectRoot, env);
+  return [
+    "Kairon workflow runtime config.",
+    `enabled=${resolution.config.enabled}`,
+    `effective_enabled=${resolution.effective_enabled}`,
+    `effective_source=${resolution.effective_source}`,
+    `environment_name=${resolution.environment_name}`,
+    `environment_value=${resolution.environment_value ?? "unset"}`,
+    `explicit_enabled=${resolution.explicit_enabled}`,
+    `legacy_enabled_env=${resolution.legacy_enabled_env}`,
+    `conflict=${resolution.conflict}`,
+    `mode=${resolution.config.mode}`,
+    `checkpoint_store=${resolution.config.checkpoint_store}`,
+    `checkpoint_on_transition=${resolution.config.checkpoint_on_transition}`,
+    `resource_lock_ttl_seconds=${resolution.config.resource_lock_ttl_seconds}`,
+    `retry.max_attempts=${resolution.config.retry.max_attempts}`,
+    `retry.backoff_seconds=${resolution.config.retry.backoff_seconds}`,
+    ...resolution.warnings.map((warning) => `warning=${warning}`)
+  ].join("\n");
+}
+
+export async function workflowConfigProposeCommand(
+  projectRoot: string,
+  options: WorkflowConfigProposeCommandOptions
+): Promise<string> {
+  if (options.enable === options.disable) {
+    throw new Error(
+      "Specify exactly one of --enable or --disable for workflow config propose."
+    );
+  }
+  return formatWorkflowConfigProposalCreateResult(
+    await createWorkflowConfigProposal({
+      projectRoot,
+      enabled: options.enable === true
+    })
+  );
+}
 
 export async function workflowRunCommand(
   projectRoot: string,
@@ -87,7 +141,7 @@ export async function workflowRunCommand(
     );
   } catch (error) {
     if (error instanceof ProductionWorkflowRuntimeDisabledError) {
-      return formatWorkflowRuntimeCandidateRejected("feature_flag_disabled");
+      return formatProductionWorkflowDisabled();
     }
     throw error;
   }
@@ -201,7 +255,7 @@ export async function workflowRecoverCommand(
     );
   } catch (error) {
     if (error instanceof ProductionWorkflowRuntimeDisabledError) {
-      return formatWorkflowRuntimeCandidateRejected("feature_flag_disabled");
+      return formatProductionWorkflowDisabled();
     }
     throw error;
   }
@@ -234,4 +288,13 @@ function formatLastControlEvent(
   return event === undefined
     ? "none"
     : `${event.action};id:${event.event_id};status:${event.status_after};node:${event.node_id ?? "none"}`;
+}
+
+function formatProductionWorkflowDisabled(): string {
+  return [
+    "Kairon production workflow is disabled.",
+    "status=setup_required",
+    "reason=workflow_config_disabled",
+    "next_action=kairon workflow config propose --enable"
+  ].join("\n");
 }

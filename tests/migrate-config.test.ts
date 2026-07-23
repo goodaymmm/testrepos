@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import { initializeProject } from "../src/cli/commands/init.js";
 import {
   formatMigrationResult,
-  migrateConfigs
+  migrateConfigs,
+  planWorkflowRuntimeConfigMigration
 } from "../src/core/config/migrate-config.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { createTempProject } from "./test-utils.js";
@@ -87,6 +88,39 @@ describe("migrateConfigs", () => {
     expect(text).toContain("Kairon migration dry run.");
     expect(text).toContain("agents.json agents.gemini.adapter: gemini_cli -> antigravity_cli");
     expect(text).toContain("validation.ok=true");
+  });
+
+  it("plans legacy workflow config graduation without auto-enabling it", () => {
+    const plan = planWorkflowRuntimeConfigMigration(
+      {
+        schema_version: "0.1",
+        workflow: {
+          enabled_env: "KAIRON_WORKFLOW_RUNTIME",
+          resource_lock_ttl_seconds: 86_400,
+          checkpoint_on_transition: true
+        }
+      },
+      false
+    );
+
+    expect(plan.migration_required).toBe(true);
+    expect(plan.runtime_config).toMatchObject({
+      workflow: {
+        enabled: false,
+        mode: "production",
+        checkpoint_store: "file",
+        retry: { max_attempts: 3, backoff_seconds: 30 }
+      }
+    });
+    expect(
+      plan.changes.map((change) => change.path)
+    ).toEqual(expect.arrayContaining([
+      "workflow.enabled",
+      "workflow.enabled_env",
+      "workflow.mode",
+      "workflow.checkpoint_store",
+      "workflow.retry"
+    ]));
   });
 });
 

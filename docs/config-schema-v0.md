@@ -58,9 +58,22 @@
   "process": {
     "no_output_timeout_seconds": 600,
     "graceful_shutdown_seconds": 30
+  },
+  "workflow": {
+    "enabled": false,
+    "mode": "production",
+    "checkpoint_store": "file",
+    "resource_lock_ttl_seconds": 86400,
+    "checkpoint_on_transition": true,
+    "retry": {
+      "max_attempts": 3,
+      "backoff_seconds": 30
+    }
   }
 }
 ```
+
+`workflow.enabled`はproduction workflowの正式なenablementであり、既定値は`false`。旧configの`workflow.enabled_env`は互換fallbackとしてのみ受理され、明示された`enabled`が優先される。`mode`は`production`、`checkpoint_store`は`file`だけをサポートする。`resource_lock_ttl_seconds`は1から604800、retryは最大10回・backoff最大3600秒で検証する。
 
 ## schedule.json
 

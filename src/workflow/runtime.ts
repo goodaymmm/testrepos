@@ -25,6 +25,11 @@ import {
   type WorkflowResourceLock,
   type WorkflowRunArtifact
 } from "./types.js";
+import {
+  isWorkflowRuntimeEnabledFromEnvironment,
+  resolveWorkflowRuntimeConfig,
+  type WorkflowRuntimeConfigResolution
+} from "./config.js";
 
 export type RunProductionWorkflowRequest = {
   workflowId: string;
@@ -46,6 +51,7 @@ export type WorkflowRuntimeResult = {
   actions: string[];
   dry_run: boolean;
   checkpoint_path?: string;
+  runtime_config?: WorkflowRuntimeConfigResolution;
 };
 
 export type ProductionWorkflowRuntimeOptions = {
@@ -63,19 +69,23 @@ export type WorkflowExecutionContext = {
 
 export class ProductionWorkflowRuntimeDisabledError extends Error {
   constructor() {
-    super("Production workflow runtime requires KAIRON_WORKFLOW_RUNTIME=1.");
+    super(
+      "Production workflow runtime is disabled. Apply a workflow config proposal or use the legacy environment fallback."
+    );
     this.name = "ProductionWorkflowRuntimeDisabledError";
   }
 }
 
 export class ProductionWorkflowRuntime {
+  private configResolution?: Promise<WorkflowRuntimeConfigResolution>;
+
   constructor(
     private readonly projectRoot: string,
     private readonly options: ProductionWorkflowRuntimeOptions = {}
   ) {}
 
   async run(request: RunProductionWorkflowRequest): Promise<WorkflowRuntimeResult> {
-    this.assertEnabled();
+    const runtimeConfig = await this.assertEnabled();
     assertWorkflowId(request.workflowId);
     const actions: string[] = [];
     const loaded = await this.loadOrCreate(request);
@@ -104,7 +114,8 @@ export class ProductionWorkflowRuntime {
       artifact,
       actions,
       dry_run: false,
-      checkpoint_path: checkpointPath
+      checkpoint_path: checkpointPath,
+      runtime_config: runtimeConfig
     };
   }
 
@@ -112,7 +123,12 @@ export class ProductionWorkflowRuntime {
     assertWorkflowId(workflowId);
     const artifact = await this.loadArtifact(workflowId);
     await this.ensureCorrelation(artifact);
-    return { artifact, actions: [], dry_run: true };
+    return {
+      artifact,
+      actions: [],
+      dry_run: true,
+      runtime_config: await this.resolveConfig()
+    };
   }
 
   async list(): Promise<WorkflowRunArtifact[]> {
@@ -140,7 +156,9 @@ export class ProductionWorkflowRuntime {
     );
   }
 
-  async persistControlledArtifact(artifact: WorkflowRunArtifact): Promise<string> {
+  async persistControlledArtifact(
+    artifact: WorkflowRunArtifact
+  ): Promise<string | undefined> {
     return this.persist(artifact, "control");
   }
 
@@ -162,7 +180,7 @@ export class ProductionWorkflowRuntime {
   ): Promise<WorkflowRuntimeResult> {
     assertWorkflowId(workflowId);
     if (options.dryRun !== true) {
-      this.assertEnabled();
+      await this.assertEnabled();
     }
 
     const artifact = structuredClone(await this.loadArtifact(workflowId));
@@ -174,7 +192,12 @@ export class ProductionWorkflowRuntime {
         artifact.nodes,
         artifact.control
       );
-      return { artifact, actions, dry_run: true };
+      return {
+        artifact,
+        actions,
+        dry_run: true,
+        runtime_config: await this.resolveConfig()
+      };
     }
 
     await this.advance(artifact, actions);
@@ -183,12 +206,13 @@ export class ProductionWorkflowRuntime {
       artifact,
       actions,
       dry_run: false,
-      checkpoint_path: checkpointPath
+      checkpoint_path: checkpointPath,
+      runtime_config: await this.resolveConfig()
     };
   }
 
   async recoverActive(): Promise<WorkflowRuntimeResult[]> {
-    if (!isProductionWorkflowRuntimeEnabled(this.options.env ?? process.env)) {
+    if (!(await this.resolveConfig()).effective_enabled) {
       return [];
     }
 
@@ -223,7 +247,7 @@ export class ProductionWorkflowRuntime {
       return execute();
     }
 
-    this.assertEnabled();
+    await this.assertEnabled();
     const artifact = await this.loadArtifact(metadata.workflow_id);
     const nodeIndex = artifact.nodes.findIndex((node) => node.id === metadata.node_id);
     if (nodeIndex < 0) {
@@ -542,8 +566,12 @@ export class ProductionWorkflowRuntime {
     const approvalRequired =
       input.approvalRequired ??
       (task?.approval_required === true || input.approvalId !== undefined);
-    const maxAttempts = input.retryMaxAttempts ?? 1;
-    assertRetryPolicy(maxAttempts, input.retryBackoffSeconds ?? 0);
+    const runtimeConfig = (await this.resolveConfig()).config;
+    const maxAttempts =
+      input.retryMaxAttempts ?? runtimeConfig.retry.max_attempts;
+    const retryBackoffSeconds =
+      input.retryBackoffSeconds ?? runtimeConfig.retry.backoff_seconds;
+    assertRetryPolicy(maxAttempts, retryBackoffSeconds);
     const resourceKeys = uniqueStrings(
       input.resourceKeys ?? [`.kairon/tasks/${input.taskId}`]
     );
@@ -594,7 +622,7 @@ export class ProductionWorkflowRuntime {
       resource_keys: resourceKeys,
       retry_policy: {
         max_attempts: maxAttempts,
-        backoff_seconds: input.retryBackoffSeconds ?? 0
+        backoff_seconds: retryBackoffSeconds
       },
       nodes: [approvalNode, taskNode],
       edges: [{ from: approvalNode.id, to: taskNode.id }],
@@ -896,7 +924,10 @@ export class ProductionWorkflowRuntime {
             owner: `workflow:${artifact.workflow_id}:${node.id}`,
             fencingToken,
             now: this.now(),
-            ttlMs: this.options.resourceLockTtlMs ?? 86_400_000
+            ttlMs:
+              this.options.resourceLockTtlMs ??
+              (await this.resolveConfig()).config.resource_lock_ttl_seconds *
+                1_000
           })
         );
       }
@@ -959,7 +990,7 @@ export class ProductionWorkflowRuntime {
   private async persist(
     artifact: WorkflowRunArtifact,
     action: WorkflowRunArtifact["recovery"]["last_action"]
-  ): Promise<string> {
+  ): Promise<string | undefined> {
     const now = this.now().toISOString();
     artifact.sequence += 1;
     artifact.updated_at = now;
@@ -968,22 +999,29 @@ export class ProductionWorkflowRuntime {
       artifact.control
     );
     artifact.recovery.last_action = action;
-    const checkpointPath = workflowCheckpointPath(
-      this.projectRoot,
-      artifact.workflow_id,
-      artifact.sequence
-    );
-    artifact.recovery.last_checkpoint_path = toProjectPath(
-      this.projectRoot,
-      checkpointPath
-    );
     await this.ensureCorrelation(artifact);
-    await writeJsonFileAtomic(checkpointPath, artifact);
+    const checkpointEnabled = (await this.resolveConfig()).config
+      .checkpoint_on_transition;
+    let checkpointPath: string | undefined;
+    if (checkpointEnabled) {
+      checkpointPath = workflowCheckpointPath(
+        this.projectRoot,
+        artifact.workflow_id,
+        artifact.sequence
+      );
+      artifact.recovery.last_checkpoint_path = toProjectPath(
+        this.projectRoot,
+        checkpointPath
+      );
+      await writeJsonFileAtomic(checkpointPath, artifact);
+    }
     await writeJsonFileAtomic(
       workflowRunArtifactPath(this.projectRoot, artifact.workflow_id),
       artifact
     );
-    return artifact.recovery.last_checkpoint_path;
+    return checkpointPath === undefined
+      ? undefined
+      : artifact.recovery.last_checkpoint_path;
   }
 
   private async ensureCorrelation(artifact: WorkflowRunArtifact): Promise<void> {
@@ -1015,10 +1053,20 @@ export class ProductionWorkflowRuntime {
     return this.options.now?.() ?? new Date();
   }
 
-  private assertEnabled(): void {
-    if (!isProductionWorkflowRuntimeEnabled(this.options.env ?? process.env)) {
+  async assertEnabled(): Promise<WorkflowRuntimeConfigResolution> {
+    const resolution = await this.resolveConfig();
+    if (!resolution.effective_enabled) {
       throw new ProductionWorkflowRuntimeDisabledError();
     }
+    return resolution;
+  }
+
+  private resolveConfig(): Promise<WorkflowRuntimeConfigResolution> {
+    this.configResolution ??= resolveWorkflowRuntimeConfig(
+      this.projectRoot,
+      this.options.env ?? process.env
+    );
+    return this.configResolution;
   }
 }
 
@@ -1084,8 +1132,7 @@ export function workflowCheckpointPath(
 export function isProductionWorkflowRuntimeEnabled(
   env: NodeJS.ProcessEnv
 ): boolean {
-  const value = env.KAIRON_WORKFLOW_RUNTIME;
-  return value === "1" || value?.toLowerCase() === "true";
+  return isWorkflowRuntimeEnabledFromEnvironment(env);
 }
 
 export function formatProductionWorkflowResult(
@@ -1102,6 +1149,8 @@ export function formatProductionWorkflowResult(
     `task_id=${artifact.task_id}`,
     `checkpoint=${result.checkpoint_path ?? artifact.recovery.last_checkpoint_path ?? "none"}`,
     `source=${artifact.source.kind}`,
+    `runtime.enabled=${result.runtime_config?.effective_enabled ?? "unknown"}`,
+    `runtime.source=${result.runtime_config?.effective_source ?? "unknown"}`,
     `actions=${result.actions.length === 0 ? "none" : result.actions.join(",")}`,
     ...artifact.nodes.map(
       (node) =>

@@ -208,7 +208,7 @@ describe("ProductionWorkflowRuntime", () => {
   });
 
   it("keeps production dispatch disabled without its feature flag", async () => {
-    const root = await createInitializedProject();
+    const root = await createInitializedProject(false);
     const task = await createTask(root);
 
     await expect(
@@ -274,9 +274,16 @@ describe("workflow state transitions", () => {
   });
 });
 
-async function createInitializedProject(): Promise<string> {
+async function createInitializedProject(
+  workflowEnabled = true
+): Promise<string> {
   const root = await createTempProject();
   await initializeProject({ projectRoot: root });
+  const runtimePath = path.join(root, ".kairon", "config", "runtime.json");
+  const runtime = await readJsonFile<Record<string, unknown>>(runtimePath);
+  const workflow = runtime.workflow as Record<string, unknown>;
+  workflow.enabled = workflowEnabled;
+  await writeJsonFileAtomic(runtimePath, runtime);
   await writeJsonFileAtomic(path.join(root, ".kairon", "config", "schedule.json"), {
     schema_version: "0.1",
     timezone: "UTC",

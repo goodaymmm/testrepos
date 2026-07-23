@@ -15,6 +15,7 @@ import {
   toPosixPath
 } from "../fs/paths.js";
 import { validateAllConfigs } from "./load-config.js";
+import { planWorkflowRuntimeConfigMigration } from "./migrate-config.js";
 import { validateConfigFile, type ValidationResult } from "./validate-config.js";
 
 export type ConfigProposalArtifact = ProjectDockingAnalysis & {
@@ -23,6 +24,25 @@ export type ConfigProposalArtifact = ProjectDockingAnalysis & {
   created_at: string;
   expires_at: string;
 };
+
+export type WorkflowConfigProposalArtifact = {
+  schema_version: "0.1";
+  proposal_kind: "workflow_runtime_config";
+  proposal_id: string;
+  target_file: "runtime.json";
+  project_root: string;
+  runtime_config: Record<string, unknown>;
+  requested_enabled: boolean;
+  migration_required: boolean;
+  risk: "medium";
+  restart_required: true;
+  created_at: string;
+  expires_at: string;
+};
+
+type AnyConfigProposalArtifact =
+  | ConfigProposalArtifact
+  | WorkflowConfigProposalArtifact;
 
 export type ConfigProposalChange = {
   path: string;
@@ -49,11 +69,18 @@ export type ConfigProposalApplyResult = {
   applied: boolean;
   proposal_id: string;
   proposal_path: string;
-  target_file: "project.json";
+  target_file: "project.json" | "runtime.json";
   stale: boolean;
   changes: ConfigProposalChange[];
   backups: string[];
   validation: ValidationResult;
+};
+
+export type WorkflowConfigProposalCreateResult = {
+  proposal_id: string;
+  proposal_path: string;
+  artifact: WorkflowConfigProposalArtifact;
+  changes: ConfigProposalChange[];
 };
 
 const proposalTtlMs = 24 * 60 * 60 * 1000;
@@ -102,6 +129,53 @@ export async function createConfigProposal(options: {
   };
 }
 
+export async function createWorkflowConfigProposal(options: {
+  projectRoot: string;
+  enabled: boolean;
+  now?: Date;
+}): Promise<WorkflowConfigProposalCreateResult> {
+  const projectRoot = normalizeProjectRoot(options.projectRoot);
+  const now = options.now ?? new Date();
+  const currentRuntimeConfig = await readJsonFile<Record<string, unknown>>(
+    getConfigPath(projectRoot, "runtime.json")
+  );
+  const migration = planWorkflowRuntimeConfigMigration(
+    currentRuntimeConfig,
+    options.enabled
+  );
+  const proposalId = `CFG-${formatTimestamp(now)}-${randomUUID().slice(0, 8)}`;
+  const proposalPath = configProposalPath(projectRoot, proposalId);
+  const artifact: WorkflowConfigProposalArtifact = {
+    schema_version: "0.1",
+    proposal_kind: "workflow_runtime_config",
+    proposal_id: proposalId,
+    target_file: "runtime.json",
+    project_root: toPosixPath(projectRoot),
+    runtime_config: migration.runtime_config,
+    requested_enabled: options.enabled,
+    migration_required: migration.migration_required,
+    risk: "medium",
+    restart_required: true,
+    created_at: now.toISOString(),
+    expires_at: new Date(now.getTime() + proposalTtlMs).toISOString()
+  };
+  const changes = diffValues(
+    "",
+    currentRuntimeConfig,
+    artifact.runtime_config
+  );
+
+  await mkdir(path.dirname(proposalPath), { recursive: true });
+  await writeJsonFileAtomic(proposalPath, artifact);
+
+  return {
+    proposal_id: proposalId,
+    proposal_path: toProjectPath(projectRoot, proposalPath),
+    artifact,
+    changes
+  };
+}
+
 export async function applyConfigProposal(
   options: ConfigProposalApplyOptions
 ): Promise<ConfigProposalApplyResult> {
@@ -109,25 +183,29 @@ export async function applyConfigProposal(
   const now = options.now ?? new Date();
   const dryRun = options.dryRun === true;
   const proposalPath = configProposalPath(projectRoot, options.proposalId);
-  const artifact = await readJsonFile<ConfigProposalArtifact>(proposalPath);
+  const artifact = await readJsonFile<AnyConfigProposalArtifact>(proposalPath);
 
   validateProposalArtifact(projectRoot, artifact, options.proposalId, now);
 
-  const validation = validateConfigFile("project.json", artifact.project_config);
+  const proposedConfig =
+    artifact.target_file === "project.json"
+      ? artifact.project_config
+      : artifact.runtime_config;
+  const validation = validateConfigFile(artifact.target_file, proposedConfig);
   if (!validation.ok) {
-    throw new Error(`Invalid project config proposal: ${validation.errors.join("; ")}`);
+    throw new Error(`Invalid config proposal: ${validation.errors.join("; ")}`);
   }
 
-  const targetPath = getConfigPath(projectRoot, "project.json");
-  const currentProjectConfig = await readJsonFile<ProjectConfigProposal>(targetPath);
-  const changes = diffValues("", currentProjectConfig, artifact.project_config);
+  const targetPath = getConfigPath(projectRoot, artifact.target_file);
+  const currentConfig = await readJsonFile<unknown>(targetPath);
+  const changes = diffValues("", currentConfig, proposedConfig);
   const backups: string[] = [];
 
   if (!dryRun && changes.length > 0) {
     const backupPath = `${targetPath}.bak-${formatTimestamp(now)}`;
     await copyFile(targetPath, backupPath);
     backups.push(toProjectPath(projectRoot, backupPath));
-    await writeJsonFileAtomic(targetPath, artifact.project_config);
+    await writeJsonFileAtomic(targetPath, proposedConfig);
   }
 
   return {
@@ -150,12 +228,29 @@ export function formatConfigProposalCreateResult(
     "Kairon config proposal created.",
     `proposal_id=${result.proposal_id}`,
     `proposal_path=${result.proposal_path}`,
-    "target=project.json",
+    `target=${result.artifact.target_file}`,
     `changes=${result.changes.length}`
   ];
 
-  lines.push(...formatChanges(result.changes));
+  lines.push(...formatChanges(result.artifact.target_file, result.changes));
   return lines.join("\n");
+}
+
+export function formatWorkflowConfigProposalCreateResult(
+  result: WorkflowConfigProposalCreateResult
+): string {
+  return [
+    "Kairon workflow runtime config proposal created.",
+    `proposal_id=${result.proposal_id}`,
+    `proposal_path=${result.proposal_path}`,
+    "target=runtime.json",
+    `requested_enabled=${result.artifact.requested_enabled}`,
+    `migration_required=${result.artifact.migration_required}`,
+    `risk=${result.artifact.risk}`,
+    `restart_required=${result.artifact.restart_required}`,
+    `changes=${result.changes.length}`,
+    ...formatChanges("runtime.json", result.changes)
+  ].join("\n");
 }
 
 export function formatConfigProposalApplyResult(
@@ -175,7 +270,7 @@ export function formatConfigProposalApplyResult(
   lines.push(`proposal_path=${result.proposal_path}`);
   lines.push(`target=${result.target_file}`);
   lines.push(`changes=${result.changes.length}`);
-  lines.push(...formatChanges(result.changes));
+  lines.push(...formatChanges(result.target_file, result.changes));
 
   if (result.backups.length > 0) {
     lines.push(`backups=${result.backups.join(",")}`);
@@ -196,21 +291,40 @@ export function formatConfigProposalApplyResult(
 
 function validateProposalArtifact(
   projectRoot: string,
-  artifact: ConfigProposalArtifact,
+  artifact: AnyConfigProposalArtifact,
   expectedProposalId: string,
   now: Date
 ): void {
   if (artifact.proposal_id !== expectedProposalId) {
     throw new Error("Config proposal id does not match the requested proposal.");
   }
-  if (artifact.proposal_kind !== "project_config" || artifact.target_file !== "project.json") {
-    throw new Error("Only project.json config proposals can be applied.");
-  }
-  if (!artifact.project_config || typeof artifact.project_config !== "object") {
-    throw new Error("Config proposal is missing project_config.");
-  }
-  if (artifact.project_config.root !== toPosixPath(projectRoot)) {
-    throw new Error("Config proposal root does not match this project.");
+  if (artifact.target_file === "project.json") {
+    if (artifact.proposal_kind !== "project_config") {
+      throw new Error(
+        "Only project.json or workflow runtime config proposals can be applied."
+      );
+    }
+    if (!artifact.project_config || typeof artifact.project_config !== "object") {
+      throw new Error("Config proposal is missing project_config.");
+    }
+    if (artifact.project_config.root !== toPosixPath(projectRoot)) {
+      throw new Error("Config proposal root does not match this project.");
+    }
+  } else if (artifact.target_file === "runtime.json") {
+    if (
+      artifact.proposal_kind !== "workflow_runtime_config" ||
+      !artifact.runtime_config ||
+      typeof artifact.runtime_config !== "object"
+    ) {
+      throw new Error("Config proposal is missing runtime_config.");
+    }
+    if (artifact.project_root !== toPosixPath(projectRoot)) {
+      throw new Error("Config proposal root does not match this project.");
+    }
+  } else {
+    throw new Error(
+      "Only project.json or workflow runtime config proposals can be applied."
+    );
   }
 
   const expiresAt = Date.parse(artifact.expires_at);
@@ -249,10 +363,13 @@ function diffValues(
   return [{ path: prefix || "$", from: current, to: next }];
 }
 
-function formatChanges(changes: ConfigProposalChange[]): string[] {
+function formatChanges(
+  targetFile: "project.json" | "runtime.json",
+  changes: ConfigProposalChange[]
+): string[] {
   return changes.map(
     (change) =>
-      `- project.json ${change.path}: ${formatValue(change.from)} -> ${formatValue(change.to)}`
+      `- ${targetFile} ${change.path}: ${formatValue(change.from)} -> ${formatValue(change.to)}`
   );
 }
 
