@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url";
+import path from "node:path";
 import {
   spawnCommandRunner,
   type CommandRunner
@@ -14,6 +15,8 @@ import {
   formatDaemonSoakCertification,
   writeDaemonSoakCertification
 } from "../../runtime/daemon-certification.js";
+import { writeJsonFileAtomic } from "../../core/fs/json-file.js";
+import { getKaironPaths } from "../../core/fs/paths.js";
 
 export type DaemonReportCommandOptions = {
   since?: string;
@@ -47,6 +50,15 @@ export type DaemonTaskCommandOptions = {
   platform?: NodeJS.Platform;
   powerShellCommand?: string;
   helperPath?: string;
+  taskStatusWriter?: (
+    projectRoot: string,
+    input: {
+      status: "registered" | "missing" | "disabled" | "error" | "unknown";
+      taskName: string;
+      action: DaemonTaskAction;
+      reason?: string;
+    }
+  ) => Promise<void>;
 };
 
 export async function daemonReportCommand(
@@ -199,6 +211,14 @@ export async function daemonTaskCommand(
 
   if (result.exitCode !== 0 || result.timedOut) {
     const detail = redactDaemonTaskOutput(result.stderr || result.stdout).trim();
+    await persistDaemonTaskStatus(options, projectRoot, {
+      status: "error",
+      taskName,
+      action,
+      reason: isTaskSchedulerPermissionError(detail)
+        ? "task_scheduler_permission_denied"
+        : "task_scheduler_command_failed"
+    });
     if (isTaskSchedulerPermissionError(detail)) {
       return [
         "Kairon daemon task setup required.",
@@ -214,6 +234,13 @@ export async function daemonTaskCommand(
   }
 
   const output = redactDaemonTaskOutput(result.stdout).trim();
+  if (options.dryRun !== true) {
+    await persistDaemonTaskStatus(options, projectRoot, {
+      status: daemonTaskArtifactStatus(action, output),
+      taskName,
+      action
+    });
+  }
   return [
     "Kairon daemon task command completed.",
     "status=completed",
@@ -221,6 +248,64 @@ export async function daemonTaskCommand(
     `dry_run=${options.dryRun === true}`,
     ...(output.length === 0 ? [] : output.split(/\r?\n/))
   ].join("\n");
+}
+
+async function persistDaemonTaskStatus(
+  options: DaemonTaskCommandOptions,
+  projectRoot: string,
+  input: {
+    status: "registered" | "missing" | "disabled" | "error" | "unknown";
+    taskName: string;
+    action: DaemonTaskAction;
+    reason?: string;
+  }
+): Promise<void> {
+  if (options.commandRunner !== undefined && options.taskStatusWriter === undefined) {
+    return;
+  }
+  await (options.taskStatusWriter ?? writeDaemonTaskStatus)(projectRoot, input);
+}
+
+async function writeDaemonTaskStatus(
+  projectRoot: string,
+  input: {
+    status: "registered" | "missing" | "disabled" | "error" | "unknown";
+    taskName: string;
+    action: DaemonTaskAction;
+    reason?: string;
+  }
+): Promise<void> {
+  await writeJsonFileAtomic(
+    path.join(getKaironPaths(projectRoot).runtimeDir, "daemon", "task-status.json"),
+    {
+      schema_version: "0.1",
+      status: input.status,
+      task_name: input.taskName,
+      action: input.action,
+      reason: input.reason,
+      observed_at: new Date().toISOString()
+    }
+  );
+}
+
+function daemonTaskArtifactStatus(
+  action: DaemonTaskAction,
+  output: string
+): "registered" | "missing" | "disabled" | "unknown" {
+  if (action === "uninstall") {
+    return "missing";
+  }
+  if (action === "install" || action === "restart") {
+    return "registered";
+  }
+  if (output.includes("task.exists=false")) {
+    return "missing";
+  }
+  const state = /^task\.state=(.+)$/imu.exec(output)?.[1]?.trim().toLowerCase();
+  if (state === "disabled") {
+    return "disabled";
+  }
+  return output.includes("task.exists=true") ? "registered" : "unknown";
 }
 
 function mapDaemonTaskAction(

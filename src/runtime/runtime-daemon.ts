@@ -8,6 +8,11 @@ import {
   releaseRuntimeLock
 } from "./runtime-lock.js";
 import { RuntimeLoop, type RuntimeTickResult } from "./runtime-loop.js";
+import {
+  runWatchdogCheck,
+  sanitizeWatchdogError,
+  type WatchdogCheckResult
+} from "./watchdog.js";
 
 export type RuntimeDaemonStopReason =
   | "stop_requested"
@@ -40,6 +45,7 @@ export type RuntimeDaemonOptions = {
   now?: () => Date;
   sleep?: (ms: number) => Promise<void>;
   runTick?: () => Promise<RuntimeTickResult>;
+  watchdogCheck?: () => Promise<WatchdogCheckResult>;
   hostBootAt?: () => string;
 };
 
@@ -125,6 +131,7 @@ export class RuntimeDaemon {
           next_tick_at: nextTickAt ?? undefined,
           created_at: this.now().toISOString()
         });
+        await this.runWatchdogSafely();
 
         if (maxTicksReached) {
           stopReason = "max_ticks";
@@ -154,6 +161,7 @@ export class RuntimeDaemon {
         error: lastError,
         created_at: lastError.at
       });
+      await this.runWatchdogSafely();
       await this.refreshHeartbeat({
         tickCount: ticks,
         idleCount: idleTicks,
@@ -213,6 +221,23 @@ export class RuntimeDaemon {
 
   private sleep(ms: number): Promise<void> {
     return this.options.sleep?.(ms) ?? new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async runWatchdogSafely(): Promise<void> {
+    try {
+      await (
+        this.options.watchdogCheck?.() ??
+        runWatchdogCheck(this.projectRoot, { now: this.now() })
+      );
+    } catch (error) {
+      const sanitized = sanitizeWatchdogError(this.projectRoot, error);
+      await appendDaemonEvent(this.projectRoot, {
+        schema_version: "0.1",
+        event: "watchdog_error",
+        error: sanitized,
+        created_at: this.now().toISOString()
+      });
+    }
   }
 
   private now(): Date {

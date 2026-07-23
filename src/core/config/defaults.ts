@@ -46,6 +46,49 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
         enabled_env: "KAIRON_WORKFLOW_RUNTIME",
         resource_lock_ttl_seconds: 86400,
         checkpoint_on_transition: true
+      },
+      watchdog: {
+        enabled: true,
+        cooldown_seconds: 900,
+        rules: {
+          stale_heartbeat: {
+            enabled: true,
+            severity: "critical",
+            threshold_seconds: 120
+          },
+          fatal_runtime_error: {
+            enabled: true,
+            severity: "critical",
+            threshold: 1
+          },
+          restart_loop: {
+            enabled: true,
+            severity: "high",
+            threshold: 3,
+            window_seconds: 300
+          },
+          queue_backlog: {
+            enabled: true,
+            severity: "warning",
+            threshold: 20
+          },
+          failed_notifications: {
+            enabled: true,
+            severity: "high",
+            threshold: 3,
+            window_seconds: 300
+          },
+          provider_suspended: {
+            enabled: true,
+            severity: "high",
+            threshold: 1
+          },
+          task_scheduler_missing: {
+            enabled: true,
+            severity: "warning",
+            threshold: 1
+          }
+        }
       }
     },
     "schedule.json": {
@@ -322,6 +365,8 @@ export const kaironDirectories = [
   "runtime/terminals",
   "runtime/ticks",
   "runtime/discord",
+  "watchdog",
+  "watchdog/alerts",
   "recovery",
   "recovery/resolutions",
   "state",

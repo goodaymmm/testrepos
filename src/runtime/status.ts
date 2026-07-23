@@ -9,6 +9,10 @@ import { inspectRuntimeRecoveryTargets } from "../recovery/runtime-recovery.js";
 import { readRuntimeLockStatus, type RuntimeLockStatus } from "./runtime-lock.js";
 import { getScheduleStatus, type ScheduleStatus } from "./schedule-engine.js";
 import type { SameDaySessionSummary } from "../agents/session-host.js";
+import {
+  readWatchdogAlertSummary,
+  type WatchdogAlertSummary
+} from "./watchdog.js";
 
 export type RuntimeStatus = {
   schedule: ScheduleStatus;
@@ -78,6 +82,7 @@ export type RuntimeStatus = {
     next_action?: string;
     http_status?: number;
   };
+  watchdog: WatchdogAlertSummary;
   artifacts: {
     last_tick: string;
     latest_daily_report?: string;
@@ -99,6 +104,7 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     recovery,
     sessions,
     discordGateway,
+    watchdog,
     artifacts
   ] = await Promise.all([
     getScheduleStatus(projectRoot),
@@ -109,6 +115,7 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     inspectRuntimeRecoveryTargets(projectRoot),
     readLatestSessionSummary(projectRoot),
     readDiscordGatewaySummary(projectRoot),
+    readWatchdogAlertSummary(projectRoot),
     readOperationalArtifacts(projectRoot)
   ]);
 
@@ -148,6 +155,7 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     sessions,
     daemonHealth,
     discordGateway,
+    watchdog,
     artifacts
   };
 }
@@ -284,6 +292,14 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
     status.discordGateway?.next_action === undefined
       ? null
       : `discord.gateway.nextAction=${status.discordGateway.next_action}`,
+    `watchdog.open=${status.watchdog.open}`,
+    `watchdog.acknowledged=${status.watchdog.acknowledged}`,
+    `watchdog.resolved=${status.watchdog.resolved}`,
+    `watchdog.highestSeverity=${status.watchdog.highest_severity}`,
+    `watchdog.notificationsPending=${status.watchdog.notifications_pending}`,
+    status.watchdog.last_checked_at === undefined
+      ? null
+      : `watchdog.lastCheckedAt=${status.watchdog.last_checked_at}`,
     `artifacts.lastTick=${status.artifacts.last_tick}`,
     status.artifacts.latest_daily_report === undefined
       ? null

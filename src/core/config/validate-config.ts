@@ -18,6 +18,41 @@ const schemaVersion = z.object({
   schema_version: z.string().min(1)
 });
 
+const watchdogSeveritySchema = z.enum(["info", "warning", "high", "critical"]);
+const watchdogRuleSchema = z
+  .object({
+    enabled: z.boolean(),
+    severity: watchdogSeveritySchema,
+    threshold: z.number().int().positive().optional(),
+    threshold_seconds: z.number().int().positive().optional(),
+    window_seconds: z.number().int().positive().optional(),
+    cooldown_seconds: z.number().int().nonnegative().max(86_400).optional()
+  })
+  .refine(
+    (rule) => rule.threshold !== undefined || rule.threshold_seconds !== undefined,
+    { message: "watchdog rule requires threshold or threshold_seconds" }
+  );
+
+const runtimeConfigSchema = schemaVersion
+  .extend({
+    watchdog: z
+      .object({
+        enabled: z.boolean(),
+        cooldown_seconds: z.number().int().nonnegative().max(86_400),
+        rules: z.object({
+          stale_heartbeat: watchdogRuleSchema,
+          fatal_runtime_error: watchdogRuleSchema,
+          restart_loop: watchdogRuleSchema,
+          queue_backlog: watchdogRuleSchema,
+          failed_notifications: watchdogRuleSchema,
+          provider_suspended: watchdogRuleSchema,
+          task_scheduler_missing: watchdogRuleSchema
+        })
+      })
+      .optional()
+  })
+  .passthrough();
+
 const agentsConfigSchema = schemaVersion.extend({
   provider_policies: z
     .object({
@@ -228,6 +263,13 @@ export function validateConfigFile(fileName: string, value: unknown): Validation
       errors.push(
         `${fileName}: codex, claude, and gemini (Antigravity compatibility id) must be enabled for MVP`
       );
+    }
+  }
+
+  if (fileName === "runtime.json") {
+    const result = runtimeConfigSchema.safeParse(value);
+    if (!result.success) {
+      errors.push(`${fileName}: runtime watchdog settings are invalid`);
     }
   }
 

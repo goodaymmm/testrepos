@@ -37,6 +37,10 @@ import {
   type DiscordDecisionAuditSideEffect
 } from "./decision-audit.js";
 import type { DiscordHttpProfileConfig } from "./http-profile.js";
+import {
+  notifyPendingDiscordWatchdogAlerts,
+  type DiscordWatchdogNotificationResult
+} from "./watchdog-notifier.js";
 
 export type DiscordProviderConfig = {
   enabled: boolean;
@@ -131,6 +135,7 @@ export type DiscordGatewayRuntimeStatus =
       approval_channel_id: string;
       commands_registered: boolean;
       approval_notifications?: DiscordApprovalNotificationResult;
+      watchdog_notifications?: DiscordWatchdogNotificationResult;
       client_user_id?: string;
       error?: string;
       error_code?: string;
@@ -419,6 +424,7 @@ export async function startDiscordGateway(
   let reconnectAttempts = 0;
   let approvalScanTimer: NodeJS.Timeout | undefined;
   let lastApprovalNotificationResult: DiscordApprovalNotificationResult | undefined;
+  let lastWatchdogNotificationResult: DiscordWatchdogNotificationResult | undefined;
   let approvalChannel: DiscordApprovalChannel | null = null;
   client.on("interactionCreate", (interaction) =>
     handleGatewayInteraction(
@@ -560,6 +566,11 @@ export async function startDiscordGateway(
           approvalChannel!,
           { now }
         );
+        lastWatchdogNotificationResult = await notifyPendingDiscordWatchdogAlerts(
+          projectRoot,
+          approvalChannel!,
+          { now }
+        );
       },
       {
         projectRoot,
@@ -582,6 +593,12 @@ export async function startDiscordGateway(
       })
         .then((result) => {
           lastApprovalNotificationResult = result;
+          return notifyPendingDiscordWatchdogAlerts(projectRoot, approvalChannel!, {
+            now
+          });
+        })
+        .then((result) => {
+          lastWatchdogNotificationResult = result;
         })
         .catch((error) =>
           writeGatewayStatus(projectRoot, {
@@ -593,6 +610,7 @@ export async function startDiscordGateway(
             approval_channel_id: prepared.approval_channel_id,
             commands_registered: prepared.register_commands_on_start,
             approval_notifications: lastApprovalNotificationResult,
+            watchdog_notifications: lastWatchdogNotificationResult,
             error: String(error),
             reconnect: {
               ...prepared.reconnect,
@@ -614,6 +632,7 @@ export async function startDiscordGateway(
     approval_channel_id: prepared.approval_channel_id,
     commands_registered: prepared.register_commands_on_start,
     approval_notifications: lastApprovalNotificationResult,
+    watchdog_notifications: lastWatchdogNotificationResult,
     client_user_id: client.user?.id,
     reconnect: {
       ...prepared.reconnect,
@@ -639,6 +658,7 @@ export async function startDiscordGateway(
         approval_channel_id: prepared.approval_channel_id,
         commands_registered: prepared.register_commands_on_start,
         approval_notifications: lastApprovalNotificationResult,
+        watchdog_notifications: lastWatchdogNotificationResult,
         client_user_id: client.user?.id,
         reconnect: {
           ...prepared.reconnect,

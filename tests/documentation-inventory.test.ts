@@ -49,6 +49,7 @@ describe("T159 documentation inventory", () => {
       installation: await readUtf8("docs/installation.md"),
       release: await readUtf8("docs/release-checklist-v0.md"),
       workflow: await readUtf8("docs/workflow-v0.md"),
+      watchdog: await readUtf8("docs/runtime-watchdog-v0.md"),
       cli: await readUtf8("docs/cli-commands-v0.md")
     };
     const inventory = [
@@ -56,6 +57,11 @@ describe("T159 documentation inventory", () => {
         source: "src/runtime/daemon-certification.ts",
         document: documents.daemon,
         marker: "daemon certify"
+      },
+      {
+        source: "src/runtime/watchdog.ts",
+        document: documents.watchdog,
+        marker: "<!-- kairon:runtime-watchdog -->"
       },
       {
         source: "src/state/backup.ts",

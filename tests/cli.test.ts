@@ -44,6 +44,7 @@ describe("createProgram", () => {
       "task",
       "test",
       "update",
+      "watchdog",
       "workflow"
     ]);
   });
@@ -216,6 +217,28 @@ describe("createProgram", () => {
         .find((command) => command.name() === "uninstall")
         ?.options.map((option) => option.long)
     ).toContain("--dry-run");
+  });
+
+  it("registers runtime watchdog inspection and resolution commands", () => {
+    const watchdog = createProgram().commands.find(
+      (command) => command.name() === "watchdog"
+    );
+    const list = watchdog?.commands.find((command) => command.name() === "list");
+    const resolve = watchdog?.commands.find(
+      (command) => command.name() === "resolve"
+    );
+
+    expect(watchdog?.commands.map((command) => command.name()).sort()).toEqual([
+      "check",
+      "list",
+      "resolve",
+      "show"
+    ]);
+    expect(list?.options.map((option) => option.long)).toContain("--status");
+    expect(resolve?.options.map((option) => option.long)).toContain("--reason");
+    expect(resolve?.options.find((option) => option.long === "--reason")?.mandatory).toBe(
+      true
+    );
   });
 
   it("registers state integrity, backup, event compaction, and snapshot commands", () => {

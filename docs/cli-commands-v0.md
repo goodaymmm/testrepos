@@ -614,6 +614,22 @@ daemon option。
 
 `--daemon` は長時間運用の入口であり、heartbeat、last error、stop reasonをruntime lockとdaemon logに記録する。24時間以上の連続運用エビデンス取得は運用テスト側で行う。
 
+## kairon watchdog
+
+runtime異常を評価し、deduplicate済みalertを確認・解決する。
+
+```text
+kairon watchdog check
+kairon watchdog list
+kairon watchdog list --status open
+kairon watchdog show <alert-id>
+kairon watchdog resolve <alert-id> --reason <text>
+```
+
+`check`はdaemon heartbeat、fatal error、restart loop、queue backlog、Discord通知失敗、provider suspend、Task Scheduler登録状態を評価する。alertは`.kairon/watchdog/alerts/ALT-*.json`、集計状態は`.kairon/watchdog/state.json`へ保存する。同じruleとresourceはdeterministic fingerprintでまとめ、severity escalation、cooldown後のreminder、回復時のresolved通知だけを新しい通知対象にする。
+
+`resolve`はoperator reasonを必須とする。原因が残った状態で次回`check`を実行すると、同じalertをopenへ戻す。Watchdogは自動再起動、queue mutation、provider切替を行わない。詳細は`docs/runtime-watchdog-v0.md`を参照する。
+
 ## kairon daemon task
 
 Windows Task Scheduler上のKairon daemon登録を管理する。
@@ -665,6 +681,7 @@ kairon status
 - active runs
 - pending approvals
 - recovery target counts
+- watchdog alert counts and highest severity
 - last daily handoff
 
 ## kairon task create
