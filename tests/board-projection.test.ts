@@ -22,9 +22,116 @@ import { initializeProject } from "../src/cli/commands/init.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { readJsonLines } from "../src/core/fs/jsonl-file.js";
 import { WorkQueue } from "../src/queue/work-queue.js";
+import type { WorkflowRunArtifact } from "../src/workflow/types.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("board projection", () => {
+  it("projects workflow branches, join blockers, and compensation state", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const now = "2026-07-23T00:00:00.000Z";
+    const artifact: WorkflowRunArtifact = {
+      schema_version: "0.1",
+      artifact_kind: "workflow_run",
+      runtime: "kairon_workflow_runtime",
+      workflow_id: "WF-T168-BOARD",
+      status: "running",
+      sequence: 4,
+      objective: "Project workflow graph state.",
+      task_id: "TASK-BOARD",
+      resource_keys: [],
+      retry_policy: { max_attempts: 1, backoff_seconds: 0 },
+      nodes: [
+        {
+          id: "branch_a",
+          kind: "task",
+          status: "completed",
+          dependencies: [],
+          branch_id: "a",
+          attempt: 1,
+          max_attempts: 1,
+          input_digest: "input-a",
+          output_digest: "output-a",
+          task_id: "TASK-A",
+          resource_locks: [],
+          updated_at: now,
+          completed_at: now
+        },
+        {
+          id: "branch_b",
+          kind: "task",
+          status: "running",
+          dependencies: [],
+          branch_id: "b",
+          attempt: 1,
+          max_attempts: 1,
+          input_digest: "input-b",
+          task_id: "TASK-B",
+          resource_locks: [],
+          updated_at: now
+        },
+        {
+          id: "join_all",
+          kind: "join",
+          status: "pending",
+          dependencies: ["branch_a", "branch_b"],
+          attempt: 0,
+          max_attempts: 1,
+          input_digest: "join",
+          join_policy: "all",
+          resource_locks: [],
+          blocker: "join_waiting:all:1/2",
+          updated_at: now
+        }
+      ],
+      edges: [
+        { from: "branch_a", to: "join_all" },
+        { from: "branch_b", to: "join_all" }
+      ],
+      graph: {
+        branch_ids: ["a", "b"],
+        join_node_ids: ["join_all"]
+      },
+      compensation: {
+        plan_id: "WF-T168-BOARD-COMP-000004",
+        status: "running",
+        pending_steps: 1,
+        updated_at: now
+      },
+      source: { kind: "new" },
+      recovery: {
+        last_action: "run",
+        reconciled_queue_item_ids: []
+      },
+      created_at: now,
+      updated_at: now
+    };
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "workflows", "runs", "WF-T168-BOARD.json"),
+      artifact
+    );
+
+    const projection = await createBoardProjection(root);
+    expect(projection.workflows.recent[0]).toMatchObject({
+      workflow_id: "WF-T168-BOARD",
+      current_node: "branch_b",
+      current_node_kind: "task",
+      branches: [
+        { branch_id: "a", status: "completed", completed: 1, total: 1 },
+        { branch_id: "b", status: "running", completed: 0, total: 1 }
+      ],
+      joins_waiting: [
+        {
+          node_id: "join_all",
+          policy: "all",
+          blocker: "join_waiting:all:1/2"
+        }
+      ],
+      compensation_status: "running",
+      compensation_pending_steps: 1
+    });
+  });
+
   it("exports a read-only sanitized board projection", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

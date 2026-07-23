@@ -16,15 +16,25 @@ import {
 import {
   resolveWorkflowRuntimeConfig
 } from "../../workflow/config.js";
+import path from "node:path";
 import {
   createWorkflowConfigProposal,
   formatWorkflowConfigProposalCreateResult
 } from "../../core/config/config-proposals.js";
+import {
+  loadWorkflowDefinitionFile,
+  WorkflowDefinitionValidationError
+} from "../../workflow/definition.js";
+import {
+  formatWorkflowCompensationResult,
+  WorkflowCompensationManager
+} from "../../workflow/compensation.js";
 
 export type WorkflowRunCommandOptions = {
   candidate?: boolean;
   dryRun?: boolean;
   connectQueue?: boolean;
+  definition?: string;
   workflowId?: string;
   taskId?: string;
   queueItemId?: string;
@@ -117,7 +127,7 @@ export async function workflowRunCommand(
     }
   }
 
-  if (options.workflowId === undefined) {
+  if (options.workflowId === undefined && options.definition === undefined) {
     return formatWorkflowRuntimeCandidateRejected("workflow_id_required");
   }
 
@@ -125,6 +135,7 @@ export async function workflowRunCommand(
     return formatProductionWorkflowResult(
       await new ProductionWorkflowRuntime(projectRoot, { env }).run({
         workflowId: options.workflowId,
+        definitionPath: options.definition,
         taskId: options.taskId,
         approvalId: options.approvalId,
         objective: options.objective,
@@ -145,6 +156,70 @@ export async function workflowRunCommand(
     }
     throw error;
   }
+}
+
+export async function workflowValidateCommand(
+  projectRoot: string,
+  definitionFile: string
+): Promise<string> {
+  const validation = await loadWorkflowDefinitionFile(
+    resolveDefinitionPath(projectRoot, definitionFile)
+  );
+  if (
+    !validation.valid ||
+    validation.definition === undefined ||
+    validation.digest === undefined
+  ) {
+    throw new WorkflowDefinitionValidationError(validation.diagnostics);
+  }
+  const definition = validation.definition;
+  return [
+    "Kairon workflow definition is valid.",
+    `workflow_id=${definition.workflow_id}`,
+    `schema_version=${definition.schema_version}`,
+    `entry_node_id=${definition.entry_node_id}`,
+    `nodes=${definition.nodes.length}`,
+    `task_nodes=${definition.nodes.filter((node) => node.type === "task").length}`,
+    `condition_nodes=${definition.nodes.filter((node) => node.type === "condition").length}`,
+    `parallel_nodes=${definition.nodes.filter((node) => node.type === "parallel").length}`,
+    `join_nodes=${definition.nodes.filter((node) => node.type === "join").length}`,
+    `manual_gates=${definition.nodes.filter((node) => node.type === "manual_gate").length}`,
+    `digest=${validation.digest}`
+  ].join("\n");
+}
+
+export async function workflowCompensateCommand(
+  projectRoot: string,
+  workflowId: string,
+  options: {
+    dryRun?: boolean;
+    approvalId?: string;
+    confirm?: string;
+  },
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
+  const manager = new WorkflowCompensationManager(projectRoot, { env });
+  if (options.dryRun === true) {
+    if (options.approvalId !== undefined || options.confirm !== undefined) {
+      throw new Error(
+        "Workflow compensate --dry-run cannot be combined with execution options."
+      );
+    }
+    return formatWorkflowCompensationResult(await manager.plan(workflowId));
+  }
+  if (options.approvalId === undefined || options.confirm === undefined) {
+    throw new Error(
+      "Workflow compensation execution requires --approval-id and --confirm <plan-id>."
+    );
+  }
+  return formatWorkflowCompensationResult(
+    await manager.execute({
+      workflowId,
+      planId: options.confirm,
+      approvalId: options.approvalId,
+      confirm: options.confirm
+    })
+  );
 }
 
 export async function workflowShowCommand(
@@ -297,4 +372,8 @@ function formatProductionWorkflowDisabled(): string {
     "reason=workflow_config_disabled",
     "next_action=kairon workflow config propose --enable"
   ].join("\n");
+}
+
+function resolveDefinitionPath(projectRoot: string, definitionFile: string): string {
+  return path.resolve(projectRoot, definitionFile);
 }

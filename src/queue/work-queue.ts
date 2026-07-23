@@ -3,7 +3,10 @@ import { getKaironPaths } from "../core/fs/paths.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { acquireLockFile, releaseLockFile } from "../core/fs/lock-file.js";
 import { nextId } from "../core/ids/counter.js";
-import type { ProductionWorkflowQueueMetadata } from "../workflow/types.js";
+import type {
+  ProductionWorkflowCompensationQueueMetadata,
+  ProductionWorkflowQueueMetadata
+} from "../workflow/types.js";
 
 export type QueueItemType =
   | "agent.run"
@@ -52,6 +55,7 @@ export type WorkflowRuntimeQueueMetadata = {
 export type QueueMetadata = {
   workflow_runtime?: WorkflowRuntimeQueueMetadata;
   production_workflow?: ProductionWorkflowQueueMetadata;
+  workflow_compensation?: ProductionWorkflowCompensationQueueMetadata;
 };
 
 export type QueueItem = {

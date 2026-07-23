@@ -519,6 +519,7 @@ describe("createProgram", () => {
     expect(workflow?.description()).toContain("persistent Kairon workflows");
     expect(workflow?.commands.map((command) => command.name()).sort()).toEqual([
       "cancel",
+      "compensate",
       "config",
       "list",
       "pause",
@@ -526,7 +527,8 @@ describe("createProgram", () => {
       "resume",
       "retry",
       "run",
-      "show"
+      "show",
+      "validate"
     ]);
     expect(run?.description()).toContain("production workflow");
     expect(config?.commands.map((command) => command.name()).sort()).toEqual([
@@ -541,6 +543,7 @@ describe("createProgram", () => {
     expect(run?.options.map((option) => option.long)).toEqual(
       expect.arrayContaining([
         "--candidate",
+        "--definition",
         "--dry-run",
         "--connect-queue",
         "--workflow-id",
@@ -563,6 +566,13 @@ describe("createProgram", () => {
         .find((command) => command.name() === "retry")
         ?.options.map((option) => option.long)
     ).toContain("--node");
+    expect(
+      workflow?.commands
+        .find((command) => command.name() === "compensate")
+        ?.options.map((option) => option.long)
+    ).toEqual(
+      expect.arrayContaining(["--dry-run", "--approval-id", "--confirm"])
+    );
   });
 
   it("registers RAG index commands and query filters", () => {
