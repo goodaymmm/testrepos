@@ -261,10 +261,20 @@ health=.kairon/sessions/2026-05-26/codex/health.json
 ```text
 kairon agent session list [--date YYYY-MM-DD]
 kairon agent session show codex|claude|gemini [--date YYYY-MM-DD]
+kairon agent session budget codex|claude|gemini [--date YYYY-MM-DD]
+kairon agent session compact codex|claude|gemini [--date YYYY-MM-DD] --dry-run
+kairon agent session compact codex|claude|gemini [--date YYYY-MM-DD] --confirm <plan-id>
+kairon agent session rotate codex|claude|gemini [--date YYYY-MM-DD] --reason <text>
 kairon agent session reset codex|claude|gemini --date YYYY-MM-DD
 ```
 
 `session show` は `health_status`、連続失敗回数、retry backoff秒数、`health_next_retry_at`、現在再試行可能かを表示する。履歴は `.kairon/sessions/YYYY-MM-DD/{agent}/health.json` に最大25件保存し、`setup_required`、permission、rate/usage limit、timeout、no outputなどの理由をrun単位で追跡する。成功時は連続失敗とbackoffをresetするが、履歴とsetup_required累計は保持する。
+
+`session budget` はprompt byte数、job数、経過秒数、compaction回数と、その値がprovider観測かKairon推定かを表示する。soft limitはcompaction planを作成し、hard limitは以後のdispatchを停止する。
+
+`session compact --dry-run` はsource hash付きplanを作るだけでsessionを変更しない。実行時は表示されたplan IDを `--confirm` へ完全一致で指定する。sourceが変化したplanはstaleとして拒否する。
+
+`session rotate` はidle sessionだけを対象に、監査理由とsanitized handoffを保存して新しいsession IDへ切り替える。provider内部contextやcredentialを操作しない。artifactと復旧手順は `docs/session-context-budget-v0.md` を参照する。
 
 dispatcherは既定でbackoff中の `degraded` / `blocked` sessionを避ける。内部dispatch requestで `avoidUnhealthyAgents=false` を明示した場合、または `health_next_retry_at` を経過した場合は候補へ戻す。
 

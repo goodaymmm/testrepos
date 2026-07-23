@@ -113,6 +113,23 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
     },
     "agents.json": {
       schema_version: "0.1",
+      session_budget: {
+        enabled: true,
+        soft_limit: {
+          prompt_bytes: 8_000_000,
+          job_count: 40,
+          elapsed_seconds: 21_600,
+          compaction_count: 3
+        },
+        hard_limit: {
+          prompt_bytes: 16_000_000,
+          job_count: 80,
+          elapsed_seconds: 43_200,
+          compaction_count: 5
+        },
+        compaction_keep_runs: 10,
+        resource_lock_ttl_seconds: 60
+      },
       provider_policies: {
         codex: {
           unattended_allowed: true,

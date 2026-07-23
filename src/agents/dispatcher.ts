@@ -7,6 +7,7 @@ import {
   type ProviderPolicyHealth
 } from "./provider-policy.js";
 import type { AgentSessionHealthStatus } from "./session-health.js";
+import type { SessionBudgetStatus } from "./session-budget.js";
 import type { AgentId, RunnerMode, SessionScope } from "./types.js";
 import { agentIds, isAgentId } from "./types.js";
 
@@ -25,6 +26,8 @@ export type AgentSessionAvailability = {
   mode?: RunnerMode;
   healthStatus?: AgentSessionHealthStatus;
   nextRetryAt?: string | null;
+  budgetStatus?: SessionBudgetStatus;
+  budgetReasons?: string[];
 };
 
 export type DispatchRequest = {
@@ -362,6 +365,9 @@ function buildReason(
     parts.push(`session ${session.status}`);
     if (session.healthStatus !== undefined) {
       parts.push(`health ${session.healthStatus}`);
+    }
+    if (session.budgetStatus !== undefined) {
+      parts.push(`budget ${session.budgetStatus}`);
     }
   }
 

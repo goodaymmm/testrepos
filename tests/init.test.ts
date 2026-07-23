@@ -3,6 +3,7 @@ import path from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import { initializeProject } from "../src/cli/commands/init.js";
 import { loadAllConfigs, validateAllConfigs } from "../src/core/config/load-config.js";
+import { validateConfigFile } from "../src/core/config/validate-config.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("initializeProject", () => {
@@ -18,6 +19,23 @@ describe("initializeProject", () => {
     const configs = await loadAllConfigs(root);
     expect(configs["project.json"]).toMatchObject({ schema_version: "0.1" });
     expect(configs["agents.json"]).toMatchObject({
+      session_budget: {
+        enabled: true,
+        soft_limit: {
+          prompt_bytes: 8_000_000,
+          job_count: 40,
+          elapsed_seconds: 21_600,
+          compaction_count: 3
+        },
+        hard_limit: {
+          prompt_bytes: 16_000_000,
+          job_count: 80,
+          elapsed_seconds: 43_200,
+          compaction_count: 5
+        },
+        compaction_keep_runs: 10,
+        resource_lock_ttl_seconds: 60
+      },
       provider_policies: {
         codex: {
           unattended_allowed: true,
@@ -65,6 +83,39 @@ describe("initializeProject", () => {
 
     await expect(readFile(projectConfigPath, "utf8")).resolves.toContain(
       "\"schema_version\": \"custom\""
+    );
+  });
+
+  it("rejects session budget soft limits that are not below hard limits", () => {
+    const validation = validateConfigFile("agents.json", {
+      schema_version: "0.1",
+      session_budget: {
+        enabled: true,
+        soft_limit: {
+          prompt_bytes: 100,
+          job_count: 10,
+          elapsed_seconds: 60,
+          compaction_count: 2
+        },
+        hard_limit: {
+          prompt_bytes: 100,
+          job_count: 20,
+          elapsed_seconds: 120,
+          compaction_count: 4
+        },
+        compaction_keep_runs: 10,
+        resource_lock_ttl_seconds: 60
+      },
+      agents: {
+        codex: { enabled: true },
+        claude: { enabled: true },
+        gemini: { enabled: true }
+      }
+    });
+
+    expect(validation.ok).toBe(false);
+    expect(validation.errors).toContain(
+      "agents.json: agent enablement, provider policy, or session budget settings are invalid"
     );
   });
 });

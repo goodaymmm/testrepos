@@ -99,6 +99,33 @@ describe("AgentDispatcher", () => {
     });
   });
 
+  it("does not select sessions blocked for budget rotation", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+
+    await expect(
+      new AgentDispatcher(root).decide({
+        persona: "implementer",
+        availableSessions: [
+          {
+            agent: "codex",
+            status: "unavailable",
+            budgetStatus: "hard_limit",
+            budgetReasons: ["prompt_bytes_hard_limit"]
+          },
+          {
+            agent: "claude",
+            status: "ready",
+            budgetStatus: "within_limit"
+          }
+        ]
+      })
+    ).resolves.toMatchObject({
+      agent: "claude",
+      reason: expect.stringContaining("budget within_limit")
+    });
+  });
+
   it("avoids unhealthy ready sessions until retry backoff expires", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });

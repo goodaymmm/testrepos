@@ -15,6 +15,12 @@ import {
   type AgentSessionHealthSummary,
   type SessionHealthObservation
 } from "./session-health.js";
+import {
+  isSessionBudgetDispatchBlocked,
+  reconcileSessionBudgetState,
+  type SessionBudgetSource,
+  type SessionBudgetStatus
+} from "./session-budget.js";
 import { agentIds, type AgentId, type RunnerMode } from "./types.js";
 
 export type SessionStatus = "ready" | "setup_required" | "closed";
@@ -144,6 +150,18 @@ export type SessionMetadata = {
   session_context_manifest?: string;
   health?: AgentSessionHealthSummary;
   health_path?: string;
+  prompt_bytes?: number;
+  job_count?: number;
+  elapsed_seconds?: number;
+  compaction_count?: number;
+  rotation_count?: number;
+  budget_source?: SessionBudgetSource;
+  budget_status?: SessionBudgetStatus;
+  budget_reasons?: string[];
+  budget_started_at?: string;
+  budget_updated_at?: string;
+  active_compaction_plan_id?: string | null;
+  rotation_handoff_path?: string | null;
   scratch: string;
   created_at: string;
   updated_at: string;
@@ -172,6 +190,15 @@ export type SameDaySessionSnapshot = {
   session_context_manifest?: string;
   health?: AgentSessionHealthSummary;
   health_path?: string;
+  prompt_bytes: number;
+  job_count: number;
+  elapsed_seconds: number;
+  compaction_count: number;
+  rotation_count: number;
+  budget_source: SessionBudgetSource;
+  budget_status: SessionBudgetStatus;
+  budget_reasons: string[];
+  active_compaction_plan_id: string | null;
 };
 
 export type SameDaySessionSummary = {
@@ -245,7 +272,12 @@ export class FileSessionHost {
     const current = await this.attachSession(agent, date);
     const baseMetadata =
       current === null ? created : mergeSessionMetadata(current, created, this.now());
-    const metadata = await this.reconcileSessionHealth(baseMetadata);
+    const healthy = await this.reconcileSessionHealth(baseMetadata);
+    const metadata = await reconcileSessionBudgetState(
+      this.projectRoot,
+      healthy,
+      this.now()
+    );
     await this.ensureSessionContextManifest(metadata);
     await writeJsonFileAtomic(this.sessionPath(agent, date), metadata);
     return metadata;
@@ -475,6 +507,18 @@ export class FileSessionHost {
       resume_hint: createResumeHint(agent, command, now),
       context_manifest: toArtifactPath(paths.root, contextManifestPath),
       session_context_manifest: toArtifactPath(paths.root, sessionContextManifestPath),
+      prompt_bytes: 0,
+      job_count: 0,
+      elapsed_seconds: 0,
+      compaction_count: 0,
+      rotation_count: 0,
+      budget_source: "unavailable",
+      budget_status: "within_limit",
+      budget_reasons: [],
+      budget_started_at: now,
+      budget_updated_at: now,
+      active_compaction_plan_id: null,
+      rotation_handoff_path: null,
       scratch: toArtifactPath(paths.root, scratchPath),
       created_at: now,
       updated_at: now
@@ -783,6 +827,15 @@ export function sessionSnapshot(
     resume_hint: metadata.resume_hint,
     health: metadata.health,
     health_path: metadata.health_path,
+    prompt_bytes: metadata.prompt_bytes ?? 0,
+    job_count: metadata.job_count ?? 0,
+    elapsed_seconds: metadata.elapsed_seconds ?? 0,
+    compaction_count: metadata.compaction_count ?? 0,
+    rotation_count: metadata.rotation_count ?? 0,
+    budget_source: metadata.budget_source ?? "unavailable",
+    budget_status: metadata.budget_status ?? "within_limit",
+    budget_reasons: metadata.budget_reasons ?? [],
+    active_compaction_plan_id: metadata.active_compaction_plan_id ?? null,
     session_path: toArtifactPath(
       projectRoot,
       resolveInside(
@@ -826,13 +879,17 @@ export function sameDaySessionStatus(
 
 export function dispatcherStatusFor(
   status: SameDaySessionStatus,
-  metadata: Pick<SessionMetadata, "command_available">
+  metadata: Pick<SessionMetadata, "command_available" | "budget_status">
 ): DispatcherSessionStatus {
   if (status === "setup_required" || !metadata.command_available) {
     return metadata.command_available ? "setup_required" : "missing_cli";
   }
 
   if (status === "closed") {
+    return "unavailable";
+  }
+
+  if (isSessionBudgetDispatchBlocked(metadata)) {
     return "unavailable";
   }
 

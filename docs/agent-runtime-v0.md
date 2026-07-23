@@ -205,6 +205,8 @@ sessions/YYYY-MM-DD/{agent}/
 Terminal-backed Session は同日中の主 memory だが、無制限の context 保持を前提にしない。
 Agent Runner は一定間隔で session scratch と handoff を更新し、CLI 側の context compaction が起きても再投入できる状態を維持する。
 
+Kaironは送信prompt byte数、job数、経過秒数、compaction回数をsession metadataへ記録する。soft limitではsource hash付きのbounded compaction planを生成し、hard limitでは次のdispatchを止める。operatorがexact-confirmでcompactするか、理由付きでrotateするまでprovider内部contextを直接操作しない。詳細は `docs/session-context-budget-v0.md` を参照する。
+
 ## runtime.json
 
 ```json

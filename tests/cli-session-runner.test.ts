@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 import { CliSessionRunner } from "../src/agents/cli-session-runner.js";
+import { SessionBudgetDispatchBlockedError } from "../src/agents/session-budget.js";
 import type {
   CliInvocation,
   CommandRunResult
@@ -209,6 +210,85 @@ describe("CliSessionRunner", () => {
         }
       ]
     });
+  });
+
+  it("records sent prompt bytes and blocks a later job at the hard limit", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const agentsPath = path.join(root, ".kairon", "config", "agents.json");
+    const agents = await readJsonFile<Record<string, unknown>>(agentsPath);
+    const budget = agents.session_budget as Record<string, unknown>;
+    const initialSoft = budget.soft_limit as Record<string, number>;
+    budget.soft_limit = { ...initialSoft, prompt_bytes: 1 };
+    await writeJsonFileAtomic(agentsPath, agents);
+    const invocations: CliInvocation[] = [];
+    const runner = new CliSessionRunner(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) => {
+        invocations.push(invocation);
+        const prompt = invocation.stdin ?? "";
+        const runId = /KAIRON_JOB_START (RUN-\d+)/.exec(prompt)?.[1];
+        const taskId = /Task: (TASK-\d+)/.exec(prompt)?.[1];
+        const outboxPath = /Expected outbox: (.+)/.exec(prompt)?.[1];
+        if (runId === undefined || taskId === undefined || outboxPath === undefined) {
+          throw new Error("Expected job envelope was not included in prompt");
+        }
+        await writeJsonFileAtomic(path.join(root, outboxPath), {
+          schema_version: "0.1",
+          run_id: runId,
+          task_id: taskId,
+          agent: "codex",
+          persona: "implementer",
+          status: "completed"
+        });
+        return commandResult(invocation, { stdout: "done\n" });
+      }
+    });
+
+    await runner.runAgentJob({
+      agent: "codex",
+      date: "2026-05-25",
+      runId: "RUN-0200",
+      taskId: "TASK-0200",
+      persona: "implementer"
+    });
+
+    const sessionPath = path.join(
+      root,
+      ".kairon",
+      "sessions",
+      "2026-05-25",
+      "codex",
+      "session.json"
+    );
+    const session = await readJsonFile<Record<string, unknown>>(sessionPath);
+    expect(session).toMatchObject({
+      job_count: 1,
+      budget_source: "kairon_estimated",
+      budget_status: "soft_limit",
+      active_compaction_plan_id: expect.stringMatching(/^CMP-/)
+    });
+    expect(Number(session.prompt_bytes)).toBeGreaterThan(0);
+
+    const soft = budget.soft_limit as Record<string, number>;
+    const hard = budget.hard_limit as Record<string, number>;
+    budget.soft_limit = { ...soft, prompt_bytes: 1 };
+    budget.hard_limit = {
+      ...hard,
+      prompt_bytes: Number(session.prompt_bytes)
+    };
+    await writeJsonFileAtomic(agentsPath, agents);
+
+    await expect(
+      runner.runAgentJob({
+        agent: "codex",
+        date: "2026-05-25",
+        runId: "RUN-0201",
+        taskId: "TASK-0201",
+        persona: "implementer"
+      })
+    ).rejects.toBeInstanceOf(SessionBudgetDispatchBlockedError);
+    expect(invocations).toHaveLength(1);
   });
 
   it("creates a setup-required failure outbox when a CLI is missing", async () => {

@@ -396,8 +396,11 @@ describe("createProgram", () => {
       "suspend"
     ]);
     expect(session?.commands.map((command) => command.name()).sort()).toEqual([
+      "budget",
+      "compact",
       "list",
       "reset",
+      "rotate",
       "show"
     ]);
     expect(

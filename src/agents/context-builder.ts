@@ -208,6 +208,21 @@ export class ContextBuilder {
       sources.push({ type: "scratch", absolutePath: scratchPath, content: scratch });
     }
 
+    const activeHandoffPath = resolveInside(
+      paths.sessionsDir,
+      date,
+      agent,
+      "active-handoff.md"
+    );
+    const activeHandoff = await readOptionalText(activeHandoffPath);
+    if (activeHandoff !== null) {
+      sources.push({
+        type: "handoff",
+        absolutePath: activeHandoffPath,
+        content: activeHandoff
+      });
+    }
+
     sources.push(...(await this.collectPreviousDaySources(agent, date)));
 
     return sources;
