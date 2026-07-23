@@ -2,7 +2,7 @@
 
 ## 目的
 
-この文書はT159 Local Betaで実装済みの`kairon` CLI command仕様を定義する。歴史的なMVP判断は該当節に残すが、Command Listと各command節は現行実装を基準とする。
+この文書はT166時点のLocal Betaで実装済みの`kairon` CLI command仕様を定義する。歴史的なMVP判断は該当節に残すが、Command Listと各command節は現行実装を基準とする。
 
 ## Command List
 
@@ -61,6 +61,13 @@ kairon recovery list
 kairon recovery show <target-id-or-fingerprint>
 kairon recovery resolve <target-id-or-fingerprint> --reason <reason>
 kairon recovery acknowledge <target-id-or-fingerprint> --reason <reason>
+kairon incident list [--status all|open|acknowledged|recovering|resolved]
+kairon incident show <incident-id>
+kairon incident acknowledge <incident-id> --reason <reason>
+kairon incident bundle <incident-id> [--dry-run] [--output <directory>]
+kairon incident recover <incident-id> --dry-run
+kairon incident recover <incident-id> --approval-id <approval-id> --confirm <plan-id>
+kairon incident resolve <incident-id> --reason <reason>
 kairon leave
 kairon maintenance run
 kairon maintenance run --build-rag
@@ -821,7 +828,32 @@ stale Discord gateway state
 git transaction mid-state
 ```
 
-`resolve` と `acknowledge` は `.kairon/recovery/resolutions/*.json` にfingerprint単位で記録し、同一targetが未解決として残り続けることを防ぐ。
+`resolve` と `acknowledge` は `.kairon/recovery/resolutions/*.json` にfingerprint単位で記録する。`resolve`だけがtargetを解決済みとして次回検査から除外する。`acknowledge`はoperatorが確認した監査事実であり、healthやrecovery targetを解決しない。
+
+## kairon incident
+
+<!-- kairon:incident-lifecycle -->
+Watchdog alertとruntime recovery targetを一つのcorrelated incident timelineへ集約し、承認付き復旧を実行する。
+
+```text
+kairon incident list
+kairon incident list --status open
+kairon incident show INC-0001
+kairon incident acknowledge INC-0001 --reason "operator review started"
+kairon incident bundle INC-0001 --dry-run
+kairon incident bundle INC-0001 --output <directory>
+kairon incident recover INC-0001 --dry-run
+kairon incident recover INC-0001 --approval-id APR-0001 --confirm IRP-INC-0001-0123456789ab
+kairon incident resolve INC-0001 --reason "source cleared and verification passed"
+```
+
+`list`と`show`はsourceを再照合してIncident、resource reference、correlation ID、append-only timelineを表示する。canonical artifactは`.kairon/incidents/INC-*.json`、timelineは`.kairon/incidents/INC-*-timeline.jsonl`、復旧planは`.kairon/incidents/plans/IRP-*.json`である。元alert、recovery、approval、support bundleのpayloadは複製せずrelative artifact pathとsanitized metadataだけを保持する。
+
+`acknowledge`は確認済み状態へ移すだけで、active alertやrecovery targetを解決しない。`resolve`はactive source、未解決recovery target、failed verificationが一つでも残る場合に拒否する。同じfingerprintが解決後に再発した場合は同じIncidentをreopenし、`recurrence_count`を増やす。
+
+`recover --dry-run`は対象fingerprint、action、risk、source digest、有効期限、専用approval ID、exact confirmation用plan IDを生成する。実行時はapprovalが`approve`済みであること、Incident・plan・source digestのbinding、plan期限、target freshness、`--confirm`完全一致を再検証する。安全に自動復旧できないtargetは既存runtime recovery approvalへ接続し、Incidentは`partial`として残す。実行済みplanの再利用、無承認実行、stale plan、source変更後の実行は拒否する。
+
+`bundle`は通常のallowlist、redaction、pre/post secret scan、CRC、SHA-256 manifestを維持したまま`diagnostics/incident.json`を追加する。自動upload、外部ITSM write、destructive recovery、Boardからの状態変更は行わない。詳細は`docs/incident-lifecycle-v0.md`を参照する。
 
 ## kairon maintenance run
 

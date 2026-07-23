@@ -11,6 +11,11 @@ import {
   releaseRuntimeLock
 } from "../runtime/runtime-lock.js";
 import { StateApplier } from "../state/state-applier.js";
+import {
+  attachIncidentResource,
+  updateIncidentResource,
+  type IncidentArtifact
+} from "../incidents/store.js";
 
 export type RuntimeRecoveryOptions = {
   now?: Date;
@@ -21,6 +26,7 @@ export type RuntimeRecoveryOptions = {
   gitTransactionStaleMs?: number;
   safeOnly?: boolean;
   writeNoopArtifact?: boolean;
+  targetFingerprints?: string[];
 };
 
 export type RuntimeRecoveryResolutionAction = "resolved" | "acknowledged";
@@ -232,7 +238,23 @@ export async function runRuntimeRecovery(
       continue;
     }
 
+    const issue = createRecoveryIssue({
+      kind: "claimed_timeout",
+      target_id: item.id,
+      target_type: "queue_item",
+      item_type: item.type,
+      task_id: item.task_id,
+      severity: isSafeToRequeue(item) ? "medium" : "high",
+      reason: isSafeToRequeue(item)
+        ? "Expired non-code-producing queue claim can be safely requeued."
+        : "Expired claimed item may have side effects and requires manual recovery approval."
+    });
+    if (!isSelectedRecoveryIssue(issue, options)) {
+      continue;
+    }
+
     if (isSafeToRequeue(item)) {
+      await syncRecoveryIncident(projectRoot, issue, "open", now);
       await queue.requeueClaim(item.id, {
         now,
         reason: "Expired non-code-producing queue claim was safely requeued.",
@@ -244,6 +266,7 @@ export async function runRuntimeRecovery(
         item_type: item.type,
         reason: "Expired non-code-producing queue claim was safely requeued."
       });
+      await syncRecoveryIncident(projectRoot, issue, "resolved", now);
       continue;
     }
 
@@ -251,28 +274,22 @@ export async function runRuntimeRecovery(
       continue;
     }
 
-    const issue = createRecoveryIssue({
-      kind: "claimed_timeout",
-      target_id: item.id,
-      target_type: "queue_item",
-      item_type: item.type,
-      task_id: item.task_id,
-      severity: "high",
-      reason: "Expired claimed item may have side effects and requires manual recovery approval."
-    });
     if (resolvedFingerprints.has(issue.fingerprint)) {
       continue;
     }
 
-    actions.push(await requestRecoveryApproval(projectRoot, issue));
+    actions.push(await requestRecoveryApproval(projectRoot, issue, now));
   }
 
   if (options.safeOnly !== true) {
     for (const issue of await findRunIssues(projectRoot, runs, now, options)) {
+      if (!isSelectedRecoveryIssue(issue, options)) {
+        continue;
+      }
       if (resolvedFingerprints.has(issue.fingerprint)) {
         continue;
       }
-      actions.push(await requestRecoveryApproval(projectRoot, issue));
+      actions.push(await requestRecoveryApproval(projectRoot, issue, now));
     }
   }
 
@@ -283,26 +300,31 @@ export async function runRuntimeRecovery(
 
   if (options.safeOnly !== true) {
     for (const issue of findStaleGitTransactionIssues(gitTransactions, now, options)) {
+      if (!isSelectedRecoveryIssue(issue, options)) {
+        continue;
+      }
       if (resolvedFingerprints.has(issue.fingerprint)) {
         continue;
       }
-      actions.push(await requestRecoveryApproval(projectRoot, issue));
+      actions.push(await requestRecoveryApproval(projectRoot, issue, now));
     }
 
     const compactionIssue = await findStateCompactionIssue(projectRoot);
     if (
       compactionIssue !== null &&
+      isSelectedRecoveryIssue(compactionIssue, options) &&
       !resolvedFingerprints.has(compactionIssue.fingerprint)
     ) {
-      actions.push(await requestRecoveryApproval(projectRoot, compactionIssue));
+      actions.push(await requestRecoveryApproval(projectRoot, compactionIssue, now));
     }
 
     const backupRestoreIssue = await findStateBackupRestoreIssue(projectRoot);
     if (
       backupRestoreIssue !== null &&
+      isSelectedRecoveryIssue(backupRestoreIssue, options) &&
       !resolvedFingerprints.has(backupRestoreIssue.fingerprint)
     ) {
-      actions.push(await requestRecoveryApproval(projectRoot, backupRestoreIssue));
+      actions.push(await requestRecoveryApproval(projectRoot, backupRestoreIssue, now));
     }
   }
 
@@ -527,6 +549,17 @@ export async function resolveRuntimeRecoveryTarget(
   };
   const resolutionPath = recoveryResolutionPath(projectRoot, target.fingerprint);
   await writeJsonFileAtomic(resolutionPath, resolution);
+  await updateIncidentResource(projectRoot, {
+    kind: "recovery_target",
+    id: target.target_id,
+    fingerprint: target.fingerprint,
+    status: options.action === "resolved" ? "resolved" : "open",
+    details: {
+      acknowledged: options.action === "acknowledged",
+      resolution_action: options.action
+    },
+    now
+  });
 
   return {
     target,
@@ -548,8 +581,20 @@ async function recoverStaleRuntimeLock(
   if (!status.locked || !status.stale) {
     return null;
   }
+  const issue = createRecoveryIssue({
+    kind: "stale_lock",
+    target_id: "runtime-lock",
+    target_type: "runtime_lock",
+    severity: "medium",
+    reason: "Runtime lock is stale and can be cleared before startup."
+  });
+  if (!isSelectedRecoveryIssue(issue, options)) {
+    return null;
+  }
 
+  await syncRecoveryIncident(projectRoot, issue, "open", now);
   await releaseRuntimeLock(projectRoot);
+  await syncRecoveryIncident(projectRoot, issue, "resolved", now);
   return {
     type: "stale_lock_cleared",
     lock_path: toProjectPath(projectRoot, status.path),
@@ -559,10 +604,18 @@ async function recoverStaleRuntimeLock(
 
 async function requestRecoveryApproval(
   projectRoot: string,
-  issue: RuntimeRecoveryIssue
+  issue: RuntimeRecoveryIssue,
+  now: Date
 ): Promise<Extract<RuntimeRecoveryAction, { type: "approval_requested" | "approval_existing" }>> {
+  const incident = await syncRecoveryIncident(
+    projectRoot,
+    issue,
+    "open",
+    now
+  );
   const existing = await findExistingRecoveryApproval(projectRoot, issue);
   if (existing !== undefined) {
+    await attachRecoveryApproval(projectRoot, incident, existing, "pending", now);
     return {
       type: "approval_existing",
       approval_id: existing,
@@ -583,10 +636,13 @@ async function requestRecoveryApproval(
         title: `Runtime recovery required: ${issue.kind} ${issue.target_id}`,
         actions: ["approve", "reject", "request_changes", "snooze"],
         recovery_fingerprint: issue.fingerprint,
-        recovery_issue: issue
+        recovery_issue: issue,
+        incident_id: incident.incident_id,
+        correlation_id: incident.correlation_id
       }
     }
   });
+  await attachRecoveryApproval(projectRoot, incident, approvalId, "pending", now);
 
   return {
     type: "approval_requested",
@@ -710,10 +766,14 @@ async function recoverStaleDiscordGateway(
   options: RuntimeRecoveryOptions
 ): Promise<Extract<RuntimeRecoveryAction, { type: "gateway_starting_recovered" }> | null> {
   const candidate = await findStaleDiscordGatewayIssue(projectRoot, now, options);
-  if (candidate === null) {
+  if (
+    candidate === null ||
+    !isSelectedRecoveryIssue(candidate.issue, options)
+  ) {
     return null;
   }
 
+  await syncRecoveryIncident(projectRoot, candidate.issue, "open", now);
   await writeJsonFileAtomic(candidate.gateway_path, {
     ...sanitizeRecord(candidate.gateway),
     status: "stopped",
@@ -724,6 +784,7 @@ async function recoverStaleDiscordGateway(
     updated_at: now.toISOString(),
     next_action: "Restart Kairon runtime after verifying Discord gateway config."
   });
+  await syncRecoveryIncident(projectRoot, candidate.issue, "resolved", now);
 
   return {
     type: "gateway_starting_recovered",
@@ -1095,7 +1156,7 @@ async function readResolvedRecoveryFingerprints(projectRoot: string): Promise<Se
   const resolutions = await readRecoveryResolutions(projectRoot);
   return new Set(
     resolutions
-      .filter((resolution) => ["resolved", "acknowledged"].includes(resolution.action))
+      .filter((resolution) => resolution.action === "resolved")
       .map((resolution) => resolution.fingerprint)
   );
 }
@@ -1123,6 +1184,77 @@ function createRecoveryIssue(issue: RuntimeRecoveryIssueInput): RuntimeRecoveryI
     ...issue,
     fingerprint: recoveryFingerprint(issue)
   };
+}
+
+function isSelectedRecoveryIssue(
+  issue: RuntimeRecoveryIssue,
+  options: RuntimeRecoveryOptions
+): boolean {
+  return (
+    options.targetFingerprints === undefined ||
+    options.targetFingerprints.includes(issue.fingerprint)
+  );
+}
+
+async function syncRecoveryIncident(
+  projectRoot: string,
+  issue: RuntimeRecoveryIssue,
+  status: "open" | "resolved",
+  now: Date
+): Promise<IncidentArtifact> {
+  if (status === "resolved") {
+    const updated = await updateIncidentResource(projectRoot, {
+      kind: "recovery_target",
+      id: issue.target_id,
+      fingerprint: issue.fingerprint,
+      status,
+      now
+    });
+    if (updated !== null) {
+      return updated;
+    }
+  }
+  return attachIncidentResource(projectRoot, {
+    fingerprint: issue.fingerprint,
+    severity: issue.severity === "high" ? "high" : "warning",
+    title: `Runtime recovery: ${issue.kind}`,
+    summary: issue.reason,
+    resource: {
+      kind: "recovery_target",
+      id: issue.target_id,
+      status,
+      fingerprint: issue.fingerprint,
+      severity: issue.severity === "high" ? "high" : "warning",
+      details: {
+        issue_kind: issue.kind,
+        target_type: issue.target_type
+      }
+    },
+    now
+  });
+}
+
+async function attachRecoveryApproval(
+  projectRoot: string,
+  incident: IncidentArtifact,
+  approvalId: string,
+  status: string,
+  now: Date
+): Promise<void> {
+  await attachIncidentResource(projectRoot, {
+    fingerprint: incident.fingerprint,
+    severity: incident.severity,
+    title: incident.title,
+    summary: incident.summary,
+    resource: {
+      kind: "approval",
+      id: approvalId,
+      status,
+      artifactPath: `.kairon/approvals/${approvalId}.json`,
+      details: { approval_type: recoveryApprovalType }
+    },
+    now
+  });
 }
 
 function recoveryFingerprint(issue: RuntimeRecoveryIssueInput): string {

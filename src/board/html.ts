@@ -10,6 +10,7 @@ import type {
   BoardDiscordAuditSummary,
   BoardDiscordDecisionAuditSummary,
   BoardGitTransactionSummary,
+  BoardIncidentSummary,
   BoardOperationPriorityItem,
   BoardProjection,
   BoardQueueItemSummary,
@@ -106,6 +107,7 @@ export function renderBoardHtml(
       <a href="#operations">Operations</a>
       <a href="#runtime">Runtime</a>
       <a href="#recovery">Recovery</a>
+      <a href="#incidents">Incidents</a>
       <a href="#discord">Discord</a>
       <a href="#correlations">Correlations</a>
       <a href="#maintenance">Maintenance</a>
@@ -129,12 +131,14 @@ export function renderBoardHtml(
       ${stat("Approvals", String(projection.approvals.pending), "pending")}
       ${stat("Follow-ups", String(projection.follow_ups.pending), `running=${projection.follow_ups.running} snoozed=${projection.follow_ups.snoozed}`)}
       ${stat("Recovery", String(projection.runtime.recovery.targets), "targets")}
+      ${stat("Incidents", String(projection.incidents.active), `total=${projection.incidents.total}`)}
       ${stat("Git Push", String(projection.git.transactions_requiring_approval), `approval required | pr=${projection.git.transactions_ready_for_pr}`)}
       ${stat("Discord", projection.discord.gateway?.status ?? "unknown", `audit=${projection.discord.notifications.total}/${projection.discord.decisions.total}`)}
       ${stat("Workflows", String(projection.workflows.total), `attention=${projection.workflows.attention}`)}
       ${stat("Correlations", String(projection.correlations.total), `attention=${projection.correlations.attention}`)}
     </div>
     ${renderOperations(projection.operations.priority)}
+    ${renderIncidents(projection.incidents.recent)}
     <div class="section-group">
       ${renderRuntime(projection)}
       ${renderRecovery(projection)}
@@ -154,6 +158,42 @@ export function renderBoardHtml(
   </main>
 </body>
 </html>`;
+}
+
+function renderIncidents(incidents: BoardIncidentSummary[]): string {
+  return section(
+    "Incidents",
+    [
+      "Incident",
+      "Status",
+      "Severity",
+      "Title",
+      "Resources",
+      "Recurrence",
+      "Correlation",
+      "Timeline",
+      "Updated"
+    ],
+    incidents.map((incident) => [
+      `<a id="incident-${escapeAttribute(incident.incident_id)}" href="#incident-${escapeAttribute(incident.incident_id)}"><code>${escapeHtml(incident.incident_id)}</code></a>`,
+      text(incident.status),
+      text(incident.severity),
+      text(incident.title),
+      text(`${incident.active_resources}/${incident.resource_count} active`),
+      text(String(incident.recurrence_count)),
+      code(incident.correlation_id),
+      incident.timeline.length === 0
+        ? text(undefined)
+        : incident.timeline
+            .map(
+              (event) =>
+                `<div>${escapeHtml(event.event)}${event.resource_id === undefined ? "" : ` <code>${escapeHtml(event.resource_id)}</code>`}: ${escapeHtml(event.status)}</div>`
+            )
+            .join(""),
+      text(incident.updated_at)
+    ]),
+    "incidents"
+  );
 }
 
 function renderCorrelations(correlations: BoardCorrelationSummary[]): string {

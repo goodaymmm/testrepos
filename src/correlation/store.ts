@@ -13,7 +13,8 @@ export type CorrelationMemberKind =
   | "follow_up"
   | "workflow"
   | "release_plan"
-  | "release_result";
+  | "release_result"
+  | "incident";
 
 export type CorrelationMember = {
   kind: CorrelationMemberKind;
@@ -457,7 +458,8 @@ async function appendCorrelationAudit(
 function deriveCorrelationStatus(members: CorrelationMember[]): string {
   const approval = members.find((member) => member.kind === "approval");
   const workflow = members.find((member) => member.kind === "workflow");
-  return workflow?.status ?? approval?.status ?? "active";
+  const incident = members.find((member) => member.kind === "incident");
+  return workflow?.status ?? approval?.status ?? incident?.status ?? "active";
 }
 
 function correlationsDirectory(projectRoot: string): string {

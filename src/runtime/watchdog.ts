@@ -12,6 +12,7 @@ import {
   sanitizeSupportValue
 } from "../diagnostics/support-redaction.js";
 import { WorkQueue } from "../queue/work-queue.js";
+import { attachIncidentResource } from "../incidents/store.js";
 import { readRuntimeLockStatus } from "./runtime-lock.js";
 import {
   compareWatchdogSeverity,
@@ -219,6 +220,7 @@ export async function resolveWatchdogAlert(
       pending_notification: queueNotification("resolved", now)
     };
     await writeJsonFileAtomic(watchdogAlertPath(projectRoot, alertId), updated);
+    await syncWatchdogIncident(projectRoot, updated, now);
     await appendWatchdogAudit(projectRoot, {
       event: "alert.resolved",
       alert_id: alertId,
@@ -452,6 +454,7 @@ async function applyWatchdogFindings(
         const created = createAlert(projectRoot, projectId, alertId, finding, now);
         state.active_fingerprints[finding.fingerprint] = alertId;
         await writeJsonFileAtomic(watchdogAlertPath(projectRoot, alertId), created);
+        await syncWatchdogIncident(projectRoot, created, now);
         changedAlerts.push(created);
         counts.created += 1;
         continue;
@@ -489,6 +492,7 @@ async function applyWatchdogFindings(
               : existing.pending_notification
       };
       await writeJsonFileAtomic(watchdogAlertPath(projectRoot, existing.alert_id), updated);
+      await syncWatchdogIncident(projectRoot, updated, now);
       changedAlerts.push(updated);
       counts.updated += 1;
       counts.reopened += wasResolved ? 1 : 0;
@@ -511,6 +515,7 @@ async function applyWatchdogFindings(
         pending_notification: queueNotification("resolved", now)
       };
       await writeJsonFileAtomic(watchdogAlertPath(projectRoot, alertId), resolved);
+      await syncWatchdogIncident(projectRoot, resolved, now);
       changedAlerts.push(resolved);
       counts.resolved += 1;
     }
@@ -568,6 +573,32 @@ function createAlert(
     updated_at: now.toISOString(),
     pending_notification: queueNotification("open", now)
   };
+}
+
+async function syncWatchdogIncident(
+  projectRoot: string,
+  alert: WatchdogAlert,
+  now: Date
+): Promise<void> {
+  await attachIncidentResource(projectRoot, {
+    fingerprint: alert.fingerprint,
+    severity: alert.severity,
+    title: alert.title,
+    summary: alert.summary,
+    resource: {
+      kind: "watchdog_alert",
+      id: alert.alert_id,
+      status: alert.status,
+      artifactPath: `.kairon/watchdog/alerts/${alert.alert_id}.json`,
+      fingerprint: alert.fingerprint,
+      severity: alert.severity,
+      details: {
+        rule: alert.rule,
+        resource: alert.resource
+      }
+    },
+    now
+  });
 }
 
 function sanitizeEvidence(

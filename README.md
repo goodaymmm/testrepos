@@ -26,6 +26,7 @@ Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Age
 - approval queue CLI
 - runtime loop、Windows Task Scheduler daemon、24時間certification、runtime recovery
 - runtime watchdog、deduplicated alert、cooldown付きDiscord通知
+- incident lifecycle、correlated timeline、approval-gated assisted recovery
 - daily report、agent handoff、retention、cleanup proposal / apply / archive
 - state integrity、snapshot / restore、event compaction、deterministic backup / rehearsal
 - read-only Board projection、loopback / remote-readonly server、short-lived access token
@@ -39,7 +40,6 @@ Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Age
 
 Local Beta後の主な開発範囲:
 
-- incident lifecycle
 - workflow branch / join / compensationとdurable checkpoint store
 - session context budget、capability / MCP trust policy、hybrid local RAG
 - multi-project read-only supervisorと固定remote profile
@@ -101,6 +101,7 @@ node C:\Users\hikar\Documents\AutoRunner\dist\cli\main.js init
   sessions/
   runtime/
   watchdog/
+  incidents/
   reports/
   recovery/
   rag/
@@ -324,7 +325,21 @@ kairon recovery resolve <target-id-or-fingerprint> --reason "手動確認済み"
 kairon recovery acknowledge <target-id-or-fingerprint> --reason "手動復旧する"
 ```
 
-stale lock、expired claim、partial outbox、Discord gateway mid-state、Git transaction mid-stateを検出します。安全に再queue可能なものだけ自動処理し、ambiguousなものはapprovalへ回します。resolve / acknowledgeはfingerprint単位で記録され、同じtargetを未解決として残し続けないために使います。
+stale lock、expired claim、partial outbox、Discord gateway mid-state、Git transaction mid-stateを検出します。安全に再queue可能なものだけ自動処理し、ambiguousなものはapprovalへ回します。`resolve`はfingerprint単位で復旧済みとして記録します。`acknowledge`はoperatorが確認した事実だけを記録し、targetを解決済みにせず次回検査にも残します。
+
+### Incident lifecycle
+
+```powershell
+kairon incident list
+kairon incident show INC-0001
+kairon incident acknowledge INC-0001 --reason "確認して対応を開始"
+kairon incident bundle INC-0001 --dry-run
+kairon incident recover INC-0001 --dry-run
+kairon incident recover INC-0001 --approval-id APR-0001 --confirm IRP-INC-0001-0123456789ab
+kairon incident resolve INC-0001 --reason "原因解消と復旧検証を確認"
+```
+
+Watchdog alertとruntime recovery targetをdeterministic fingerprintで同じIncidentへ集約し、元artifactへの参照とappend-only timelineを保持します。acknowledgeだけではactive conditionを解決せず、resolveはalert、recovery target、failed verificationが残る間は拒否されます。復旧はdry-run plan、専用approval、期限内のexact confirmation、target freshness再検証を必須とします。詳細は [docs/incident-lifecycle-v0.md](docs/incident-lifecycle-v0.md) を参照してください。
 
 ### State integrity / Backup
 

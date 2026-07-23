@@ -20,6 +20,12 @@ import { readJsonLines } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import { type QueueItem, WorkQueue } from "../queue/work-queue.js";
 import { getRuntimeStatus, type RuntimeStatus } from "../runtime/status.js";
+import {
+  listIncidents,
+  readIncidentTimeline,
+  type IncidentArtifact,
+  type IncidentTimelineEvent
+} from "../incidents/store.js";
 import type { TaskRecord } from "../tasks/task-runner.js";
 import type {
   WorkflowControlEvent,
@@ -103,6 +109,12 @@ export type BoardProjection = {
     orphan_follow_ups: number;
     recent: BoardCorrelationSummary[];
   };
+  incidents: {
+    total: number;
+    active: number;
+    by_status: Record<string, number>;
+    recent: BoardIncidentSummary[];
+  };
 };
 
 export type BoardProjectionOptions = {
@@ -132,6 +144,7 @@ export type BoardOperationsSummary = {
   failed_runs: number;
   setup_required_runs: number;
   recovery_targets: number;
+  active_incidents: number;
   git_transactions_requiring_approval: number;
   workflow_attention: number;
   attention_total: number;
@@ -144,6 +157,7 @@ export type BoardOperationPriorityItem = {
     | "follow_up"
     | "run"
     | "recovery"
+    | "incident"
     | "git_transaction"
     | "workflow";
   id: string;
@@ -172,6 +186,28 @@ export type BoardQueueItemSummary = {
     tags: string[];
     expires_at: string;
   };
+};
+
+export type BoardIncidentSummary = {
+  incident_id: string;
+  status: IncidentArtifact["status"];
+  severity: IncidentArtifact["severity"];
+  title: string;
+  summary: string;
+  correlation_id: string;
+  resource_count: number;
+  active_resources: number;
+  recurrence_count: number;
+  updated_at: string;
+  timeline: Array<
+    Pick<
+      IncidentTimelineEvent,
+      "event" | "status" | "severity" | "reason" | "created_at"
+    > & {
+      resource_kind?: string;
+      resource_id?: string;
+    }
+  >;
 };
 
 export type BoardTaskSummary = {
@@ -575,7 +611,8 @@ export async function createBoardProjection(
     gitTransactions,
     cleanupProposals,
     dailyReports,
-    discordAudits
+    discordAudits,
+    incidents
   ] = await Promise.all([
       getRuntimeStatus(projectRoot),
       new WorkQueue(projectRoot).list(),
@@ -589,8 +626,20 @@ export async function createBoardProjection(
       readGitTransactions(projectRoot),
       readCleanupProposals(projectRoot),
       readDailyReports(projectRoot),
-      readDiscordAudits(projectRoot)
+      readDiscordAudits(projectRoot),
+      listIncidents(projectRoot)
     ]);
+  const incidentSummaries = await Promise.all(
+    incidents
+      .sort(compareByUpdatedDesc)
+      .slice(0, recentLimit)
+      .map(async (incident) =>
+        summarizeIncident(
+          incident,
+          await readIncidentTimeline(projectRoot, incident.incident_id)
+        )
+      )
+  );
   const correlations = await listCorrelations(projectRoot);
   const correlationIntegrity = await inspectCorrelationIntegrity(projectRoot);
   const runSummaries = runs.sort(compareRunSummariesDesc);
@@ -631,6 +680,7 @@ export async function createBoardProjection(
       followUps: followUpSummaries,
       runs: runSummaries,
       recoveryTargets: runtime.recovery.targets,
+      incidents: incidentSummaries,
       gitTransactions: gitTransactionSummaries,
       workflows: workflowSummaries,
       recentLimit
@@ -719,6 +769,12 @@ export async function createBoardProjection(
       stale_messages: correlationIntegrity.stale_messages,
       orphan_follow_ups: correlationIntegrity.orphan_follow_ups,
       recent: correlations.slice(0, recentLimit).map(summarizeCorrelation)
+    },
+    incidents: {
+      total: incidents.length,
+      active: incidents.filter((incident) => incident.status !== "resolved").length,
+      by_status: countBy(incidents, (incident) => incident.status),
+      recent: incidentSummaries
     }
   };
   const sanitized = sanitizeBoardProjection(candidate);
@@ -750,6 +806,43 @@ function summarizeCorrelation(artifact: CorrelationArtifact): BoardCorrelationSu
       created_at: event.created_at
     })),
     updated_at: artifact.updated_at
+  };
+}
+
+function summarizeIncident(
+  incident: IncidentArtifact,
+  timeline: IncidentTimelineEvent[]
+): BoardIncidentSummary {
+  return {
+    incident_id: incident.incident_id,
+    status: incident.status,
+    severity: incident.severity,
+    title: sanitizeInline(incident.title),
+    summary: sanitizeInline(incident.summary),
+    correlation_id: incident.correlation_id,
+    resource_count: incident.resources.length,
+    active_resources: incident.resources.filter(
+      (resource) =>
+        (resource.kind === "watchdog_alert" ||
+          resource.kind === "recovery_target") &&
+        !["resolved", "completed", "passed"].includes(resource.status)
+    ).length,
+    recurrence_count: incident.recurrence_count,
+    updated_at: incident.updated_at,
+    timeline: timeline.slice(-10).map((event) =>
+      compact({
+        event: event.event,
+        status: event.status,
+        severity: event.severity,
+        reason:
+          event.reason === undefined
+            ? undefined
+            : sanitizeInline(event.reason),
+        resource_kind: event.resource?.kind,
+        resource_id: event.resource?.id,
+        created_at: event.created_at
+      })
+    )
   };
 }
 
@@ -1384,6 +1477,7 @@ function summarizeOperations(input: {
   followUps: BoardApprovalFollowUpSummary[];
   runs: BoardRunSummary[];
   recoveryTargets: number;
+  incidents: BoardIncidentSummary[];
   gitTransactions: BoardGitTransactionSummary[];
   workflows: BoardWorkflowSummary[];
   recentLimit: number;
@@ -1402,6 +1496,9 @@ function summarizeOperations(input: {
     (transaction) => transaction.status === "approval_required"
   );
   const workflowAttention = input.workflows.filter(isWorkflowAttention);
+  const activeIncidents = input.incidents.filter(
+    (incident) => incident.status !== "resolved"
+  );
   const priority: BoardOperationPriorityItem[] = [
     ...pendingApprovals.map((approval) =>
       compact({
@@ -1469,6 +1566,20 @@ function summarizeOperations(input: {
         detail: workflow.blocker ?? workflow.last_event?.action
       })
     ),
+    ...activeIncidents.map((incident) =>
+      compact({
+        kind: "incident" as const,
+        id: incident.incident_id,
+        label: incident.title,
+        status: incident.status,
+        severity:
+          incident.severity === "critical" || incident.severity === "high"
+            ? ("high" as const)
+            : ("medium" as const),
+        anchor: `#incident-${incident.incident_id}`,
+        detail: `${incident.active_resources} active resources`
+      })
+    ),
     ...(input.recoveryTargets > 0
       ? [
           {
@@ -1490,6 +1601,7 @@ function summarizeOperations(input: {
     failed_runs: failedRuns.length,
     setup_required_runs: setupRequiredRuns.length,
     recovery_targets: input.recoveryTargets,
+    active_incidents: activeIncidents.length,
     git_transactions_requiring_approval: approvalRequiredTransactions.length,
     workflow_attention: workflowAttention.length,
     attention_total:
@@ -1498,6 +1610,7 @@ function summarizeOperations(input: {
       failedRuns.length +
       setupRequiredRuns.length +
       input.recoveryTargets +
+      activeIncidents.length +
       approvalRequiredTransactions.length +
       workflowAttention.length,
     priority: priority.slice(0, input.recentLimit)
