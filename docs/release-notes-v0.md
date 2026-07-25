@@ -5,6 +5,7 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 
 ## Unreleased
 
+- T175: T160-T174のfresh evidenceを14 gateへ集約し、external setup、checksum、鮮度、source commit、重大incident、secret findingを検証するRelease Candidate readiness gateとcanonical JSON / Markdown reportを追加。
 - T174: Discord HTTP Interactionsとremote read-only Boardを固定HTTPS host・trusted proxy・allowed origin・identity headerで統合するstable remote operations profile、remote CLI、readiness / URL drift診断、Watchdog rule、secret-free Board deep linkを追加。
 - T173: user-local multi-project registry、atomic lock、project移動・欠落・破損診断、read-only supervisor、runtime縮約summary、Board / Discord HTTP port・external URL衝突検出、provider limit集計、`projects` CLIを追加。
 - T172: local-only vector provider、incremental embedding cache、confirmed vector build、lexical/vector/hybrid retriever、drift検出、expected/forbidden sourceによるRAG quality gateを追加。

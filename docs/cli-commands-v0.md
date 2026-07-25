@@ -95,6 +95,9 @@ kairon update rollback --to <version> --confirm <version> [--dry-run]
 kairon readiness manifest --evidence <GATE_ID=path>
 kairon readiness check [--manifest <path>]
 kairon readiness report [--format json|markdown] [--output <path>]
+kairon readiness rc manifest --evidence <RC_GATE_ID=path>
+kairon readiness rc check [--manifest <path>]
+kairon readiness rc report [--format json|markdown] [--output <path>]
 kairon workflow config show
 kairon workflow config propose --enable|--disable
 kairon workflow validate <definition-file>
@@ -1125,6 +1128,26 @@ kairon readiness report --format markdown --output .kairon\reports\readiness\lat
 `check`と`report`は証跡を再読込し、checksum、size、status、source commit、有効期限を再検証する。必須gateがすべて`PASS`の場合だけexit code 0となる。外部credentialやlive環境がない場合は`SETUP_REQUIRED`、期限切れ・別commit・改変・解析不能は`UNKNOWN`であり、自動的に`PASS`へ昇格しない。
 
 reportはraw token、環境変数値、Discord payload、GitHub response bodyを含めない。出力前後にsecret scanを行い、redactionが必要だった場合は`SECRET_ARTIFACT_INTEGRITY=UNPASSED`とする。
+
+Release Candidate判定は`readiness rc`配下で実行する。
+
+```powershell
+kairon readiness rc manifest `
+  --evidence BASELINE_DOCS=.\operation-test-results\t160.json `
+  --evidence RELEASE_ARTIFACT=.\operation-test-results\t161-release-verify.json `
+  --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\full-test.json `
+  --evidence SECURITY_INTEGRITY=.\operation-test-results\secret-scan.json
+
+kairon readiness rc check
+kairon readiness rc report --format markdown
+```
+
+RC manifestは`.kairon/readiness/rc-evidence-manifest.json`、canonical resultは
+`.kairon/readiness/rc-result.json`、Markdown operator viewは
+`.kairon/readiness/rc-report.md`へ保存する。14 gateは`required`、
+`external_required`、`optional`へ分類され、必須gate全件が`PASS`かつglobal blockerが
+0件の場合だけ`rc_ready=true`となる。外部環境未準備、stale / tampered / wrong commit
+evidence、未解決のhigh / critical incident、secret findingは自動overrideしない。
 
 ## kairon workflow
 

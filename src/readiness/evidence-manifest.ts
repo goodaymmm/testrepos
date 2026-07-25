@@ -66,6 +66,17 @@ export type CreateReadinessEvidenceManifestOptions = {
   commandRunner?: CommandRunner;
 };
 
+export type ReadinessEvidenceInspection = {
+  artifact_kind: string;
+  detected_status: ReadinessStatus;
+  source_commit: string;
+  executed_at: string;
+  expires_at: string;
+  sha256: string;
+  size_bytes: number;
+  summary?: string;
+};
+
 export const readinessGateDefinitions: readonly ReadinessGateDefinition[] = [
   gate("BUILD_UNIT_INTEGRATION", "Build / unit / integration tests", true, false, 24, "operation test summary"),
   gate("CONFIG_MIGRATION_DOCTOR", "Configuration migration and doctor", true, false, 24, "doctor or migration result"),
@@ -113,21 +124,18 @@ export async function createReadinessEvidenceManifest(
       throw new Error(`Readiness evidence must be a file: ${evidencePath}`);
     }
 
-    const text = content.toString("utf8");
-    const parsed = parseArtifact(text);
-    const executedAt = inferExecutedAt(parsed, fileStats.mtime, now);
-    const entryCommit = inferSourceCommit(parsed) ?? sourceCommit;
+    const inspection = inspectReadinessEvidence({
+      content,
+      absolutePath,
+      modifiedAt: fileStats.mtime,
+      now,
+      fallbackCommit: sourceCommit,
+      freshnessMs: definition.freshness_ms
+    });
     entries.push({
       gate_id: gateId,
       path: toProjectPath(projectRoot, absolutePath),
-      artifact_kind: inferArtifactKind(parsed, absolutePath),
-      detected_status: detectReadinessEvidenceStatus(text),
-      source_commit: entryCommit,
-      executed_at: executedAt.toISOString(),
-      expires_at: new Date(executedAt.getTime() + definition.freshness_ms).toISOString(),
-      sha256: sha256(content),
-      size_bytes: content.byteLength,
-      summary: inferSafeSummary(parsed)
+      ...inspection
     });
   }
 
@@ -217,6 +225,29 @@ export function detectReadinessEvidenceStatus(text: string): ReadinessStatus {
     return "PASS";
   }
   return "UNKNOWN";
+}
+
+export function inspectReadinessEvidence(input: {
+  content: Buffer;
+  absolutePath: string;
+  modifiedAt: Date;
+  now: Date;
+  fallbackCommit: string;
+  freshnessMs: number;
+}): ReadinessEvidenceInspection {
+  const text = input.content.toString("utf8");
+  const parsed = parseArtifact(text);
+  const executedAt = inferExecutedAt(parsed, input.modifiedAt, input.now);
+  return {
+    artifact_kind: inferArtifactKind(parsed, input.absolutePath),
+    detected_status: detectReadinessEvidenceStatus(text),
+    source_commit: inferSourceCommit(parsed) ?? input.fallbackCommit,
+    executed_at: executedAt.toISOString(),
+    expires_at: new Date(executedAt.getTime() + input.freshnessMs).toISOString(),
+    sha256: sha256(input.content),
+    size_bytes: input.content.byteLength,
+    summary: inferSafeSummary(parsed)
+  };
 }
 
 export function parseReadinessGateId(value: string): ReadinessGateId {
@@ -361,7 +392,21 @@ function normalizeStatus(value: unknown): ReadinessStatus | undefined {
     return undefined;
   }
   const status = value.trim().replace(/[ -]+/g, "_").toUpperCase();
-  if (["PASS", "PASSED", "COMPLETED", "APPROVED", "READY", "STOPPED"].includes(status)) {
+  if ([
+    "PASS",
+    "PASSED",
+    "COMPLETED",
+    "APPROVED",
+    "READY",
+    "STOPPED",
+    "VERIFIED",
+    "PUBLISHED",
+    "APPLIED",
+    "EXECUTED",
+    "HEALTHY",
+    "RESOLVED",
+    "ENFORCED"
+  ].includes(status)) {
     return "PASS";
   }
   if (["UNPASSED", "FAIL", "FAILED", "ERROR", "FATAL_ERROR", "BLOCKED", "CHANGES_REQUESTED"].includes(status)) {

@@ -94,11 +94,28 @@ describe("PR and release documentation", () => {
     expect(checklist).toContain("npm run build");
     expect(checklist).toContain("npm test");
     expect(checklist).toContain("kairon release validate");
+    expect(checklist).toContain("kairon readiness rc check");
+    expect(checklist).toContain("rc_ready=true");
+    expect(checklist).toContain("external_required");
     expect(notes).toContain("<!-- kairon:release-notes-unreleased -->");
     expect(notes).toContain("<!-- kairon:versioning-policy -->");
     expect(notes).toContain("kairon release validate");
     expect(prChecklist).toContain("docs/release-checklist-v0.md");
     expect(prChecklist).toContain("docs/release-notes-v0.md");
+  });
+
+  it("documents the Release Candidate readiness command and artifacts", async () => {
+    const commands = await readUtf8("docs/cli-commands-v0.md");
+    const checklist = await readUtf8("docs/release-checklist-v0.md");
+
+    for (const command of ["manifest", "check", "report"]) {
+      expect(commands).toContain(`kairon readiness rc ${command}`);
+      expect(checklist).toContain(`kairon readiness rc ${command}`);
+    }
+    expect(commands).toContain("rc-evidence-manifest.json");
+    expect(commands).toContain("rc-result.json");
+    expect(commands).toContain("rc-report.md");
+    expect(commands).toContain("high / critical incident");
   });
 
   it("documents Discord HTTP Interactions signature verification", async () => {

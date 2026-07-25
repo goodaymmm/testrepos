@@ -27,6 +27,22 @@ describe("Beta readiness gate", () => {
     }))).toBe("UNPASSED");
   });
 
+  it("recognizes successful lifecycle artifact statuses", () => {
+    for (const status of [
+      "verified",
+      "published",
+      "applied",
+      "executed",
+      "healthy",
+      "resolved",
+      "enforced"
+    ]) {
+      expect(detectReadinessEvidenceStatus(JSON.stringify({ status }))).toBe(
+        "PASS"
+      );
+    }
+  });
+
   it("passes only when every required gate has current verified PASS evidence", async () => {
     const root = await createCompleteManifest();
     const report = await evaluateBetaReadiness(root, {
