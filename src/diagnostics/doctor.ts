@@ -37,6 +37,7 @@ import {
 import { resolveWorkflowRuntimeConfig } from "../workflow/config.js";
 import { inspectWorkflowCheckpointStore } from "../workflow/checkpoint-manager.js";
 import { inspectCapabilityPolicyConfig } from "../policy/trust-policy.js";
+import { inspectRegisteredProject } from "../projects/registry.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -199,6 +200,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkGitRepository(options.projectRoot));
   checks.push(await checkGitignore(options.projectRoot));
   checks.push(await checkConfigValidation(options.projectRoot));
+  checks.push(await checkProjectsRegistry(options.projectRoot, env));
   checks.push(await checkWorkflowRuntimeConfig(options.projectRoot, env));
   checks.push(await checkAgentConfig(options.projectRoot));
   checks.push(await checkCapabilityTrustPolicy(options.projectRoot));
@@ -353,6 +355,51 @@ async function checkConfigValidation(projectRoot: string): Promise<DoctorCheck> 
       "Run kairon init or restore missing config files."
     );
   }
+}
+
+async function checkProjectsRegistry(
+  projectRoot: string,
+  env: NodeJS.ProcessEnv
+): Promise<DoctorCheck> {
+  let inspection: Awaited<ReturnType<typeof inspectRegisteredProject>>;
+  try {
+    inspection = await inspectRegisteredProject(projectRoot, { env });
+  } catch {
+    return warning(
+      "projects.registry",
+      "Multi-project registry",
+      ["status=unavailable"],
+      "Run kairon projects doctor after fixing the current project config or registry permissions."
+    );
+  }
+  const details = [
+    `status=${inspection.status}`,
+    `registry_path=${inspection.registry_path}`,
+    `project_id=${inspection.project_id ?? "unavailable"}`
+  ];
+
+  if (
+    inspection.status === "not_configured" ||
+    inspection.status === "registered"
+  ) {
+    return pass("projects.registry", "Multi-project registry", details);
+  }
+
+  if (inspection.status === "corrupt") {
+    return warning(
+      "projects.registry",
+      "Multi-project registry",
+      details,
+      "Repair or move the corrupt user-local projects.json before registering projects."
+    );
+  }
+
+  return warning(
+    "projects.registry",
+    "Multi-project registry",
+    details,
+    `Run kairon projects register "${projectRoot}" to add this project.`
+  );
 }
 
 async function checkWorkflowRuntimeConfig(

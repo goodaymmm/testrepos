@@ -8,7 +8,11 @@ import {
   acquireRuntimeLock,
   refreshRuntimeHeartbeat
 } from "../src/runtime/runtime-lock.js";
-import { formatRuntimeStatus, getRuntimeStatus } from "../src/runtime/status.js";
+import {
+  formatRuntimeStatus,
+  getRuntimeStatus,
+  summarizeRuntimeStatus
+} from "../src/runtime/status.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("runtime status", () => {
@@ -145,6 +149,16 @@ describe("runtime status", () => {
     );
 
     const status = await getRuntimeStatus(root);
+    expect(summarizeRuntimeStatus(status)).toMatchObject({
+      locked: true,
+      stale: true,
+      queue: {
+        ready: 1,
+        claimed: 0,
+        failed: 0
+      },
+      pending_approvals: 1
+    });
     expect(status.runtimeLock.locked).toBe(true);
     expect(status.runtimeLock.mode).toBe("daemon");
     expect(status.runtimeLock.heartbeat_at).toBe("2026-05-26T00:00:10.000Z");

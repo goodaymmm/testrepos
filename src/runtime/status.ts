@@ -94,6 +94,16 @@ export type RuntimeStatus = {
   };
 };
 
+export type RuntimeStatusSummary = {
+  locked: boolean;
+  stale: boolean;
+  mode?: string;
+  queue: RuntimeStatus["queue"];
+  pending_approvals: number;
+  watchdog_open: number;
+  daemon_status?: NonNullable<RuntimeStatus["daemonHealth"]>["status"];
+};
+
 export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStatus> {
   const [
     schedule,
@@ -157,6 +167,20 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     discordGateway,
     watchdog,
     artifacts
+  };
+}
+
+export function summarizeRuntimeStatus(
+  status: RuntimeStatus
+): RuntimeStatusSummary {
+  return {
+    locked: status.runtimeLock.locked,
+    stale: status.runtimeLock.stale ?? false,
+    mode: status.runtimeLock.mode,
+    queue: { ...status.queue },
+    pending_approvals: status.approvals.pending,
+    watchdog_open: status.watchdog.open,
+    daemon_status: status.daemonHealth?.status
   };
 }
 

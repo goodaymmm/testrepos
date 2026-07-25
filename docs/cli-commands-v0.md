@@ -10,6 +10,11 @@
 kairon init
 kairon migrate
 kairon doctor
+kairon projects register <root> [--format text|json]
+kairon projects unregister <project-id> [--format text|json]
+kairon projects list [--format text|json]
+kairon projects show <project-id> [--format text|json]
+kairon projects doctor [--format text|json]
 kairon support bundle [--dry-run] [--output <directory>]
 kairon support verify <bundle.zip>
 kairon agent smoke --agent codex|claude|gemini
@@ -124,6 +129,32 @@ generate .kairon/rules
 run doctor checks
 create sample task if requested
 ```
+
+## kairon projects
+
+複数のdocked projectをuser-local registryへ登録し、project stateを書き換えずに一覧・診断する。
+
+```text
+kairon projects register <root> [--format text|json]
+kairon projects unregister <project-id> [--format text|json]
+kairon projects list [--format text|json]
+kairon projects show <project-id> [--format text|json]
+kairon projects doctor [--format text|json]
+```
+
+registry pathは次の優先順で解決する。
+
+1. `KAIRON_PROJECTS_REGISTRY_PATH`
+2. `KAIRON_USER_DATA_DIR/projects.json`
+3. Windows: `%LOCALAPPDATA%/Kairon/projects.json`
+4. `XDG_STATE_HOME/kairon/projects.json`
+5. `~/.kairon/projects.json`
+
+`register`は`.kairon/config/project.json`、project ID、rootを検証し、同じrootはidempotentに更新する。同じIDの既存rootが存在する場合は拒否し、既存rootが消失済みの場合だけ移動として再登録する。registry更新はadjacent lockとatomic renameを使い、破損registryを自動上書きしない。
+
+`projects doctor`はproject config validation、runtime縮約summary、Board / Discord HTTP runtime endpoint、provider policy上限を順次readする。portとexternal URLを複数projectで比較し、衝突をwarningとして出す。診断結果はregistryの`last_doctor_summary`へ保存するが、各projectの`.kairon/`へは書かない。aggregate provider limitは表示だけで、自動配分やAgent切替は行わない。
+
+registryにtoken、cookie、approval detail、task本文、raw environment、source、stdout / stderrを保存しない。Board URLはuserinfo、query、fragmentを除去してから保存する。
 
 ## kairon migrate
 

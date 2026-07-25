@@ -1,4 +1,5 @@
 import path from "node:path";
+import os from "node:os";
 
 export type KaironPaths = {
   root: string;
@@ -68,4 +69,33 @@ export function getKaironPaths(projectRoot: string): KaironPaths {
 
 export function getConfigPath(projectRoot: string, fileName: string): string {
   return resolveInside(getKaironPaths(projectRoot).configDir, fileName);
+}
+
+export function getProjectsRegistryPath(
+  env: NodeJS.ProcessEnv = process.env,
+  homeDirectory = os.homedir()
+): string {
+  const explicitPath = env.KAIRON_PROJECTS_REGISTRY_PATH?.trim();
+  if (explicitPath) {
+    return path.resolve(explicitPath);
+  }
+
+  const explicitDirectory = env.KAIRON_USER_DATA_DIR?.trim();
+  if (explicitDirectory) {
+    return path.resolve(explicitDirectory, "projects.json");
+  }
+
+  if (process.platform === "win32") {
+    const localAppData = env.LOCALAPPDATA?.trim();
+    if (localAppData) {
+      return path.resolve(localAppData, "Kairon", "projects.json");
+    }
+  }
+
+  const xdgStateHome = env.XDG_STATE_HOME?.trim();
+  if (xdgStateHome) {
+    return path.resolve(xdgStateHome, "kairon", "projects.json");
+  }
+
+  return path.resolve(homeDirectory, ".kairon", "projects.json");
 }
