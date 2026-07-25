@@ -34,6 +34,10 @@ import {
   evaluateBetaReadiness,
   readinessManifestExists
 } from "../readiness/beta-readiness.js";
+import {
+  evaluateRcReadiness,
+  rcReadinessManifestExists
+} from "../readiness/rc-readiness.js";
 import { resolveWorkflowRuntimeConfig } from "../workflow/config.js";
 import { inspectWorkflowCheckpointStore } from "../workflow/checkpoint-manager.js";
 import { inspectCapabilityPolicyConfig } from "../policy/trust-policy.js";
@@ -235,6 +239,9 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkRagStatus(options.projectRoot));
   if (await readinessManifestExists(options.projectRoot)) {
     checks.push(await checkBetaReadiness(options.projectRoot));
+  }
+  if (await rcReadinessManifestExists(options.projectRoot)) {
+    checks.push(await checkRcReadiness(options.projectRoot));
   }
 
   const sanitizedChecks = checks.map(sanitizeDoctorCheck);
@@ -1927,6 +1934,41 @@ async function checkBetaReadiness(projectRoot: string): Promise<DoctorCheck> {
       title,
       ["status=UNKNOWN", "ready=false"],
       "Repair the readiness manifest and run kairon readiness check."
+    );
+  }
+}
+
+async function checkRcReadiness(projectRoot: string): Promise<DoctorCheck> {
+  const id = "readiness.rc";
+  const title = "Release Candidate readiness gate";
+  try {
+    const result = await evaluateRcReadiness(projectRoot);
+    const details = [
+      `status=${result.status}`,
+      `rc_ready=${result.rc_ready}`,
+      `manifest_status=${result.manifest.status}`,
+      `pass=${result.counts.PASS}`,
+      `unpassed=${result.counts.UNPASSED}`,
+      `setup_required=${result.counts.SETUP_REQUIRED}`,
+      `unknown=${result.counts.UNKNOWN}`,
+      `blockers=${result.blockers.length}`,
+      `unresolved_high_incidents=${result.incidents.unresolved_high}`,
+      `unresolved_critical_incidents=${result.incidents.unresolved_critical}`
+    ];
+    return result.rc_ready
+      ? pass(id, title, details)
+      : warning(
+          id,
+          title,
+          details,
+          "Refresh RC evidence and run kairon readiness rc check."
+        );
+  } catch {
+    return warning(
+      id,
+      title,
+      ["status=UNKNOWN", "rc_ready=false"],
+      "Repair the RC readiness manifest and run kairon readiness rc check."
     );
   }
 }

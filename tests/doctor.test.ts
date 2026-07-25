@@ -917,6 +917,35 @@ describe("runDoctor", () => {
     );
   });
 
+  it("reports an existing invalid RC readiness manifest as a warning", async () => {
+    const root = await createInitializedGitProject();
+    const readinessDir = path.join(root, ".kairon", "readiness");
+    await mkdir(readinessDir, { recursive: true });
+    await writeFile(
+      path.join(readinessDir, "rc-evidence-manifest.json"),
+      "{ invalid",
+      "utf8"
+    );
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+
+    expect(statusById(result, "readiness.rc")).toBe("warning");
+    expect(checkById(result, "readiness.rc")?.details).toEqual(
+      expect.arrayContaining([
+        "status=UNPASSED",
+        "rc_ready=false",
+        "manifest_status=invalid"
+      ])
+    );
+    expect(checkById(result, "readiness.rc")?.next_action).toContain(
+      "kairon readiness rc check"
+    );
+  });
+
   it("reports remote Board readiness without exposing access tokens", async () => {
     const root = await createInitializedGitProject();
     const notificationsPath = path.join(

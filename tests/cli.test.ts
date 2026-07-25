@@ -787,17 +787,19 @@ describe("createProgram", () => {
     ).toEqual(expect.arrayContaining(["--approval-id", "--confirm", "--token-env"]));
   });
 
-  it("registers Beta readiness manifest, check, and report commands", () => {
+  it("registers Beta and Release Candidate readiness commands", () => {
     const readiness = createProgram().commands.find(
       (command) => command.name() === "readiness"
     );
     const manifest = readiness?.commands.find((command) => command.name() === "manifest");
     const check = readiness?.commands.find((command) => command.name() === "check");
     const report = readiness?.commands.find((command) => command.name() === "report");
+    const rc = readiness?.commands.find((command) => command.name() === "rc");
 
     expect(readiness?.commands.map((command) => command.name()).sort()).toEqual([
       "check",
       "manifest",
+      "rc",
       "report"
     ]);
     expect(manifest?.options.map((option) => option.long)).toEqual(
@@ -807,6 +809,26 @@ describe("createProgram", () => {
     expect(report?.options.map((option) => option.long)).toEqual(
       expect.arrayContaining(["--manifest", "--format", "--output"])
     );
+    expect(rc?.commands.map((command) => command.name()).sort()).toEqual([
+      "check",
+      "manifest",
+      "report"
+    ]);
+    expect(
+      rc?.commands
+        .find((command) => command.name() === "manifest")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--evidence", "--output"]));
+    expect(
+      rc?.commands
+        .find((command) => command.name() === "check")
+        ?.options.map((option) => option.long)
+    ).toContain("--manifest");
+    expect(
+      rc?.commands
+        .find((command) => command.name() === "report")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--manifest", "--format", "--output"]));
   });
 
   it("registers verified update channel and lifecycle commands", () => {

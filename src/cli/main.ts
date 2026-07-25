@@ -95,6 +95,9 @@ import {
   verifyRagIndexCommand
 } from "./commands/rag.js";
 import {
+  rcReadinessCheckCommand,
+  rcReadinessManifestCommand,
+  rcReadinessReportCommand,
   readinessCheckCommand,
   readinessManifestCommand,
   readinessReportCommand
@@ -1666,6 +1669,54 @@ export function createProgram(): Command {
       output?: string;
     }) => {
       const result = await readinessReportCommand(process.cwd(), options);
+      console.log(result.text);
+      if (!result.ready) {
+        process.exitCode = 1;
+      }
+    });
+
+  const rcReadiness = readiness
+    .command("rc")
+    .description("Create evidence manifests and evaluate Release Candidate readiness.");
+
+  rcReadiness
+    .command("manifest")
+    .description("Create a checksummed RC readiness evidence manifest.")
+    .requiredOption(
+      "--evidence <gate=path>",
+      "Evidence mapping in RC_GATE_ID=path form. Repeatable.",
+      collectOption,
+      []
+    )
+    .option("--output <path>", "RC manifest output path.")
+    .action(async (options: { evidence?: string[]; output?: string }) => {
+      console.log(await rcReadinessManifestCommand(process.cwd(), options));
+    });
+
+  rcReadiness
+    .command("check")
+    .description("Evaluate RC gates and write the canonical JSON result.")
+    .option("--manifest <path>", "RC readiness evidence manifest path.")
+    .action(async (options: { manifest?: string }) => {
+      const result = await rcReadinessCheckCommand(process.cwd(), options);
+      console.log(result.text);
+      if (!result.ready) {
+        process.exitCode = 1;
+      }
+    });
+
+  rcReadiness
+    .command("report")
+    .description("Evaluate RC gates and write a JSON or Markdown report.")
+    .option("--manifest <path>", "RC readiness evidence manifest path.")
+    .option("--format <format>", "Output format: json or markdown.", "markdown")
+    .option("--output <path>", "RC report output path.")
+    .action(async (options: {
+      manifest?: string;
+      format?: string;
+      output?: string;
+    }) => {
+      const result = await rcReadinessReportCommand(process.cwd(), options);
       console.log(result.text);
       if (!result.ready) {
         process.exitCode = 1;

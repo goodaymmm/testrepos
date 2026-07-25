@@ -70,6 +70,33 @@ kairon readiness report --format markdown
 
 Beta配布の機械判定では、すべての必須gateが`PASS`の場合だけreadyです。`SETUP_REQUIRED`、`UNKNOWN`、`UNPASSED`はexit code 1となります。manifest作成後に証跡を変更した場合、証跡が期限切れの場合、またはsource commitが現在の`HEAD`と異なる場合は証跡を再生成します。
 
+## Release Candidate Readiness Gate
+
+T160-T174の証跡をRC gateへ登録し、現在commitに対する配布・更新・復旧・
+workflow・Agent・RAG・複数project・stable remoteの成立を確認します。
+
+```powershell
+kairon readiness rc manifest `
+  --evidence BASELINE_DOCS=.\operation-test-results\t160.json `
+  --evidence RELEASE_ARTIFACT=.\operation-test-results\t161-release-verify.json `
+  --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\full-test.json `
+  --evidence SECURITY_INTEGRITY=.\operation-test-results\secret-scan.json
+
+kairon readiness rc check
+kairon readiness rc report --format json
+kairon readiness rc report --format markdown
+```
+
+- canonical resultは`.kairon/readiness/rc-result.json`、operator viewは
+  `.kairon/readiness/rc-report.md`へ出力する。
+- `required`と`external_required`の全gateが`PASS`で、global blockerが0件の場合だけ
+  `rc_ready=true`になる。
+- GitHub配布、clean Windows update / rollback、hybrid RAG、stable remoteは
+  `external_required`であり、環境未準備の`SETUP_REQUIRED`を`PASS`へ昇格しない。
+- stale、改変、別commit、許可されないartifact kindを持つ証跡は再実行する。
+- 未解決の`high` / `critical` incident、secret finding、source SHA mismatchが
+  1件でもあればRC判定をblockする。手動overrideは行わない。
+
 ## Secret / Generated Artifact確認
 
 <!-- kairon:release-evidence -->
@@ -211,6 +238,7 @@ kairon release notes --since <ref> --write
 
 - `npm run build` と `npm test` が通っている。
 - `kairon readiness check` がexit code 0を返している。
+- RCへ進める場合は`kairon readiness rc check`がexit code 0を返している。
 - 対象範囲のtargeted testまたはoperation test結果がPRまたはrelease notesにある。
 - README / docs更新要否を判断済み。
 - `package.json` と `src/index.ts` のversionが一致している。
