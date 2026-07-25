@@ -30,6 +30,7 @@ Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Age
 - daily report、agent handoff、retention、cleanup proposal / apply / archive
 - state integrity、snapshot / restore、event compaction、deterministic backup / rehearsal
 - read-only Board projection、loopback / remote-readonly server、short-lived access token
+- 固定HTTPS host、identity-aware proxy、Discord / Board URL driftを統合するstable remote operations profile
 - production workflow、checkpoint、resource lock、pause / resume / cancel / recover
 - local lexical RAG、incremental refresh、integrity / stats / rebuild / context連携
 - provider quota / suspend policy、operation test profile / summary支援
@@ -42,7 +43,6 @@ Local Beta後の主な開発範囲:
 
 - workflow branch / join / compensationとdurable checkpoint store
 - session context budget、capability / MCP trust policy、hybrid local RAG
-- multi-project read-only supervisorと固定remote profile
 - Release Candidate readiness gate
 
 ## 前提
@@ -163,6 +163,17 @@ kairon doctor --format json
 Git、`.gitignore`、config、公式CLI、API key混入、Discord設定、GitHub branch protection、runtime recovery、daemon health、Board secret scan、RAG index、safety policyを確認し、`pass` / `warning` / `error` と具体的な`next_action`を表示します。`--format json`でも同じ`next_action`、関連CLI command、guide pathを機械可読形式で取得できます。外部設定不足はdetailの`status=setup_required`として示し、tokenなどのsecret値はtext/JSONのどちらにも出力しません。
 
 GitHub branch protectionのlive確認は、`GH_TOKEN` または `GITHUB_TOKEN` を使って GitHub REST API を確認します。両方ある場合は `GH_TOKEN` を優先します。Windowsでは `KAIRON_GH_TOKEN_CREDENTIAL_TARGET` / `KAIRON_GITHUB_TOKEN_CREDENTIAL_TARGET` でWindows Credential Manager targetを指定すると、envが未設定の場合だけfallbackとして読み取れます。fine-grained PATを使う場合は対象repositoryへのRepository accessと、AdministrationのRead-only権限が必要です。GitHub Freeのprivate repositoryではbranch protection APIが403になる場合があるため、live API疎通はpublic sandbox repositoryで確認する運用にしています。手順は [docs/github-branch-protection-sandbox-v0.md](docs/github-branch-protection-sandbox-v0.md) を参照してください。
+
+### Stable Remote Operations
+
+```powershell
+kairon remote profile show
+kairon remote profile validate
+kairon remote status
+kairon remote doctor
+```
+
+固定HTTPS hostとidentity-aware reverse proxyを前提に、Discord HTTP Interactionsとremote read-only Boardの設定、local readiness、外部疎通、identity enforcement、URL driftを統合診断します。DNS、TLS、tunnel、IdPはoperator管理のまま維持し、Kaironは自動provisionしません。設定と安全境界は [docs/stable-remote-operations-v0.md](docs/stable-remote-operations-v0.md) を参照してください。
 
 ### Support Bundle
 

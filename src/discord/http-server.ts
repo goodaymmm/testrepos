@@ -37,6 +37,10 @@ import {
   validateForwardedHeaders,
   type DiscordHttpProfile
 } from "./http-profile.js";
+import {
+  resolveDiscordHttpProfileConfig,
+  type RemoteNotificationsConfig
+} from "../remote/profile.js";
 
 export type DiscordHttpServerOptions = {
   profile?: DiscordHttpProfile;
@@ -427,12 +431,17 @@ async function prepareDiscordHttpServer(
   projectRoot: string,
   options: DiscordHttpServerOptions
 ): Promise<PreparedDiscordHttpServer> {
-  const config = await loadConfigFile<DiscordGatewayConfig>(
+  const config = await loadConfigFile<
+    DiscordGatewayConfig & RemoteNotificationsConfig
+  >(
     projectRoot,
     "notifications.json"
   );
   const provider = config.providers.discord;
-  const httpProfile = prepareDiscordHttpProfile(config.http, options.profile);
+  const httpProfile = prepareDiscordHttpProfile(
+    resolveDiscordHttpProfileConfig(config),
+    options.profile
+  );
 
   if (!provider.enabled) {
     return {

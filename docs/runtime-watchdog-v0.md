@@ -32,8 +32,12 @@ kairon watchdog resolve ALT-0001 --reason "原因を確認し復旧済み"
 | `failed_notifications` | high | 300秒以内にDiscord通知失敗が3件以上 |
 | `provider_suspended` | high | suspend中providerが1件以上 |
 | `task_scheduler_missing` | warning | 確認済みTask Scheduler登録がmissing、disabled、error |
+| `remote_external_unreachable` | high | 最新remote doctorで外部endpointが到達不能 |
+| `remote_identity_bypass` | critical | 未認証requestがremote Boardへ2xxで到達 |
+| `remote_url_drift` | high | runtime external URLが固定profile URLと不一致 |
+| `remote_tunnel_disconnected` | critical | DiscordとBoardの両外部endpointが到達不能 |
 
-閾値はinclusiveで評価する。未来時刻のheartbeatはclock skewとしてageを0へ丸め、誤検知しない。Task Scheduler ruleは`.kairon/runtime/daemon/task-status.json`が存在する場合だけ評価し、daemon heartbeatとは別の状態として扱う。
+閾値はinclusiveで評価する。未来時刻のheartbeatはclock skewとしてageを0へ丸め、誤検知しない。Task Scheduler ruleは`.kairon/runtime/daemon/task-status.json`が存在する場合だけ評価し、daemon heartbeatとは別の状態として扱う。remote ruleは`kairon remote doctor`が保存した`.kairon/runtime/remote/status.json`を評価し、Watchdog自身は外部networkへ接続しない。
 
 ## Config
 

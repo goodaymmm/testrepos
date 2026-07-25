@@ -114,13 +114,20 @@ describe("buildApprovalMessage", () => {
       type: "git_push",
       status: "decided",
       decision: "approve",
-      reason: "Looks good."
+      reason: "Looks good.",
+      board_url: "https://ops.example.test/board/#approval-APR-0003"
     });
 
     expect(message.content).toBe("Approval decided: APR-0003");
     expect(message.components).toEqual([]);
     expect(message.embeds[0]?.fields.map((field) => field.name)).toEqual(
-      expect.arrayContaining(["Approval", "Status", "Decision", "Reason"])
+      expect.arrayContaining(["Approval", "Status", "Decision", "Reason", "Board"])
+    );
+    expect(message.embeds[0]?.fields).toContainEqual(
+      expect.objectContaining({
+        name: "Board",
+        value: "https://ops.example.test/board/#approval-APR-0003"
+      })
     );
   });
 });

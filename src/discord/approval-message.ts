@@ -60,6 +60,7 @@ export type ApprovalStatusMessageInput = {
   decision?: string;
   reason?: string;
   snooze_until?: string;
+  board_url?: string;
 };
 
 const secretLikePattern =
@@ -162,7 +163,10 @@ export function buildApprovalStatusMessage(
     approval.snooze_until === undefined
       ? null
       : field("Snooze until", approval.snooze_until, true),
-    approval.reason === undefined ? null : field("Reason", approval.reason, false)
+    approval.reason === undefined ? null : field("Reason", approval.reason, false),
+    approval.board_url === undefined
+      ? null
+      : field("Board", approval.board_url, false)
   ].filter((item): item is NonNullable<typeof item> => item !== null);
 
   return {

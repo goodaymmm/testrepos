@@ -17,6 +17,10 @@ import {
   type BoardProfileConfig
 } from "../../board/profile.js";
 import { loadConfigFile } from "../../core/config/load-config.js";
+import {
+  resolveBoardProfileConfig,
+  type RemoteNotificationsConfig
+} from "../../remote/profile.js";
 
 export async function exportBoard(
   projectRoot: string,
@@ -41,12 +45,17 @@ export async function serveBoard(
     accessTokenTtlSeconds?: string;
   } = {}
 ): Promise<BoardServerHandle> {
-  const notifications = await loadConfigFile<{ board?: BoardProfileConfig }>(
+  const notifications = await loadConfigFile<
+    RemoteNotificationsConfig & { board?: BoardProfileConfig }
+  >(
     projectRoot,
     "notifications.json"
   );
   const requestedProfile = parseOptionalBoardProfile(options.profile);
-  const prepared = prepareBoardProfile(notifications.board, requestedProfile);
+  const prepared = prepareBoardProfile(
+    resolveBoardProfileConfig(notifications),
+    requestedProfile
+  );
   const profileIssues = [...prepared.invalidConfig, ...prepared.missingConfig];
   if (profileIssues.length > 0) {
     throw new Error(`Board profile setup required: ${profileIssues.join(", ")}`);

@@ -38,6 +38,12 @@ import { resolveWorkflowRuntimeConfig } from "../workflow/config.js";
 import { inspectWorkflowCheckpointStore } from "../workflow/checkpoint-manager.js";
 import { inspectCapabilityPolicyConfig } from "../policy/trust-policy.js";
 import { inspectRegisteredProject } from "../projects/registry.js";
+import {
+  resolveBoardProfileConfig,
+  resolveDiscordHttpProfileConfig,
+  type StableRemoteProfileConfig
+} from "../remote/profile.js";
+import { inspectStableRemoteOperations } from "../remote/status.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -84,6 +90,7 @@ type NotificationsConfig = {
   board?: {
     enabled?: boolean;
   } & BoardProfileConfig;
+  remote?: StableRemoteProfileConfig;
   providers?: {
     discord?: {
       enabled?: boolean;
@@ -219,6 +226,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   );
   checks.push(await checkBoardSecretScan(options.projectRoot));
   checks.push(await checkBoardRemoteProfile(options.projectRoot));
+  checks.push(await checkStableRemoteProfile(options.projectRoot));
   checks.push(await checkCorrelationIntegrity(options.projectRoot));
   checks.push(await checkConfigBackups(options.projectRoot));
   checks.push(await checkRuntimeRecovery(options.projectRoot));
@@ -717,7 +725,9 @@ async function checkDiscordConfig(
   });
   const gatewayInvalid = envValidation.gateway_invalid_env;
   const liveInvalid = envValidation.live_invalid_env;
-  const httpProfile = prepareDiscordHttpProfile(config.http);
+  const httpProfile = prepareDiscordHttpProfile(
+    resolveDiscordHttpProfileConfig(config)
+  );
   const publicKeyResolution = secretResolutions.get(publicKeyEnv);
   const publicKeyPresent = publicKeyResolution?.status === "present";
   const publicKeyInvalid =
@@ -1118,7 +1128,7 @@ async function checkBoardRemoteProfile(projectRoot: string): Promise<DoctorCheck
     projectRoot,
     "notifications.json"
   );
-  const prepared = prepareBoardProfile(notifications.board);
+  const prepared = prepareBoardProfile(resolveBoardProfileConfig(notifications));
   if (prepared.profile !== "remote-readonly") {
     return pass("board.remote_profile", "Board remote read-only profile", [
       `profile=${prepared.profile}`,
@@ -1164,6 +1174,37 @@ async function checkBoardRemoteProfile(projectRoot: string): Promise<DoctorCheck
     ...details,
     "status=ready"
   ]);
+}
+
+async function checkStableRemoteProfile(
+  projectRoot: string
+): Promise<DoctorCheck> {
+  const status = await inspectStableRemoteOperations(projectRoot, {
+    probeExternal: false,
+    persist: false
+  });
+  const details = [
+    `profile=${status.profile}`,
+    `status=${status.status}`,
+    `config_status=${status.config.status}`,
+    `discord_local_status=${status.discord.local_status}`,
+    `board_local_status=${status.board.local_status}`,
+    `discord_url_drift=${status.discord.url_drift}`,
+    `board_url_drift=${status.board.url_drift}`,
+    `issues=${status.issues.join(",") || "none"}`
+  ];
+  if (status.status === "not_configured") {
+    return pass("remote.profile", "Stable remote operations profile", details);
+  }
+  if (status.status !== "ready") {
+    return warning(
+      "remote.profile",
+      "Stable remote operations profile",
+      details,
+      "Run kairon remote profile validate, start the Discord HTTP and Board services, then run kairon remote doctor."
+    );
+  }
+  return pass("remote.profile", "Stable remote operations profile", details);
 }
 
 async function checkCorrelationIntegrity(projectRoot: string): Promise<DoctorCheck> {

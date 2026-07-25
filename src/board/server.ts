@@ -2,7 +2,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
-import { writeJsonFileAtomic } from "../core/fs/json-file.js";
+import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
 import {
   createBoardProjection,
@@ -659,6 +659,21 @@ async function writeBoardServerStatus(
   const filePath = boardServerStatusPath(projectRoot);
   await mkdir(path.dirname(filePath), { recursive: true });
   await writeJsonFileAtomic(filePath, status);
+}
+
+export async function getBoardServerStatus(
+  projectRoot: string
+): Promise<BoardServerRuntimeStatus | undefined> {
+  try {
+    return await readJsonFile<BoardServerRuntimeStatus>(
+      boardServerStatusPath(projectRoot)
+    );
+  } catch (error) {
+    if (String(error).includes("ENOENT")) {
+      return undefined;
+    }
+    throw error;
+  }
 }
 
 function boardServerStatusPath(projectRoot: string): string {
