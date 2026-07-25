@@ -16,6 +16,7 @@ import { buildRagIndex, type RagIndex } from "../src/rag/lexical-index.js";
 import { createTempProject } from "./test-utils.js";
 import { suspendProvider } from "../src/agents/provider-policy.js";
 import { runWatchdogCheck } from "../src/runtime/watchdog.js";
+import { ProjectRegistry } from "../src/projects/registry.js";
 
 const discordIds = {
   application: "111111111111111111",
@@ -1069,6 +1070,26 @@ describe("runDoctor", () => {
       ])
     );
     expect(check?.next_action).toContain("workflow checkpoint verify");
+  });
+
+  it("reports the current project user-local registry membership", async () => {
+    const root = await createInitializedGitProject();
+    const registryPath = path.join(await createTempProject(), "projects.json");
+    await new ProjectRegistry({ registryPath }).register(root);
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {
+        KAIRON_PROJECTS_REGISTRY_PATH: registryPath
+      }
+    });
+    const check = checkById(result, "projects.registry");
+
+    expect(check?.status).toBe("pass");
+    expect(check?.details).toEqual(
+      expect.arrayContaining(["status=registered"])
+    );
   });
 });
 

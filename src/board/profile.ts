@@ -188,6 +188,31 @@ export function normalizeBoardExternalBaseUrl(
   }
 }
 
+export function sanitizeBoardRegistryUrl(
+  value: string | null | undefined
+): string | undefined {
+  if (value == null || typeof value !== "string") {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(value.trim());
+    if (
+      (url.protocol !== "http:" && url.protocol !== "https:") ||
+      url.hostname.length === 0
+    ) {
+      return undefined;
+    }
+    url.username = "";
+    url.password = "";
+    url.search = "";
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return undefined;
+  }
+}
+
 function normalizeIdentityHeader(value: string | undefined): string | undefined {
   const normalized = (value ?? defaultIdentityHeader).trim().toLowerCase();
   return /^[a-z0-9-]{1,64}$/.test(normalized) ? normalized : undefined;

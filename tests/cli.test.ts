@@ -33,6 +33,7 @@ describe("createProgram", () => {
       "maintenance",
       "merge",
       "migrate",
+      "projects",
       "rag",
       "readiness",
       "recovery",
@@ -49,6 +50,23 @@ describe("createProgram", () => {
       "watchdog",
       "workflow"
     ]);
+  });
+
+  it("registers multi-project registry commands", () => {
+    const projects = createProgram().commands.find(
+      (command) => command.name() === "projects"
+    );
+
+    expect(projects?.commands.map((command) => command.name()).sort()).toEqual([
+      "doctor",
+      "list",
+      "register",
+      "show",
+      "unregister"
+    ]);
+    for (const command of projects?.commands ?? []) {
+      expect(command.options.map((option) => option.long)).toContain("--format");
+    }
   });
 
   it("registers capability evaluate and explain commands", () => {

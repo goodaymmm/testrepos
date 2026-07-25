@@ -100,6 +100,13 @@ import {
   readinessReportCommand
 } from "./commands/readiness.js";
 import {
+  doctorProjectsCommand,
+  listProjectsCommand,
+  registerProjectCommand,
+  showProjectCommand,
+  unregisterProjectCommand
+} from "./commands/projects.js";
+import {
   acknowledgeRecoveryTarget,
   listRecoveryTargets,
   resolveRecoveryTarget,
@@ -234,6 +241,53 @@ export function createProgram(): Command {
     .option("--format <format>", "Output format: text or json.", "text")
     .action(async (options: { format?: string }) => {
       console.log(await runDoctorCommand(process.cwd(), options));
+    });
+
+  const projects = program
+    .command("projects")
+    .description("Register and inspect multiple Kairon projects read-only.");
+
+  projects
+    .command("register")
+    .description("Register a Kairon project in the user-local registry.")
+    .argument("<root>", "Kairon project root.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (root: string, options: { format?: string }) => {
+      console.log(await registerProjectCommand(root, options));
+    });
+
+  projects
+    .command("unregister")
+    .description("Remove a project from the user-local registry.")
+    .argument("<projectId>", "Registered project id.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (projectId: string, options: { format?: string }) => {
+      console.log(await unregisterProjectCommand(projectId, options));
+    });
+
+  projects
+    .command("list")
+    .description("List registered Kairon projects.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: { format?: string }) => {
+      console.log(await listProjectsCommand(options));
+    });
+
+  projects
+    .command("show")
+    .description("Show one registered Kairon project.")
+    .argument("<projectId>", "Registered project id.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (projectId: string, options: { format?: string }) => {
+      console.log(await showProjectCommand(projectId, options));
+    });
+
+  projects
+    .command("doctor")
+    .description("Diagnose registered projects without mutating project state.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: { format?: string }) => {
+      console.log(await doctorProjectsCommand(options));
     });
 
   const capability = program

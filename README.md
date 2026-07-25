@@ -433,6 +433,20 @@ kairon status
 schedule mode、runtime lock、daemon health、watchdog alert、queue、approval、recovery target、session、Discord gateway、最新artifact の状態を表示します。
 daily report / cleanup proposal / recovery artifact / next-day plan / board projection / daemon log が存在する場合は、次に確認するパスも `artifacts.*` として表示します。
 
+### 複数projectのread-only監視
+
+```powershell
+kairon projects register M:\EnglishApp
+kairon projects register C:\work\AnotherProject
+kairon projects list
+kairon projects show englishapp
+kairon projects doctor
+```
+
+`projects.json`は各projectの`.kairon/`外にあるuser-local registryです。既定ではWindowsの`%LOCALAPPDATA%\Kairon\projects.json`を使い、test時は`KAIRON_PROJECTS_REGISTRY_PATH`または`KAIRON_USER_DATA_DIR`で差し替えられます。`projects doctor`は各projectのconfig、runtime縮約summary、Board / Discord HTTP endpointをread-onlyで確認し、project ID / root / version差、missing root、port / external URL衝突を報告します。一括start / stop、queue変更、task移送、provider limit自動配分は行いません。
+
+registryへ保存するのはproject ID、root、登録・最終確認時刻、Kairon version、query / credentialを除いたBoard URL、縮約doctor summaryだけです。token、approval detail、task本文、source、stdout / stderrは集約しません。詳細は[docs/multi-project-operations-v0.md](docs/multi-project-operations-v0.md)を参照してください。
+
 ### Runtime Watchdog
 
 ```powershell
@@ -664,4 +678,5 @@ T76-T159では初期経路を拡張し、T159 readinessで全11 gate（必須10�
 - [docs/rag-memory-v0.md](docs/rag-memory-v0.md)
 - [docs/github-branch-protection-sandbox-v0.md](docs/github-branch-protection-sandbox-v0.md)
 - [docs/project-docking-v0.md](docs/project-docking-v0.md)
+- [docs/multi-project-operations-v0.md](docs/multi-project-operations-v0.md)
 - [docs/subscription-compliance-v0.md](docs/subscription-compliance-v0.md)
