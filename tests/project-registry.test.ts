@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -50,7 +50,7 @@ describe("ProjectRegistry", () => {
       "alpha",
       "beta"
     ]);
-    expect((await registry.show("alpha"))?.root).toBe(path.resolve(alpha));
+    expect((await registry.show("alpha"))?.root).toBe(await realpath(alpha));
 
     const removed = await registry.unregister("alpha");
     expect(removed.project_id).toBe("alpha");
@@ -73,6 +73,8 @@ describe("ProjectRegistry", () => {
     const duplicate = await createProject("shared");
     const registry = new ProjectRegistry({ registryPath });
     await registry.register(original);
+    const canonicalOriginal = await realpath(original);
+    const canonicalDuplicate = await realpath(duplicate);
 
     await expect(registry.register(duplicate)).rejects.toBeInstanceOf(
       ProjectRegistrationConflictError
@@ -81,8 +83,8 @@ describe("ProjectRegistry", () => {
     await rm(original, { recursive: true, force: true });
     const moved = await registry.register(duplicate);
     expect(moved.status).toBe("moved");
-    expect(moved.entry.previous_root).toBe(path.resolve(original));
-    expect(moved.entry.root).toBe(path.resolve(duplicate));
+    expect(moved.entry.previous_root).toBe(canonicalOriginal);
+    expect(moved.entry.root).toBe(canonicalDuplicate);
   });
 
   it("does not overwrite a corrupt registry", async () => {

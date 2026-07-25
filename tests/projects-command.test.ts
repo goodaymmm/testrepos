@@ -1,3 +1,4 @@
+import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -55,7 +56,7 @@ describe("projects commands", () => {
     expect(listed.projects.map((project) => project.project_id)).toEqual([
       "command-project"
     ]);
-    expect(shown.project.root).toBe(path.resolve(projectRoot));
+    expect(shown.project.root).toBe(await realpath(projectRoot));
     expect(doctor.ok).toBe(true);
     expect(doctor.projects[0].project_id).toBe("command-project");
     expect(unregistered.status).toBe("unregistered");
