@@ -100,6 +100,12 @@ import {
   readinessReportCommand
 } from "./commands/readiness.js";
 import {
+  getRemoteStatusCommand,
+  runRemoteDoctorCommand,
+  showRemoteProfileCommand,
+  validateRemoteProfileCommand
+} from "./commands/remote.js";
+import {
   doctorProjectsCommand,
   listProjectsCommand,
   registerProjectCommand,
@@ -241,6 +247,46 @@ export function createProgram(): Command {
     .option("--format <format>", "Output format: text or json.", "text")
     .action(async (options: { format?: string }) => {
       console.log(await runDoctorCommand(process.cwd(), options));
+    });
+
+  const remote = program
+    .command("remote")
+    .description("Inspect the stable remote operations profile.");
+
+  const remoteProfile = remote
+    .command("profile")
+    .description("Show and validate the stable remote profile configuration.");
+
+  remoteProfile
+    .command("show")
+    .description("Show the effective stable remote profile and migration proposal.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: { format?: string }) => {
+      console.log(await showRemoteProfileCommand(process.cwd(), options));
+    });
+
+  remoteProfile
+    .command("validate")
+    .description("Validate the stable remote profile without probing the network.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: { format?: string }) => {
+      console.log(await validateRemoteProfileCommand(process.cwd(), options));
+    });
+
+  remote
+    .command("status")
+    .description("Show local stable remote runtime status and URL drift.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: { format?: string }) => {
+      console.log(await getRemoteStatusCommand(process.cwd(), options));
+    });
+
+  remote
+    .command("doctor")
+    .description("Probe stable external endpoints and identity enforcement.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: { format?: string }) => {
+      console.log(await runRemoteDoctorCommand(process.cwd(), options));
     });
 
   const projects = program

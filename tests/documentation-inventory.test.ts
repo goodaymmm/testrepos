@@ -51,7 +51,8 @@ describe("T159 documentation inventory", () => {
       workflow: await readUtf8("docs/workflow-v0.md"),
       watchdog: await readUtf8("docs/runtime-watchdog-v0.md"),
       incident: await readUtf8("docs/incident-lifecycle-v0.md"),
-      cli: await readUtf8("docs/cli-commands-v0.md")
+      cli: await readUtf8("docs/cli-commands-v0.md"),
+      remote: await readUtf8("docs/stable-remote-operations-v0.md")
     };
     const inventory = [
       {
@@ -153,6 +154,16 @@ describe("T159 documentation inventory", () => {
         source: "src/readiness/beta-readiness.ts",
         document: documents.readme,
         marker: "kairon readiness check"
+      },
+      {
+        source: "src/remote/profile.ts",
+        document: documents.remote,
+        marker: "<!-- kairon:stable-remote-operations -->"
+      },
+      {
+        source: "src/remote/status.ts",
+        document: documents.remote,
+        marker: "kairon remote doctor"
       }
     ];
 

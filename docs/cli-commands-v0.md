@@ -1221,6 +1221,22 @@ dry-runは `WorkQueue` のenqueue / claim / complete / fail、approval作成、T
 - recovery artifactは `.kairon/experimental/workflows/<workflow_id>-recovery.json` に保存する。
 - RuntimeLoopはfeature flagが無効なら接続済みitemをclaimしない。有効時だけ通常の`agent.run` handlerへ渡す。
 
+## kairon remote
+
+Discord HTTP Interactionsとremote read-only Boardを、固定HTTPS hostとidentity-aware proxyを前提とする単一profileとして検証する。
+
+```powershell
+kairon remote profile show
+kairon remote profile show --format json
+kairon remote profile validate
+kairon remote status
+kairon remote doctor
+```
+
+`profile show`は実効設定と、従来の`notifications.http` / `notifications.board`から作成できるread-only migration proposalを表示する。`profile validate`はnetwork接続を行わず、固定URL、CIDR、allowed origin、identity headerを検証する。
+
+`status`はlocal Discord / Board runtime artifactと設定URLを照合する。`doctor`は外部readinessと未認証Board accessをprobeし、identity enforcement、URL drift、tunnel断を`.kairon/runtime/remote/status.json`へ保存する。raw response、credential、token、identity値は保存しない。設定、reverse proxy、Watchdogとの関係は[stable-remote-operations-v0.md](stable-remote-operations-v0.md)を参照する。
+
 ## kairon leave
 
 本日の Active Work を終了する。

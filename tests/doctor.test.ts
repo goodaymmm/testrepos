@@ -46,6 +46,7 @@ describe("runDoctor", () => {
     expect(statusById(result, "discord.config")).toBe("pass");
     expect(statusById(result, "workflow.config")).toBe("pass");
     expect(statusById(result, "board.secret_scan")).toBe("pass");
+    expect(statusById(result, "remote.profile")).toBe("pass");
     expect(statusById(result, "runtime.recovery")).toBe("pass");
     expect(statusById(result, "watchdog.alerts")).toBe("pass");
     expect(checkById(result, "discord.config")?.details).toContain(

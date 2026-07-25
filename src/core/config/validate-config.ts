@@ -8,6 +8,10 @@ import {
   normalizeBoardExternalBaseUrl,
   normalizeBoardOrigin
 } from "../../board/profile.js";
+import {
+  prepareStableRemoteProfile,
+  stableRemoteProfileName
+} from "../../remote/profile.js";
 
 export type ValidationResult = {
   ok: boolean;
@@ -93,7 +97,11 @@ const runtimeConfigSchema = schemaVersion
           queue_backlog: watchdogRuleSchema,
           failed_notifications: watchdogRuleSchema,
           provider_suspended: watchdogRuleSchema,
-          task_scheduler_missing: watchdogRuleSchema
+          task_scheduler_missing: watchdogRuleSchema,
+          remote_external_unreachable: watchdogRuleSchema.optional(),
+          remote_identity_bypass: watchdogRuleSchema.optional(),
+          remote_url_drift: watchdogRuleSchema.optional(),
+          remote_tunnel_disconnected: watchdogRuleSchema.optional()
         })
       })
       .optional()
@@ -393,6 +401,16 @@ const notificationsConfigSchema = schemaVersion.extend({
       }
     })
     .optional(),
+  remote: z
+    .object({
+      profile: z.enum(["disabled", stableRemoteProfileName]),
+      discord_interactions_base_url: z.string().nullable().optional(),
+      board_base_url: z.string().nullable().optional(),
+      trusted_proxies: z.array(z.string()).optional(),
+      allowed_origins: z.array(z.string()).optional(),
+      identity_header: z.string().optional()
+    })
+    .optional(),
   board: z
     .object({
       enabled: z.boolean(),
@@ -557,6 +575,14 @@ export function validateConfigFile(fileName: string, value: unknown): Validation
       errors.push(
         `${fileName}: Discord notification and HTTP profile settings are invalid`
       );
+    } else {
+      const remote = prepareStableRemoteProfile(result.data.remote);
+      const issues = [...remote.missingConfig, ...remote.invalidConfig];
+      if (issues.length > 0) {
+        errors.push(
+          `${fileName}: stable remote profile settings are invalid (${issues.join(", ")})`
+        );
+      }
     }
   }
 

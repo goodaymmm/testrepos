@@ -37,6 +37,7 @@ import {
   type DiscordDecisionAuditSideEffect
 } from "./decision-audit.js";
 import type { DiscordHttpProfileConfig } from "./http-profile.js";
+import type { StableRemoteProfileConfig } from "../remote/profile.js";
 import {
   notifyPendingDiscordWatchdogAlerts,
   type DiscordWatchdogNotificationResult
@@ -86,6 +87,7 @@ export type DiscordGatewayConfig = {
     };
   };
   http?: DiscordHttpProfileConfig;
+  remote?: StableRemoteProfileConfig;
   board?: {
     enabled?: boolean;
     base_url?: string;

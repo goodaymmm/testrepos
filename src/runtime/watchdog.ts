@@ -14,6 +14,7 @@ import {
 import { WorkQueue } from "../queue/work-queue.js";
 import { attachIncidentResource } from "../incidents/store.js";
 import { readRuntimeLockStatus } from "./runtime-lock.js";
+import { getStoredStableRemoteStatus } from "../remote/status.js";
 import {
   compareWatchdogSeverity,
   defaultWatchdogPolicy,
@@ -363,7 +364,16 @@ async function collectWatchdogRuleInput(
   projectRoot: string,
   now: Date
 ): Promise<WatchdogRuleInput> {
-  const [project, lock, queueItems, providers, daemonEvents, notificationRecords, scheduler] =
+  const [
+    project,
+    lock,
+    queueItems,
+    providers,
+    daemonEvents,
+    notificationRecords,
+    scheduler,
+    remoteStatus
+  ] =
     await Promise.all([
       loadConfigFile<{ project_id?: string }>(projectRoot, "project.json"),
       readRuntimeLockStatus(projectRoot, { now }),
@@ -371,7 +381,8 @@ async function collectWatchdogRuleInput(
       listProviderPolicyHealth(projectRoot, { now, persist: false }),
       readRecentDaemonEvents(projectRoot),
       readNotificationRecords(projectRoot),
-      readTaskSchedulerStatus(projectRoot)
+      readTaskSchedulerStatus(projectRoot),
+      getStoredStableRemoteStatus(projectRoot)
     ]);
   const latestDaemonEvent = daemonEvents
     .slice()
@@ -422,7 +433,20 @@ async function collectWatchdogRuleInput(
       status: provider.status,
       reason: provider.suspended_reason ?? provider.last_reason ?? undefined
     })),
-    task_scheduler: scheduler
+    task_scheduler: scheduler,
+    remote:
+      remoteStatus === undefined
+        ? undefined
+        : {
+            configured: remoteStatus.profile !== "disabled",
+            external_unreachable:
+              remoteStatus.discord.external_readiness === "unreachable" ||
+              remoteStatus.board.external_readiness === "unreachable",
+            identity_bypass: remoteStatus.identity.status === "bypass_detected",
+            url_drift:
+              remoteStatus.discord.url_drift || remoteStatus.board.url_drift,
+            tunnel_disconnected: remoteStatus.tunnel.status === "disconnected"
+          }
   };
 }
 

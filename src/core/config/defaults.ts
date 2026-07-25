@@ -95,6 +95,26 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
             enabled: true,
             severity: "warning",
             threshold: 1
+          },
+          remote_external_unreachable: {
+            enabled: true,
+            severity: "high",
+            threshold: 1
+          },
+          remote_identity_bypass: {
+            enabled: true,
+            severity: "critical",
+            threshold: 1
+          },
+          remote_url_drift: {
+            enabled: true,
+            severity: "high",
+            threshold: 1
+          },
+          remote_tunnel_disconnected: {
+            enabled: true,
+            severity: "critical",
+            threshold: 1
           }
         }
       }
@@ -385,6 +405,14 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
         external_base_url: null,
         trusted_proxies: ["127.0.0.1/32", "::1/128"]
       },
+      remote: {
+        profile: "disabled",
+        discord_interactions_base_url: null,
+        board_base_url: null,
+        trusted_proxies: ["127.0.0.1/32", "::1/128"],
+        allowed_origins: [],
+        identity_header: "x-kairon-verified-identity"
+      },
       board: {
         enabled: false,
         base_url: "http://127.0.0.1:8787",
@@ -475,6 +503,7 @@ export const kaironDirectories = [
   "runtime/terminals",
   "runtime/ticks",
   "runtime/discord",
+  "runtime/remote",
   "watchdog",
   "watchdog/alerts",
   "incidents",

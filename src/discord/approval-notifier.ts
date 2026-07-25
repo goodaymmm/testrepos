@@ -16,6 +16,12 @@ import {
   containsUnsafeApprovalMessageData,
   type ApprovalMessageInput
 } from "./approval-message.js";
+import {
+  prepareStableRemoteProfile,
+  resolveBoardProfileConfig,
+  type RemoteNotificationsConfig
+} from "../remote/profile.js";
+import { prepareBoardProfile } from "../board/profile.js";
 
 export type DiscordApprovalChannel = {
   id?: string;
@@ -110,12 +116,7 @@ type ApprovalRecord = {
   [key: string]: unknown;
 };
 
-type NotificationsBoardConfig = {
-  board?: {
-    enabled?: boolean;
-    base_url?: string;
-  };
-};
+type NotificationsBoardConfig = RemoteNotificationsConfig;
 
 export async function notifyPendingDiscordApprovals(
   projectRoot: string,
@@ -366,7 +367,8 @@ export async function updateDiscordApprovalMessage(
       status: approval.status ?? "unknown",
       decision: approval.decision,
       reason: approval.reason,
-      snooze_until: approval.snooze_until
+      snooze_until: approval.snooze_until,
+      board_url: approval.discord?.board_url
     })
   );
   await writeApprovalRecord(projectRoot, {
@@ -525,11 +527,21 @@ async function readConfiguredBoardBaseUrl(projectRoot: string): Promise<string |
     throw error;
   }
 
-  if (config.board?.enabled !== true) {
+  const stableRemote = prepareStableRemoteProfile(config.remote);
+  const boardConfig = resolveBoardProfileConfig(config);
+  if (boardConfig.enabled !== true) {
     return undefined;
   }
 
-  return normalizeBoardBaseUrl(config.board.base_url ?? "http://127.0.0.1:8787");
+  if (stableRemote.configured) {
+    const preparedBoard = prepareBoardProfile(boardConfig);
+    return preparedBoard.invalidConfig.length === 0 &&
+      preparedBoard.missingConfig.length === 0
+      ? preparedBoard.externalBaseUrl?.replace(/\/$/, "")
+      : undefined;
+  }
+
+  return normalizeBoardBaseUrl(boardConfig.base_url ?? "http://127.0.0.1:8787");
 }
 
 function normalizeBoardBaseUrl(value: string): string | undefined {

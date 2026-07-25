@@ -38,6 +38,7 @@ describe("createProgram", () => {
       "readiness",
       "recovery",
       "release",
+      "remote",
       "review",
       "start",
       "state",
@@ -49,6 +50,25 @@ describe("createProgram", () => {
       "update",
       "watchdog",
       "workflow"
+    ]);
+  });
+
+  it("registers stable remote profile and health commands", () => {
+    const remote = createProgram().commands.find(
+      (command) => command.name() === "remote"
+    );
+    const profile = remote?.commands.find(
+      (command) => command.name() === "profile"
+    );
+
+    expect(remote?.commands.map((command) => command.name()).sort()).toEqual([
+      "doctor",
+      "profile",
+      "status"
+    ]);
+    expect(profile?.commands.map((command) => command.name()).sort()).toEqual([
+      "show",
+      "validate"
     ]);
   });
 

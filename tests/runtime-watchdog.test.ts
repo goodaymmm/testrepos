@@ -122,6 +122,28 @@ describe("runtime watchdog", () => {
     ).toHaveLength(2);
   });
 
+  it("raises stable remote endpoint, identity, drift, and tunnel findings", () => {
+    const input = baseInput("2026-07-23T00:10:00.000Z");
+    input.remote = {
+      configured: true,
+      external_unreachable: true,
+      identity_bypass: true,
+      url_drift: true,
+      tunnel_disconnected: true
+    };
+
+    expect(
+      evaluateWatchdogRules(input, defaultWatchdogPolicy).map(
+        (finding) => finding.rule
+      )
+    ).toEqual([
+      "remote_external_unreachable",
+      "remote_identity_bypass",
+      "remote_tunnel_disconnected",
+      "remote_url_drift"
+    ]);
+  });
+
   it("deduplicates, cools down, resolves, and reopens one fingerprint", async () => {
     const root = await createInitializedProject();
     const first = baseInput("2026-07-23T01:00:00.000Z");

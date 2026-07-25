@@ -9,7 +9,11 @@ export type WatchdogRuleId =
   | "queue_backlog"
   | "failed_notifications"
   | "provider_suspended"
-  | "task_scheduler_missing";
+  | "task_scheduler_missing"
+  | "remote_external_unreachable"
+  | "remote_identity_bypass"
+  | "remote_url_drift"
+  | "remote_tunnel_disconnected";
 
 export type WatchdogRulePolicy = {
   enabled: boolean;
@@ -49,6 +53,13 @@ export type WatchdogRuleInput = {
   }>;
   task_scheduler?: {
     status: "registered" | "missing" | "disabled" | "error" | "unknown";
+  };
+  remote?: {
+    configured: boolean;
+    external_unreachable: boolean;
+    identity_bypass: boolean;
+    url_drift: boolean;
+    tunnel_disconnected: boolean;
   };
 };
 
@@ -102,6 +113,26 @@ export const defaultWatchdogPolicy: WatchdogPolicy = {
     task_scheduler_missing: {
       enabled: true,
       severity: "warning",
+      threshold: 1
+    },
+    remote_external_unreachable: {
+      enabled: true,
+      severity: "high",
+      threshold: 1
+    },
+    remote_identity_bypass: {
+      enabled: true,
+      severity: "critical",
+      threshold: 1
+    },
+    remote_url_drift: {
+      enabled: true,
+      severity: "high",
+      threshold: 1
+    },
+    remote_tunnel_disconnected: {
+      enabled: true,
+      severity: "critical",
       threshold: 1
     }
   }
@@ -260,6 +291,89 @@ export function evaluateWatchdogRules(
         }
       })
     );
+  }
+
+  const remote = input.remote;
+  if (remote?.configured === true) {
+    if (
+      policy.rules.remote_external_unreachable.enabled &&
+      remote.external_unreachable
+    ) {
+      findings.push(
+        finding(
+          input,
+          policy,
+          "remote_external_unreachable",
+          "remote:external-endpoints",
+          {
+            title: "Stable remote endpoint is unreachable",
+            summary:
+              "The latest remote doctor probe could not reach one or more external endpoints.",
+            evidence: {
+              external_unreachable: true,
+              threshold: policy.rules.remote_external_unreachable.threshold
+            }
+          }
+        )
+      );
+    }
+    if (
+      policy.rules.remote_identity_bypass.enabled &&
+      remote.identity_bypass
+    ) {
+      findings.push(
+        finding(
+          input,
+          policy,
+          "remote_identity_bypass",
+          "remote:board-identity",
+          {
+            title: "Remote Board identity enforcement can be bypassed",
+            summary:
+              "The latest unauthenticated probe reached the Board without an identity challenge.",
+            evidence: {
+              identity_bypass: true,
+              threshold: policy.rules.remote_identity_bypass.threshold
+            }
+          }
+        )
+      );
+    }
+    if (policy.rules.remote_url_drift.enabled && remote.url_drift) {
+      findings.push(
+        finding(input, policy, "remote_url_drift", "remote:configured-urls", {
+          title: "Stable remote URL drift detected",
+          summary:
+            "A running remote endpoint does not match the configured fixed HTTPS URL.",
+          evidence: {
+            url_drift: true,
+            threshold: policy.rules.remote_url_drift.threshold
+          }
+        })
+      );
+    }
+    if (
+      policy.rules.remote_tunnel_disconnected.enabled &&
+      remote.tunnel_disconnected
+    ) {
+      findings.push(
+        finding(
+          input,
+          policy,
+          "remote_tunnel_disconnected",
+          "remote:tunnel",
+          {
+            title: "Stable remote tunnel is disconnected",
+            summary:
+              "Discord interactions and Board endpoints were both unreachable in the latest probe.",
+            evidence: {
+              tunnel_disconnected: true,
+              threshold: policy.rules.remote_tunnel_disconnected.threshold
+            }
+          }
+        )
+      );
+    }
   }
 
   return findings.sort((left, right) =>
