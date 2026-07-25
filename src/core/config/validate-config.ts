@@ -444,6 +444,56 @@ const ragConfigSchema = schemaVersion.extend({
   storage: z.object({
     base_dir: z.string().regex(/^\.kairon(?:[\\/][A-Za-z0-9._-]+)*$/u)
   }).passthrough(),
+  vector: z
+    .object({
+      enabled: z.boolean(),
+      provider: z.enum(["local_hash", "local_onnx"]),
+      model_id: z.string().trim().min(1).max(120),
+      dimension: z.number().int().min(8).max(4096)
+    })
+    .optional(),
+  retrieval: z
+    .object({
+      default_mode: z.enum(["lexical", "vector", "hybrid"]),
+      hybrid: z
+        .object({
+          lexical: z.number().min(0).max(1),
+          vector: z.number().min(0).max(1),
+          freshness: z.number().min(0).max(1),
+          source_diversity_penalty: z.number().min(0).max(1)
+        })
+        .refine(
+          (weights) =>
+            weights.lexical + weights.vector + weights.freshness > 0,
+          "RAG hybrid ranking requires a positive lexical, vector, or freshness weight"
+        )
+    })
+    .optional(),
+  evaluation: z
+    .object({
+      profiles: z.record(
+        z.string().trim().min(1).max(80),
+        z.object({
+          mode: z.enum(["lexical", "vector", "hybrid"]),
+          top_k: z.number().int().min(1).max(100),
+          minimum_precision_at_k: z.number().min(0).max(1),
+          queries: z
+            .array(
+              z.object({
+                id: z.string().trim().min(1).max(120),
+                query: z.string().trim().min(1).max(500),
+                expected_paths: z.array(z.string().trim().min(1)).min(1).max(50),
+                forbidden_paths: z
+                  .array(z.string().trim().min(1))
+                  .max(50)
+                  .optional()
+              })
+            )
+            .max(100)
+        })
+      )
+    })
+    .optional(),
   integrity: z
     .object({
       query_samples: z.array(z.string().trim().min(1).max(200)).max(20),

@@ -5,6 +5,7 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 
 ## Unreleased
 
+- T172: local-only vector provider、incremental embedding cache、confirmed vector build、lexical/vector/hybrid retriever、drift検出、expected/forbidden sourceによるRAG quality gateを追加。
 - T171: task / persona / Agent / connectorのcapability trust policy、default deny、approval連携、実行前gate、sanitized decision artifact、evaluate / explain CLIを追加。
 - T170: Agent sessionのprompt byte数、job数、経過秒数、compaction回数を追跡するcontext budget、soft-limit compaction plan、hard-limit dispatch停止、sanitized handoff付きrotationと中断復旧を追加。
 - T169: canonical JSON checkpointを維持する`WorkflowCheckpointStore`、optional Node SQLite mirror、checksum / fencing検証、degraded継続、exact-confirm付きindex rebuildを追加。

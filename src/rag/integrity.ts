@@ -14,6 +14,7 @@ import {
   calculateRagIndexChecksum,
   calculateRagSourceManifestChecksum
 } from "./manifest.js";
+import { inspectRagVectorIntegrity } from "./vector-provider.js";
 
 export type RagIntegrityStatus = "PASS" | "UNPASSED" | "SETUP_REQUIRED";
 
@@ -29,7 +30,15 @@ export type RagIntegrityIssueCode =
   | "orphan_chunk"
   | "source_without_chunks"
   | "chunk_source_hash_mismatch"
-  | "source_drift";
+  | "source_drift"
+  | "vector_manifest_unreadable"
+  | "vector_index_unreadable"
+  | "vector_dimension_mismatch"
+  | "vector_index_checksum_mismatch"
+  | "vector_source_manifest_mismatch"
+  | "vector_lexical_index_mismatch"
+  | "vector_entry_count_mismatch"
+  | "vector_chunk_mismatch";
 
 export type RagIntegrityIssue = {
   code: RagIntegrityIssueCode;
@@ -154,6 +163,18 @@ export async function verifyRagIndex(
       indexPath,
       checkSourceDrift: true
     });
+    const vectorIssues = await inspectRagVectorIntegrity(projectRoot, index);
+    if (vectorIssues.length > 0) {
+      artifact = {
+        ...artifact,
+        status: "UNPASSED",
+        issue_count: artifact.issue_count + vectorIssues.length,
+        issues: [
+          ...artifact.issues,
+          ...vectorIssues.map((code) => ({ code }))
+        ]
+      };
+    }
   } catch (error) {
     const missing = isMissing(error);
     artifact = {

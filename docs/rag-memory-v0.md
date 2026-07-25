@@ -54,6 +54,10 @@ canonical files
 Agent は自由に検索しない。
 Control Plane が task と persona から retrieval plan を作る。
 
+retrieverは`lexical|vector|hybrid`の共通filter contractを持つ。vector capabilityが
+`SETUP_REQUIRED`、index missing、dimension mismatch、source driftの場合はlexicalへ
+fallbackし、結果を`degraded`として明示する。外部embedding APIへの自動fallbackは行わない。
+
 ```json
 {
   "task_id": "TASK-0001",
@@ -121,6 +125,15 @@ persona ごとに context budget を分ける。
 - MVP は外部 embedding API を前提にせず、local embedding を標準にする。
 - retrieval result には source id と hash を必ず含める。
 - RAG result は根拠であり、policy decision の唯一の根拠にしない。
+
+## Local Vector And Quality Gate
+
+- 既定provider候補はpure Node 22で動作する`local_hash`とする。model download、外部network、追加license、native binaryを必要とせず、Windowsでも同一checksumを再現できる。
+- semantic modelが必要な場合の`local_onnx`はcapability placeholderであり、runtime未導入は`SETUP_REQUIRED`とする。
+- embedding cache keyはmodel ID、dimension、chunk ID、chunk text checksumから作る。変更のないchunkはincremental buildで再利用する。
+- vector manifestにはprovider、model ID、dimension、entry count、source manifest checksum、lexical/vector index checksumだけを保存し、embedding値をlogへ出さない。
+- hybrid scoreは正規化したlexical/vector score、freshness、同一sourceのdiversity penaltyから決定する。
+- quality gateはexpected source、forbidden source、precision@K、fallback statusで判定し、generative answer本文をgolden dataにしない。
 
 ## rag.json
 

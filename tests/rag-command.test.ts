@@ -3,15 +3,21 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeProject } from "../src/cli/commands/init.js";
 import {
+  buildRagVectorCommand,
   compactRagIndexCommand,
+  evaluateRagCommand,
   queryRagIndexCommand,
   rebuildRagIndexCommand,
   refreshRagIndexCommand,
+  statusRagProviderCommand,
   statsRagIndexCommand,
   statusRagIndexCommand,
   verifyRagIndexCommand
 } from "../src/cli/commands/rag.js";
-import { readJsonFile } from "../src/core/fs/json-file.js";
+import {
+  readJsonFile,
+  writeJsonFileAtomic
+} from "../src/core/fs/json-file.js";
 import type { RagIndex } from "../src/rag/lexical-index.js";
 import { createTempProject } from "./test-utils.js";
 
@@ -214,6 +220,75 @@ describe("RAG CLI commands", () => {
     await expect(
       queryRagIndexCommand(root, "anything", { type: "unknown" })
     ).rejects.toThrow("Invalid RAG source type");
+    await expect(
+      queryRagIndexCommand(root, "anything", { mode: "cloud" })
+    ).rejects.toThrow("Invalid RAG retrieval mode");
+  });
+
+  it("reports provider setup, confirmed vector build, hybrid query, and evaluation", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await mkdir(path.join(root, "docs"), { recursive: true });
+    await writeFile(
+      path.join(root, "docs", "hybrid.md"),
+      "Hybrid approval routing evidence.",
+      "utf8"
+    );
+
+    await expect(statusRagProviderCommand(root)).resolves.toContain(
+      "status=SETUP_REQUIRED"
+    );
+    const configPath = path.join(root, ".kairon", "config", "rag.json");
+    const config = await readJsonFile<Record<string, unknown>>(configPath);
+    config.vector = {
+      enabled: true,
+      provider: "local_hash",
+      model_id: "kairon-local-hash-v1",
+      dimension: 256
+    };
+    config.evaluation = {
+      profiles: {
+        default: {
+          mode: "hybrid",
+          top_k: 3,
+          minimum_precision_at_k: 0.3,
+          queries: [
+            {
+              id: "hybrid",
+              query: "hybrid approval routing",
+              expected_paths: ["docs/hybrid.md"],
+              forbidden_paths: [".env*"]
+            }
+          ]
+        }
+      }
+    };
+    await writeJsonFileAtomic(configPath, config);
+    await refreshRagIndexCommand(root);
+
+    const planned = await buildRagVectorCommand(root, { dryRun: true });
+    expect(planned).toContain("Kairon RAG vector build planned.");
+    expect(planned).not.toContain('"vector":[');
+    const buildId = /^build_id=(.+)$/mu.exec(planned)?.[1];
+    expect(buildId).toMatch(/^RAG-VECTOR-BUILD-/u);
+    const executed = await buildRagVectorCommand(root, {
+      execute: true,
+      confirm: buildId
+    });
+    expect(executed).toContain("status=executed");
+
+    const query = await queryRagIndexCommand(root, "hybrid approval routing", {
+      mode: "hybrid",
+      explain: true
+    });
+    expect(query).toContain("requested_mode=hybrid");
+    expect(query).toContain("effective_mode=hybrid");
+    expect(query).toContain("explain.hybrid_score=");
+    expect(query).toContain("path=docs/hybrid.md");
+
+    const evaluation = await evaluateRagCommand(root);
+    expect(evaluation).toContain("status=PASS");
+    expect(evaluation).toContain("query.hybrid.required_hit=true");
   });
 
   it("verifies, summarizes, plans, and executes a full rebuild", async () => {

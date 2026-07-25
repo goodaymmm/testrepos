@@ -371,12 +371,16 @@ kairon rag verify
 kairon rag stats --duplicates --context-budget
 kairon rag rebuild --dry-run --compare
 kairon rag rebuild --execute --confirm <rebuild-id>
-kairon rag query "approval routing" --type approval --limit 5
+kairon rag provider status
+kairon rag vector build --dry-run
+kairon rag vector build --execute --confirm <build-id>
+kairon rag query "approval routing" --mode hybrid --type approval --limit 5 --explain
+kairon rag evaluate --profile default
 ```
 
-local lexical RAG indexを `.kairon/rag/index.json` に作成し、metadata filter付きで検索します。2回目以降の通常refreshはsource manifestのmtime・file size・content hashを使うincremental modeになり、変更sourceだけを再構築します。`rag verify`は決定的checksum、source/chunk参照、source driftを検証し、結果を`.kairon/rag/integrity/latest.json`へ保存します。`rag stats`はduplicate比率、推定token、context budget、rebuild期限、retention候補を表示します。
+local lexical RAG indexを `.kairon/rag/index.json` に作成し、metadata filter付きで検索します。local-only vectorを明示的に有効化すると、同じfilter contractで`lexical|vector|hybrid`を選択できます。vector未設定・stale・失敗時はlexicalへfallbackし、`status=degraded`と理由を出力します。embedding値はCLIやevaluation artifactへ出さず、model ID、dimension、source/index hashだけを記録します。2回目以降の通常refreshはsource manifestのmtime・file size・content hashを使うincremental modeになり、変更sourceだけを再構築します。`rag verify`はlexical/vectorの決定的checksum、source/chunk参照、source driftを検証し、結果を`.kairon/rag/integrity/latest.json`へ保存します。`rag stats`はduplicate比率、推定token、context budget、rebuild期限、retention候補を表示します。
 
-full rebuildは最初に`--dry-run --compare`で現在indexを変更せずcandidateとquery sampleを比較し、発行されたrebuild IDと一致する`--execute --confirm`でのみatomic swapします。plan後にcurrent indexまたはsourceが変わった場合は実行を拒否します。refresh、compact、rebuildは同じresource lockを使用します。`rag status`はpending added / changed / missingとfreshnessを表示し、refresh・maintenance出力はprotected / generated / missing / archivedなどのskip・prune理由を件数で示します。context builderは必要に応じてRAG検索結果をrun contextへ含め、secret-like path、protected path、generated pathはindex対象から除外します。
+full rebuildとvector buildは最初にdry-runでcandidateを作り、発行IDと一致する`--execute --confirm`でのみatomic swapします。plan後にcurrent indexまたはsourceが変わった場合は実行を拒否します。`rag evaluate`はgolden answer本文ではなくexpected path、forbidden path、precision@Kを評価し、`.kairon/rag/evaluations/`へ結果を保存します。refresh、compact、rebuildはresource lockを使用します。`rag status`はpending added / changed / missingとfreshnessを表示し、refresh・maintenance出力はprotected / generated / missing / archivedなどのskip・prune理由を件数で示します。context builderは必要に応じてRAG検索結果をrun contextへ含め、secret-like path、protected path、generated pathはindex対象から除外します。
 
 ### Production workflow
 

@@ -927,13 +927,17 @@ optionally build RAG index
 
 ## kairon rag
 
-local lexical RAG indexを作成、状態確認、検索する。
+local lexical/vector RAG indexを作成、状態確認、検索、品質評価する。
 
 ```text
 kairon rag refresh
 kairon rag status
-kairon rag query "approval routing" --type approval --limit 5
-kairon rag query "approval routing" --type approval --limit 5 --explain
+kairon rag provider status
+kairon rag vector build --dry-run
+kairon rag vector build --execute --confirm <build-id>
+kairon rag query "approval routing" --mode lexical --type approval --limit 5
+kairon rag query "approval routing" --mode hybrid --type approval --limit 5 --explain
+kairon rag evaluate --profile default
 ```
 
 主なquery option。
@@ -949,15 +953,20 @@ kairon rag query "approval routing" --type approval --limit 5 --explain
 --review-loop-id <reviewLoopId>
 --date <YYYY-MM-DD>
 --severity <severity>
+--mode <lexical|vector|hybrid>
 --explain
 ```
 
-`--explain` は通常のranked resultに加えて、lexical score、matched terms、term hit、source modified timestamp、indexed timestamp、stale source warningを表示する。
+`--explain` は通常のranked resultに加えて、lexical/vector/hybrid score、normalized score、freshness、source diversity penalty、matched terms、source timestamp、stale source warningを表示する。
 `--explain` を付けない場合、既存のquery出力形式を維持する。
+
+`rag provider status`はlocal-only providerの`READY|SETUP_REQUIRED`、model ID、dimensionを表示し、外部networkを使用しない。vector buildはdry-runで発行されたbuild IDのexact confirmationを要求し、source manifestまたはlexical indexが変化した場合は再planを要求する。vector runtime未設定・index missing・drift時の`vector|hybrid` queryはlexicalへfallbackし、`status=degraded`と`fallback_reason`を表示する。
+
+`rag evaluate`は`rag.json.evaluation.profiles`のrepresentative queryを実行し、expected path hit、forbidden path hit、precision@K、fallback statusを`.kairon/rag/evaluations/<evaluation-id>.json`へ保存する。golden answer本文とembedding値はartifactへ保存しない。
 
 初回refreshは`mode=full`、既存indexに対する通常refreshは`mode=incremental`、filter付きrefreshは`mode=scoped`となる。incremental refreshはsource manifestの`file_mtime_ms`と`file_size_bytes`が一致するsource/chunkを再利用し、metadataが変わったsourceだけcontent hashを確認する。`rag refresh`はscanned / added / updated / unchangedと理由別skip / prune件数を表示する。
 
-`rag status`は`freshness=fresh|stale|not_indexed`と、`pending_added_sources` / `pending_changed_sources` / `pending_missing_sources`を表示する。RAG indexは `.kairon/rag/index.json` に保存し、secret-like path、protected path、generated pathはindex対象から除外する。
+`rag status`は`freshness=fresh|stale|not_indexed`と、`pending_added_sources` / `pending_changed_sources` / `pending_missing_sources`を表示する。lexical indexは`.kairon/rag/index.json`、vector manifestは`.kairon/rag/vector/manifest.json`に保存し、secret-like path、protected path、generated pathはどちらのindex対象からも除外する。
 
 ## kairon state
 
