@@ -16,6 +16,7 @@ import {
   updateIncidentResource,
   type IncidentArtifact
 } from "../incidents/store.js";
+import { readActiveUpdateTransaction } from "../update/transaction.js";
 
 export type RuntimeRecoveryOptions = {
   now?: Date;
@@ -68,6 +69,7 @@ export type RuntimeRecoveryResult = {
     git_transaction_issues: number;
     state_compaction_issues: number;
     state_backup_restore_issues: number;
+    update_transaction_issues: number;
   };
   actions: RuntimeRecoveryAction[];
 };
@@ -84,6 +86,7 @@ export type RuntimeRecoveryInspection = {
     git_transaction_issues: number;
     state_compaction_issues: number;
     state_backup_restore_issues: number;
+    update_transaction_issues: number;
     resolved_targets: number;
   };
   issues: RuntimeRecoveryIssue[];
@@ -134,7 +137,8 @@ export type RuntimeRecoveryIssue = {
     | "discord_gateway_starting"
     | "git_transaction_mid_state"
     | "state_compaction_mid_state"
-    | "state_backup_restore_mid_state";
+    | "state_backup_restore_mid_state"
+    | "update_transaction_mid_state";
   target_id: string;
   target_type:
     | "runtime_lock"
@@ -143,7 +147,8 @@ export type RuntimeRecoveryIssue = {
     | "discord_gateway"
     | "git_transaction"
     | "state_compaction"
-    | "state_backup_restore";
+    | "state_backup_restore"
+    | "update_transaction";
   reason: string;
   severity: "medium" | "high";
   run_id?: string;
@@ -326,6 +331,17 @@ export async function runRuntimeRecovery(
     ) {
       actions.push(await requestRecoveryApproval(projectRoot, backupRestoreIssue, now));
     }
+
+    const updateTransactionIssue = await findUpdateTransactionIssue(projectRoot);
+    if (
+      updateTransactionIssue !== null &&
+      isSelectedRecoveryIssue(updateTransactionIssue, options) &&
+      !resolvedFingerprints.has(updateTransactionIssue.fingerprint)
+    ) {
+      actions.push(
+        await requestRecoveryApproval(projectRoot, updateTransactionIssue, now)
+      );
+    }
   }
 
   const result: RuntimeRecoveryResult = {
@@ -362,6 +378,11 @@ export async function runRuntimeRecovery(
         (action) =>
           (action.type === "approval_requested" || action.type === "approval_existing") &&
           action.issue.kind === "state_backup_restore_mid_state"
+      ).length,
+      update_transaction_issues: actions.filter(
+        (action) =>
+          (action.type === "approval_requested" || action.type === "approval_existing") &&
+          action.issue.kind === "update_transaction_mid_state"
       ).length
     },
     actions
@@ -386,7 +407,8 @@ export function formatRuntimeRecoveryResult(result: RuntimeRecoveryResult): stri
     `approvals_existing=${result.summary.approvals_existing}`,
     `git_transaction_issues=${result.summary.git_transaction_issues}`,
     `state_compaction_issues=${result.summary.state_compaction_issues}`,
-    `state_backup_restore_issues=${result.summary.state_backup_restore_issues}`
+    `state_backup_restore_issues=${result.summary.state_backup_restore_issues}`,
+    `update_transaction_issues=${result.summary.update_transaction_issues}`
   ].join("\n");
 }
 
@@ -451,6 +473,10 @@ export async function inspectRuntimeRecoveryTargets(
   if (backupRestoreIssue !== null) {
     issues.push(backupRestoreIssue);
   }
+  const updateTransactionIssue = await findUpdateTransactionIssue(projectRoot);
+  if (updateTransactionIssue !== null) {
+    issues.push(updateTransactionIssue);
+  }
   const resolvedFingerprints = await readResolvedRecoveryFingerprints(projectRoot);
   const unresolvedIssues = issues.filter(
     (issue) => !resolvedFingerprints.has(issue.fingerprint)
@@ -478,6 +504,9 @@ export async function inspectRuntimeRecoveryTargets(
       ).length,
       state_backup_restore_issues: unresolvedIssues.filter(
         (issue) => issue.kind === "state_backup_restore_mid_state"
+      ).length,
+      update_transaction_issues: unresolvedIssues.filter(
+        (issue) => issue.kind === "update_transaction_mid_state"
       ).length,
       resolved_targets: resolvedTargets
     },
@@ -1000,6 +1029,39 @@ async function findStateBackupRestoreIssue(
     reason:
       "State backup restore stopped before completion. Verify the backup and use the pre-restore snapshot for an explicit rollback or resume decision."
   });
+}
+
+async function findUpdateTransactionIssue(
+  projectRoot: string
+): Promise<RuntimeRecoveryIssue | null> {
+  try {
+    const transaction = await readActiveUpdateTransaction(projectRoot);
+    if (transaction === null) {
+      return null;
+    }
+    return createRecoveryIssue({
+      kind: "update_transaction_mid_state",
+      target_id: transaction.transaction_id,
+      target_type: "update_transaction",
+      transaction_id: transaction.transaction_id,
+      transaction_status: transaction.status,
+      severity: "high",
+      reason:
+        transaction.status === "recovery_required"
+          ? "Update rollback did not complete conclusively. Inspect the transaction and incident before any retry."
+          : "Update transaction was interrupted. Verify the active package, project state, and rollback artifact before resuming."
+    });
+  } catch {
+    return createRecoveryIssue({
+      kind: "update_transaction_mid_state",
+      target_id: "update-transaction-marker",
+      target_type: "update_transaction",
+      transaction_status: "invalid",
+      severity: "high",
+      reason:
+        "Update transaction marker is invalid. Do not apply another update until the active package and project state are verified."
+    });
+  }
 }
 
 async function readOutboxHealth(

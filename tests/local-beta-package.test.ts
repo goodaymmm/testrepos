@@ -133,7 +133,9 @@ describe("local release package", () => {
       "-DryRun"
     ]);
     expect(install.status, install.stderr).toBe(0);
-    expect(install.stdout).toContain("install.action=would_install_global_package");
+    expect(install.stdout).toContain(
+      "install.action=would_stage_verify_and_install_global_package"
+    );
 
     const uninstall = runPowerShellScript("uninstall-local-beta.ps1", [
       "-ProjectRoot",
@@ -191,6 +193,11 @@ describe("local release package", () => {
     expect(update).toContain("rollback_package_restored");
     expect(update).toContain("state\", \"backup\", \"restore");
     expect(update).toContain("doctor.ok=true");
+    expect(update).toContain("transaction.staging_health=passed");
+    expect(update).toContain("transaction.switch=completed");
+    expect(update).toContain("transaction.post_check=passed");
+    expect(update).toContain("rollback.status=");
+    expect(update).toContain("rollback_package_sha256");
     expect(update).toContain("ApproveSchemaMigration");
     expect(update).toContain('@("migrate", "plan")');
     expect(update).toContain('"migrate", "apply", $migrationPlanId');

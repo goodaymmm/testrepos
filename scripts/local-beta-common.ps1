@@ -159,6 +159,112 @@ function Invoke-KaironLocalBetaCommand {
   return $output
 }
 
+function Test-KaironStagedPackage {
+  param(
+    [Parameter(Mandatory = $true)]$PackageInfo,
+    [Parameter(Mandatory = $true)]$Prerequisites,
+    [Parameter(Mandatory = $true)][string]$StagingRoot,
+    [string]$ReleaseManifest = "",
+    [string]$ProjectRoot = ""
+  )
+
+  New-Item -ItemType Directory -Force -Path $StagingRoot | Out-Null
+  $null = Invoke-KaironLocalBetaCommand `
+    -Command $Prerequisites.NpmCommand `
+    -Arguments @(
+      "install",
+      "--prefix",
+      $StagingRoot,
+      "--ignore-scripts",
+      "--no-audit",
+      "--no-fund",
+      $PackageInfo.PackagePath
+    )
+
+  $stagedPackageRoot = Join-Path $StagingRoot "node_modules\kairon"
+  $stagedCli = Join-Path $stagedPackageRoot "dist\cli\main.js"
+  $stagedPackageJson = Join-Path $stagedPackageRoot "package.json"
+  if (-not (Test-Path -LiteralPath $stagedCli -PathType Leaf) -or
+      -not (Test-Path -LiteralPath $stagedPackageJson -PathType Leaf)) {
+    throw "Staged Kairon package does not contain the expected CLI files."
+  }
+
+  $stagedMetadata = Get-Content -LiteralPath $stagedPackageJson -Raw -Encoding UTF8 |
+    ConvertFrom-Json
+  if ([string]$stagedMetadata.version -ne $PackageInfo.PackageVersion) {
+    throw "Staged Kairon package version does not match the verified manifest."
+  }
+
+  $versionOutput = Invoke-KaironLocalBetaCommand `
+    -Command $Prerequisites.NodeCommand `
+    -Arguments @($stagedCli, "--version")
+  $stagedVersion = (($versionOutput -join "").Trim())
+  if ($stagedVersion -ne $PackageInfo.PackageVersion) {
+    throw "Staged Kairon CLI version does not match the verified package."
+  }
+
+  $verifyArguments = @(
+    $stagedCli,
+    "release",
+    "verify",
+    $PackageInfo.PackagePath,
+    "--manifest",
+    $PackageInfo.ManifestPath
+  )
+  if (-not [string]::IsNullOrWhiteSpace($ReleaseManifest)) {
+    $verifyArguments += @("--release-manifest", $ReleaseManifest)
+  }
+  $null = Invoke-KaironLocalBetaCommand `
+    -Command $Prerequisites.NodeCommand `
+    -Arguments $verifyArguments
+
+  if (-not [string]::IsNullOrWhiteSpace($ProjectRoot) -and
+      (Test-Path -LiteralPath (Join-Path $ProjectRoot ".kairon\config"))) {
+    $stateOutput = Invoke-KaironLocalBetaCommand `
+      -Command $Prerequisites.NodeCommand `
+      -Arguments @($stagedCli, "state", "check", "--format", "json") `
+      -WorkingDirectory $ProjectRoot
+    $state = ($stateOutput -join [Environment]::NewLine) | ConvertFrom-Json
+    if ([int]$state.summary.errors -gt 0) {
+      throw "Staged Kairon CLI found state integrity errors."
+    }
+  }
+
+  return [PSCustomObject]@{
+    CliPath = $stagedCli
+    PackageRoot = $stagedPackageRoot
+    Version = $stagedVersion
+  }
+}
+
+function Get-KaironUpdatePhase {
+  param([Parameter(Mandatory = $true)][string]$Stage)
+
+  if ($Stage -in @(
+    "capture_installed_package",
+    "state_backup",
+    "staging_health"
+  )) {
+    return "staging"
+  }
+  if ($Stage -in @("switch", "npm_install")) {
+    return "switch"
+  }
+  if ($Stage -in @(
+    "post_check",
+    "verify_package",
+    "runtime_stop",
+    "migration_plan",
+    "migration_apply",
+    "doctor",
+    "state_integrity",
+    "verify_cli"
+  )) {
+    return "post_check"
+  }
+  return "preflight"
+}
+
 function Write-KaironLocalBetaDiagnostic {
   param(
     [Parameter(Mandatory = $true)][string]$DiagnosticRoot,

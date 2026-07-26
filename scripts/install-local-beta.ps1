@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory = $true)][string]$Package,
   [string]$Manifest = "",
+  [string]$StagingRoot = (Join-Path $env:TEMP "kairon-beta-install-staging"),
   [string]$DiagnosticRoot = (Join-Path $env:TEMP "kairon-beta-diagnostics"),
   [switch]$DryRun
 )
@@ -11,6 +12,7 @@ $ErrorActionPreference = "Stop"
 
 $stage = "preflight"
 $installed = $false
+$resolvedStagingRoot = $null
 try {
   $packageInfo = Assert-KaironLocalBetaPackage -PackagePath $Package -ManifestPath $Manifest
   $prerequisites = Assert-KaironLocalBetaPrerequisites
@@ -32,9 +34,17 @@ try {
   }
 
   if ($DryRun) {
-    Write-Host "install.action=would_install_global_package"
+    Write-Host "install.action=would_stage_verify_and_install_global_package"
     return
   }
+
+  $stage = "staging_health"
+  $resolvedStagingRoot = Join-Path $StagingRoot (Get-Date -Format "yyyyMMdd-HHmmss-fff")
+  $null = Test-KaironStagedPackage `
+    -PackageInfo $packageInfo `
+    -Prerequisites $prerequisites `
+    -StagingRoot $resolvedStagingRoot
+  Write-Host "transaction.staging_health=passed"
 
   $stage = "npm_install"
   $installOutput = Invoke-KaironLocalBetaCommand `
@@ -54,6 +64,7 @@ try {
     -Arguments @("--version")
   Write-Host "installed_version=$(($versionOutput -join '').Trim())"
   Write-Host "install.status=completed"
+  Remove-Item -LiteralPath $resolvedStagingRoot -Recurse -Force -ErrorAction SilentlyContinue
 } catch {
   if ($installed) {
     try {
@@ -71,5 +82,8 @@ try {
     -Stage $stage `
     -Message $_.Exception.Message
   Write-Host "diagnostic_bundle=$diagnostic"
+  if (-not [string]::IsNullOrWhiteSpace($resolvedStagingRoot)) {
+    Remove-Item -LiteralPath $resolvedStagingRoot -Recurse -Force -ErrorAction SilentlyContinue
+  }
   throw
 }

@@ -37,6 +37,7 @@ export type InstalledUpdateVersion = {
 };
 
 export type UpdateRegistryHistoryEntry = {
+  transaction_id?: string;
   action: "apply" | "rollback";
   from_version: string;
   to_version: string;
@@ -112,6 +113,7 @@ export async function recordSuccessfulUpdate(
     action: "apply" | "rollback";
     currentVersion: string;
     download: VerifiedUpdateDownload;
+    transactionId?: string;
     now?: () => Date;
   }
 ): Promise<UpdateRegistry> {
@@ -144,6 +146,9 @@ export async function recordSuccessfulUpdate(
     history: [
       ...current.history,
       {
+        ...(input.transactionId === undefined
+          ? {}
+          : { transaction_id: input.transactionId }),
         action: input.action,
         from_version: input.currentVersion,
         to_version: input.download.version,
@@ -377,7 +382,9 @@ function isHistoryEntry(value: unknown): value is UpdateRegistryHistoryEntry {
     return false;
   }
   const candidate = value as Partial<UpdateRegistryHistoryEntry>;
-  return (candidate.action === "apply" || candidate.action === "rollback") &&
+  return (candidate.transaction_id === undefined ||
+      /^UTX-\d{4,}$/u.test(candidate.transaction_id)) &&
+    (candidate.action === "apply" || candidate.action === "rollback") &&
     typeof candidate.from_version === "string" &&
     isCoreVersion(candidate.from_version) &&
     typeof candidate.to_version === "string" &&

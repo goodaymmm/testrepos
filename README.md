@@ -357,7 +357,7 @@ kairon recovery resolve <target-id-or-fingerprint> --reason "手動確認済み"
 kairon recovery acknowledge <target-id-or-fingerprint> --reason "手動復旧する"
 ```
 
-stale lock、expired claim、partial outbox、Discord gateway mid-state、Git transaction mid-stateを検出します。安全に再queue可能なものだけ自動処理し、ambiguousなものはapprovalへ回します。`resolve`はfingerprint単位で復旧済みとして記録します。`acknowledge`はoperatorが確認した事実だけを記録し、targetを解決済みにせず次回検査にも残します。
+stale lock、expired claim、partial outbox、Discord gateway mid-state、Git transaction mid-state、interrupted update transactionを検出します。安全に再queue可能なものだけ自動処理し、ambiguousなものはapprovalへ回します。`resolve`はfingerprint単位で復旧済みとして記録します。`acknowledge`はoperatorが確認した事実だけを記録し、targetを解決済みにせず次回検査にも残します。
 
 ### Incident lifecycle
 
@@ -631,7 +631,7 @@ local packageはpublic npm registryへpublishせず、`npm run release:pack`でc
 固定し、fresh preflightが完全一致する場合だけprerelease flagを解除します。promotion中にasset、
 tag、release identityを差し替えず、再実行済みの場合はGitHub writeなしで`already_promoted`を返します。
 
-利用側は`kairon update channel set`で`stable | beta | pinned`を明示設定し、`update check`、`update download`、`update apply`を分離して実行できます。downloadはuser-local cacheで旧releaseの3 assetまたはattestation付きreleaseの5 assetとtag SHAを検証し、apply / rollbackはexact confirm後に既存PowerShell lifecycleへ渡します。成功時だけupdate registryを更新し、background auto-updateは行いません。
+利用側は`kairon update channel set`で`stable | beta | pinned`を明示設定し、`update check`、`update download`、`update apply`を分離して実行できます。downloadはuser-local cacheで旧releaseの3 assetまたはattestation付きreleaseの5 assetとtag SHAを検証し、apply / rollbackはexact confirm後にtransactional PowerShell lifecycleへ渡します。runtime・state・disk preflightとuser-local staging healthが成功した場合だけactive packageを切り替え、成功時だけ同じtransaction IDでupdate registryを更新します。rollback失敗時はcritical incidentとrecovery markerを残し、自動再試行やbackground auto-updateは行いません。
 
 ### 初期運用テストの履歴 (T11-T15)
 

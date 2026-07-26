@@ -8,6 +8,7 @@ import type {
   GitHubReleaseClient,
   GitHubReleaseRecord
 } from "../src/github/release-client.js";
+import { listIncidents } from "../src/incidents/store.js";
 import { setUpdateChannel } from "../src/update/channel.js";
 import {
   applyDownloadedUpdate,
@@ -16,6 +17,7 @@ import {
   rollbackUpdate
 } from "../src/update/downloader.js";
 import { loadUpdateRegistry } from "../src/update/registry.js";
+import { readActiveUpdateTransaction } from "../src/update/transaction.js";
 import {
   createAttestedReleaseBundleFixture,
   createReleaseBundleFixture
@@ -57,7 +59,7 @@ describe("verified update commands", () => {
       fixture.dependencies
     );
     const runner = vi.fn(async (invocation) => commandResult(invocation, {
-      stdout: "installed_version=0.2.0\nupdate.status=completed\n"
+      stdout: successfulLifecycleOutput("0.2.0")
     }));
 
     const applied = await applyDownloadedUpdate(
@@ -83,7 +85,13 @@ describe("verified update commands", () => {
       registry: {
         installed: { version: "0.2.0" },
         previous: { version: "0.1.0" },
-        last_successful_version: "0.2.0"
+        last_successful_version: "0.2.0",
+        history: [{ transaction_id: "UTX-0001" }]
+      },
+      transaction: {
+        transaction_id: "UTX-0001",
+        status: "completed",
+        phase: "completed"
       }
     });
     expect(runner).toHaveBeenCalledOnce();
@@ -91,7 +99,13 @@ describe("verified update commands", () => {
       "-ReleaseManifest",
       downloaded.download.release_manifest_path,
       "-ProjectRoot",
-      path.resolve(fixture.root)
+      path.resolve(fixture.root),
+      "-TransactionId",
+      "UTX-0001",
+      "-StagingRoot",
+      expect.stringContaining("UTX-0001"),
+      "-ExpectedCurrentVersion",
+      "0.1.0"
     ]));
   });
 
@@ -105,6 +119,11 @@ describe("verified update commands", () => {
     );
     const runner = vi.fn(async (invocation) => commandResult(invocation, {
       exitCode: 1,
+      stdout: [
+        "transaction.failed_phase=staging",
+        "transaction.error_code=update_staging_health_failed",
+        "rollback.status=not_required"
+      ].join("\n"),
       stderr: "sensitive native failure"
     }));
 
@@ -114,7 +133,7 @@ describe("verified update commands", () => {
       downloaded.download.download_id,
       { confirm: downloaded.download.download_id },
       { ...fixture.dependencies, commandRunner: runner }
-    )).rejects.toThrow("before registry update");
+    )).rejects.toThrow("status=rolled_back");
     await expect(access(path.join(fixture.root, ".kairon", "update", "registry.json")))
       .rejects.toThrow();
     const registry = await loadUpdateRegistry(fixture.root, "0.1.0");
@@ -123,6 +142,69 @@ describe("verified update commands", () => {
       previous: null,
       last_successful_version: "0.1.0"
     });
+    const transactionFiles = await readdir(
+      path.join(fixture.root, ".kairon", "update", "transactions")
+    );
+    const transactionText = await readFile(
+      path.join(
+        fixture.root,
+        ".kairon",
+        "update",
+        "transactions",
+        transactionFiles[0]
+      ),
+      "utf8"
+    );
+    expect(transactionText).not.toContain("sensitive native failure");
+  });
+
+  it("blocks automatic retry and creates a critical incident when rollback fails", async () => {
+    const fixture = await createUpdateFixture();
+    const downloaded = await downloadUpdate(
+      fixture.root,
+      "0.2.0",
+      {},
+      fixture.dependencies
+    );
+    const runner = vi.fn(async (invocation) => commandResult(invocation, {
+      exitCode: 1,
+      stdout: [
+        "transaction.staging_health=passed",
+        "transaction.switch=completed",
+        "transaction.failed_phase=post_check",
+        "transaction.error_code=update_doctor_failed",
+        "rollback.status=failed"
+      ].join("\n")
+    }));
+
+    await expect(applyDownloadedUpdate(
+      fixture.root,
+      "0.1.0",
+      downloaded.download.download_id,
+      { confirm: downloaded.download.download_id },
+      { ...fixture.dependencies, commandRunner: runner }
+    )).rejects.toThrow("status=recovery_required");
+    expect(runner).toHaveBeenCalledOnce();
+    await expect(readActiveUpdateTransaction(fixture.root)).resolves.toMatchObject({
+      status: "recovery_required",
+      error_code: "update_doctor_failed",
+      incident_id: "INC-0001"
+    });
+    await expect(listIncidents(fixture.root)).resolves.toMatchObject([
+      {
+        severity: "critical",
+        resources: [{ kind: "update_transaction", status: "recovery_required" }]
+      }
+    ]);
+
+    await expect(applyDownloadedUpdate(
+      fixture.root,
+      "0.1.0",
+      downloaded.download.download_id,
+      { confirm: downloaded.download.download_id },
+      { ...fixture.dependencies, commandRunner: runner }
+    )).rejects.toThrow("recover it before applying another update");
+    expect(runner).toHaveBeenCalledOnce();
   });
 
   it("requires exact confirmation and records an explicit rollback", async () => {
@@ -134,7 +216,7 @@ describe("verified update commands", () => {
       fixture.dependencies
     );
     const runner = vi.fn(async (invocation) => commandResult(invocation, {
-      stdout: "installed_version=0.2.0\nupdate.status=completed\n"
+      stdout: successfulLifecycleOutput("0.2.0")
     }));
 
     await expect(applyDownloadedUpdate(
@@ -301,9 +383,26 @@ async function createUpdateFixture(attested = false) {
     releaseClient: client,
     cacheRoot,
     env: { GH_TOKEN: "secret-token" },
-    now: () => new Date("2026-07-23T00:02:00.000Z")
+    now: () => new Date("2026-07-23T00:02:00.000Z"),
+    transaction: {
+      stagingRoot: path.join(
+        os.tmpdir(),
+        `kairon-update-staging-${path.basename(root)}`
+      ),
+      freeSpaceReader: async () => 1024 * 1024 * 1024
+    }
   };
   return { root, cacheRoot, client, release, dependencies };
+}
+
+function successfulLifecycleOutput(version: string): string {
+  return [
+    "transaction.staging_health=passed",
+    "transaction.switch=completed",
+    "transaction.post_check=passed",
+    `installed_version=${version}`,
+    "update.status=completed"
+  ].join("\n");
 }
 
 function commandResult(

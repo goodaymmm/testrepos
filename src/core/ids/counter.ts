@@ -16,6 +16,7 @@ export type CounterKey =
   | "correlation"
   | "release"
   | "update_download"
+  | "update_transaction"
   | "support_bundle"
   | "watchdog_alert"
   | "incident"
@@ -36,6 +37,7 @@ const defaultCounters: Counters = {
   correlation: 0,
   release: 0,
   update_download: 0,
+  update_transaction: 0,
   support_bundle: 0,
   watchdog_alert: 0,
   incident: 0,
@@ -55,6 +57,7 @@ const prefixes: Record<CounterKey, string> = {
   correlation: "COR",
   release: "REL",
   update_download: "UPD",
+  update_transaction: "UTX",
   support_bundle: "SUP",
   watchdog_alert: "ALT",
   incident: "INC",
