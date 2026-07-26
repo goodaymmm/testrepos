@@ -152,7 +152,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\update-local-beta.ps1 `
   -Package .\kairon-0.3.0.tgz `
   -Manifest .\kairon-0.3.0.tgz.sha256.json `
   -ReleaseManifest .\release-manifest.json `
-  -ProjectRoot M:\EnglishApp
+  -ProjectRoot M:\EnglishApp `
+  -ApproveSchemaMigration
 ```
 
 update順序は次の通りです。
@@ -161,9 +162,15 @@ update順序は次の通りです。
 2. 現在のglobal Kairon packageをrollback tarballとして保存する
 3. 初期化済みprojectでは`kairon state backup create`を実行する
 4. 新packageをglobal installする
-5. package verify、`kairon migrate`、`kairon doctor`、version確認を実行する
-6. 失敗時は旧packageをinstallし直し、state backupをrestoreする
-7. rollback結果とsanitized errorをdiagnostic bundleへ保存する
+5. runtimeを停止し、`kairon migrate plan`でschema driftを検査する
+6. migrationが必要な場合は`-ApproveSchemaMigration`指定時だけexact confirm付きapplyを実行する
+7. package verify、`kairon doctor`、version確認を実行する
+8. 失敗時は旧packageをinstallし直し、state backupをrestoreする
+9. rollback結果とsanitized errorをdiagnostic bundleへ保存する
+
+schema migrationが必要なのに`-ApproveSchemaMigration`がない場合、updateはconfigを書き換えず
+失敗し、既存rollback処理へ移る。migration apply自身もfresh state backupを作成し、
+post-check失敗時は`.kairon/migrations/in-progress.json`へ復旧手順を残す。
 
 `kairon doctor`がagent CLI未導入や未loginを含むerrorを返した場合も、updateは不完全と判定してrollbackします。update前に`kairon doctor`を実行し、`doctor.ok=true`を確認してください。
 
@@ -190,7 +197,9 @@ global installの影響を受けないWindows user/profileで次を確認しま�
 kairon --version
 kairon release verify <package.tgz>
 cd <initialized-project>
-kairon migrate
+kairon stop
+kairon migrate plan
+kairon migrate apply <plan-id> --confirm <plan-id>
 kairon doctor
 ```
 

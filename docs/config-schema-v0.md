@@ -2,7 +2,7 @@
 
 ## 目的
 
-この文書は MVP で生成・検証する `.kairon/config/*.json` の最小 schema を定義する。
+この文書は `.kairon/config/*.json` のcurrent schemaを定義する。Config schemaのcurrentは`0.3.0`、minimum readableは`0.1`、minimum writableは`0.2.0`である。旧schemaはread-only互換で読み取れるが、変更前に`kairon migrate plan/apply`でcurrentへ移行する。
 
 ## Config Files
 
@@ -22,7 +22,7 @@
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.3.0",
   "project_id": "example-app",
   "root": "C:/path/to/project",
   "primary_language": "typescript",
@@ -45,7 +45,7 @@
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.3.0",
   "default_mode": "persistent_terminal_session",
   "visible_terminal_required": false,
   "official_cli_only": true,
@@ -79,7 +79,7 @@
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.3.0",
   "timezone": "Asia/Tokyo",
   "active_work_time": [{ "start": "07:00", "end": "18:00" }],
   "standby_work_time": [{ "start": "18:00", "end": "01:00" }],
@@ -92,7 +92,7 @@
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.3.0",
   "agents": {
     "codex": {
       "enabled": true,
@@ -126,7 +126,7 @@
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.3.0",
   "strategy": "persona_capability_score",
   "default_agent": "codex",
   "personas": {
@@ -143,7 +143,7 @@
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.3.0",
   "git": {
     "default_base_branch": "main",
     "remote": "origin",
@@ -199,7 +199,7 @@
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.3.0",
   "primary_provider": "discord",
   "providers": {
     "discord": {
@@ -245,7 +245,7 @@
 
 ```json
 {
-  "schema_version": "0.1",
+  "schema_version": "0.3.0",
   "enabled": false,
   "storage": {
     "base_dir": ".kairon/rag",
@@ -279,7 +279,7 @@
 
 ## Validation Rules
 
-- `schema_version` は必須。
+- `schema_version` は必須。unknown newer schemaはdefault denyし、自動downgradeしない。
 - `project.root` は実在する directory である。
 - `runtime.default_mode` は `persistent_terminal_session` を既定にする。
 - `agents.codex.enabled` は MVP では true。

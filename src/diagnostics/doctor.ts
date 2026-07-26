@@ -48,6 +48,10 @@ import {
   type StableRemoteProfileConfig
 } from "../remote/profile.js";
 import { inspectStableRemoteOperations } from "../remote/status.js";
+import {
+  currentConfigSchemaVersion,
+  inspectConfigSchemaVersion
+} from "../migration/schema-registry.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -425,7 +429,22 @@ async function checkWorkflowRuntimeConfig(
     const runtime = await loadConfigFile<{
       schema_version?: string;
     }>(projectRoot, "runtime.json");
-    if (runtime.schema_version !== "0.1") {
+    const compatibility = inspectConfigSchemaVersion(
+      "runtime.json",
+      runtime.schema_version
+    );
+    if (compatibility === "migration_required") {
+      return warning(
+        "workflow.config",
+        "Workflow runtime config",
+        [
+          `schema_version=${runtime.schema_version ?? "missing"}`,
+          `current_schema_version=${currentConfigSchemaVersion}`
+        ],
+        "Run kairon migrate plan, review it, then apply the confirmed migration."
+      );
+    }
+    if (compatibility !== "current") {
       return error(
         "workflow.config",
         "Workflow runtime config",

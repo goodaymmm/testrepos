@@ -151,11 +151,20 @@ kairon init
 ### 設定マイグレーション
 
 ```powershell
-kairon migrate --dry-run
-kairon migrate
+kairon migrate plan
+kairon migrate apply MIG-0001 --confirm MIG-0001
 ```
 
-既存 `.kairon/config/*.json` を現在のschemaやCLI名に合わせて移行します。実行時は対象configのbackupを `.kairon/config/*.bak-YYYYMMDDHHmmss` として作成します。
+`kairon migrate plan`は既存`.kairon/config/*.json`を検査し、値を含まない変更概要、
+入力digest、`from -> to` stepを`.kairon/migrations/plans/`へ保存します。applyはruntime停止、
+plan IDの完全一致確認、全configのdrift検査、fresh state backup、atomic write、
+config / state / doctor post-checkが揃った場合だけ成功します。失敗時は
+`.kairon/migrations/in-progress.json`にbackup IDと復旧commandを残し、自動downgradeしません。
+
+config schemaのcurrent versionは`0.3.0`です。canonical stateとappend-only event / auditは
+`0.1`を維持し、reader compatibilityで扱います。旧`kairon migrate --dry-run`と
+`kairon migrate`は既存互換経路です。新規の運用・更新処理ではplan/applyを使用してください。
+詳細は[Schema Evolution Contract](docs/schema-evolution-v0.md)を参照してください。
 
 ### 診断
 

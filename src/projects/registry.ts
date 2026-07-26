@@ -9,6 +9,7 @@ import {
 } from "../core/fs/lock-file.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getProjectsRegistryPath, normalizeProjectRoot } from "../core/fs/paths.js";
+import { isReadableConfigSchemaVersion } from "../migration/schema-registry.js";
 
 export type ProjectDoctorSummary = {
   checked_at: string;
@@ -314,7 +315,7 @@ async function inspectProjectConfig(projectRoot: string): Promise<{
   const root = await realpath(resolved);
   const config = await loadConfigFile<ProjectConfig>(root, "project.json");
   if (
-    config.schema_version !== "0.1" ||
+    !isReadableConfigSchemaVersion("project.json", config.schema_version) ||
     typeof config.project_id !== "string" ||
     config.project_id.trim().length === 0
   ) {

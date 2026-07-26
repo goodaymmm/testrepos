@@ -13,6 +13,7 @@ import {
   summarizeRuntimeStatus,
   type RuntimeStatusSummary
 } from "../runtime/status.js";
+import { isReadableConfigSchemaVersion } from "../migration/schema-registry.js";
 import {
   ProjectRegistry,
   type ProjectDoctorSummary,
@@ -234,7 +235,10 @@ async function inspectProject(entry: ProjectRegistryEntry): Promise<ProjectHealt
   }
 
   if (
-    projectConfig.schema_version !== "0.1" ||
+    !isReadableConfigSchemaVersion(
+      "project.json",
+      projectConfig.schema_version
+    ) ||
     projectConfig.project_id !== entry.project_id
   ) {
     health.issues.push("project_identity_mismatch");

@@ -1,5 +1,7 @@
 # Kairon State Store v0
 
+Config schemaとcanonical state schemaは別管理である。Configのcurrent schemaは`0.3.0`だが、本書のstate artifact schemaは`0.1`を維持する。Append-only event / auditはmigrationでrewriteせずreader compatibilityで扱う。詳細は`docs/schema-evolution-v0.md`を参照する。
+
 ## 目的
 
 State Store は、Kairon の canonical state を JSON / JSONL / MD ファイルとして保存し、Agent 出力を検証して反映する境界を定義する。
@@ -436,6 +438,8 @@ kairon state backup restore <backup-id> --source D:\KaironBackups\<backup-id> --
 `rehearse`はOS temporary directoryへ展開してstate integrity checkを実行し、終了時に必ず隔離directoryを削除する。現在のproject stateは変更しない。
 
 `restore`はruntime停止とbackup IDの完全一致確認を必須とする。適用前に現行state snapshotを作成し、適用後にstate integrity checkを実行する。
+
+Config schema migrationも同じbackup contractを利用する。`kairon migrate apply`はfresh backup後にのみconfigを書き換え、失敗時は`.kairon/migrations/in-progress.json`へbackup IDと明示restore commandを残す。
 restoreが途中停止または失敗した場合は`.kairon/runtime/state-backup-restore.json`を残す。自動継続や自動rollbackは行わず、`kairon recovery list`で確認してからmarker内の`pre_restore_snapshot_id`を使用して明示的にrollbackする。
 
 ```text

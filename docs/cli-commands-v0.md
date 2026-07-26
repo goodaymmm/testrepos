@@ -2,13 +2,15 @@
 
 ## 目的
 
-この文書はT166時点のLocal Betaで実装済みの`kairon` CLI command仕様を定義する。歴史的なMVP判断は該当節に残すが、Command Listと各command節は現行実装を基準とする。
+この文書はT180時点のLocal RCで実装済みの`kairon` CLI command仕様を定義する。歴史的なMVP判断は該当節に残すが、Command Listと各command節は現行実装を基準とする。
 
 ## Command List
 
 ```text
 kairon init
 kairon migrate
+kairon migrate plan
+kairon migrate apply <plan-id> --confirm <plan-id>
 kairon doctor
 kairon projects register <root> [--format text|json]
 kairon projects unregister <project-id> [--format text|json]
@@ -165,30 +167,51 @@ registryにtoken、cookie、approval detail、task本文、raw environment、sou
 
 ## kairon migrate
 
-既存 `.kairon/config/*.json` を現在のschemaやCLI名に合わせて移行する。
+既存`.kairon/config/*.json`をcurrent config schemaへ移行する。config schemaとcanonical
+state schemaは別registryで管理し、append-only event / auditはmigrationで書き換えない。
 
 ```text
+kairon migrate plan
+kairon migrate apply <plan-id> --confirm <plan-id>
+
+# 既存互換経路
 kairon migrate --dry-run
 kairon migrate
 ```
 
-処理。
+`plan`は全configを読み、変更対象の`from -> to` step、入力・出力SHA-256、変更path、
+non-reversible属性を`.kairon/migrations/plans/MIG-*.json`へ保存する。config本文やsecret値は
+planへ保存しない。current schemaへ到達済みの場合は`up_to_date`を返す。
 
 ```text
-load existing config
-detect required migrations
-show dry-run diff if requested
-create .bak-YYYYMMDDHHmmss before writing
-write migrated config
-validate config
+inspect every config schema and input digest
+deny corrupt, unsupported older, and unknown newer schemas
+build deterministic from -> to steps
+persist a secret-free migration plan
 ```
 
-MVPでは、旧 `agents.gemini` 設定を AntigravityCLI 設定へ移行する。
+`apply`はruntime停止、plan IDと`--confirm`の完全一致、plan digest、全config input digestを
+再検証する。write前にfresh state backupを作成し、atomic write後にconfig validation、
+state integrity、doctorのconfig checkを実行する。成功結果は
+`.kairon/migrations/results/`へ保存され、同じplanの再実行はwriteなしで
+`already_applied`を返す。
 
 ```text
-agents.gemini.adapter: gemini_cli -> antigravity_cli
-agents.gemini.command: gemini -> agy
+runtime must be stopped
+verify exact plan and complete config inventory
+create fresh state backup
+write deterministic outputs atomically
+run config, state, and doctor post-checks
+persist applied result or recovery marker
 ```
+
+unknown newer schemaはdefault denyであり、自動downgradeしない。apply失敗時は
+`.kairon/migrations/in-progress.json`へbackup ID、失敗stage、復旧commandを残す。
+復旧は記録された`kairon state backup restore <backup-id> --confirm <backup-id>`を
+operatorが確認して実行する。詳細は`docs/schema-evolution-v0.md`を参照する。
+
+現行migrationには旧`agents.gemini` adapter / commandのAntigravityCLI正規化と、
+欠落したcurrent defaultの補完が含まれる。
 
 ## kairon doctor
 
