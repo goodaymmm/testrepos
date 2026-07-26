@@ -18,7 +18,8 @@ export type GitHubReleaseOperation =
   | "create_release"
   | "upload_asset"
   | "download_asset"
-  | "publish_release";
+  | "publish_release"
+  | "promote_release";
 
 export class GitHubReleaseClientError extends Error {
   constructor(
@@ -120,6 +121,13 @@ export type PublishGitHubReleaseRequest = {
   token: string;
 };
 
+export type PromoteGitHubReleaseRequest = {
+  repository: string;
+  releaseId: number;
+  name: string;
+  token: string;
+};
+
 export type GitHubReleaseClient = {
   listReleases(request: ListGitHubReleasesRequest): Promise<GitHubReleaseRecord[]>;
   inspect(request: InspectGitHubReleaseRequest): Promise<GitHubReleaseInspection>;
@@ -128,6 +136,7 @@ export type GitHubReleaseClient = {
   uploadAsset(request: UploadGitHubReleaseAssetRequest): Promise<GitHubReleaseAsset>;
   downloadAsset(request: DownloadGitHubReleaseAssetRequest): Promise<Uint8Array>;
   publishRelease(request: PublishGitHubReleaseRequest): Promise<GitHubReleaseRecord>;
+  promoteRelease(request: PromoteGitHubReleaseRequest): Promise<GitHubReleaseRecord>;
 };
 
 export const defaultGitHubReleaseClient: GitHubReleaseClient = {
@@ -137,7 +146,8 @@ export const defaultGitHubReleaseClient: GitHubReleaseClient = {
   createDraftRelease: createDraftGitHubRelease,
   uploadAsset: uploadGitHubReleaseAsset,
   downloadAsset: downloadGitHubReleaseAsset,
-  publishRelease: publishGitHubRelease
+  publishRelease: publishGitHubRelease,
+  promoteRelease: promoteGitHubRelease
 };
 
 export async function listGitHubReleases(
@@ -296,6 +306,26 @@ export async function publishGitHubRelease(
     }
   );
   return normalizeRelease(response, "publish_release");
+}
+
+export async function promoteGitHubRelease(
+  request: PromoteGitHubReleaseRequest
+): Promise<GitHubReleaseRecord> {
+  const repository = parseRepository(request.repository);
+  const response = await fetchJsonRecord(
+    `${repositoryApiPrefix(repository)}/releases/${request.releaseId}`,
+    request.token,
+    "promote_release",
+    {
+      method: "PATCH",
+      body: JSON.stringify({
+        name: request.name,
+        draft: false,
+        prerelease: false
+      })
+    }
+  );
+  return normalizeRelease(response, "promote_release");
 }
 
 async function fetchOptionalJsonRecord(

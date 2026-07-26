@@ -7,6 +7,10 @@ import {
   setUpdateChannel,
   showUpdateChannel
 } from "../src/update/channel.js";
+import {
+  readStableReleasePromotion,
+  recordStableReleasePromotion
+} from "../src/update/registry.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("update channel", () => {
@@ -78,5 +82,33 @@ describe("update channel", () => {
     expect(isVersionAllowedByChannel({ ...pinned, channel: "beta" }, "0.2.0", true))
       .toBe(true);
     expect(compareCoreVersions("1.0.0", "0.9.9")).toBeGreaterThan(0);
+  });
+
+  it("records a sanitized Stable release pointer independently of channel selection", async () => {
+    const root = await createTempProject();
+    await recordStableReleasePromotion(root, {
+      schema_version: "0.1",
+      artifact_kind: "stable_release_pointer",
+      repository: "goodaymmm/Kairon",
+      base_branch: "main",
+      version: "0.3.0",
+      tag: "v0.3.0",
+      source_commit: "a".repeat(40),
+      release_id: 162,
+      promotion_plan_id: "REL-0001",
+      promotion_plan_digest: `sha256:${"b".repeat(64)}`,
+      sbom_sha256: "c".repeat(64),
+      provenance_sha256: "d".repeat(64),
+      promoted_at: "2026-07-26T00:00:00.000Z"
+    });
+
+    await expect(readStableReleasePromotion(root)).resolves.toMatchObject({
+      version: "0.3.0",
+      release_id: 162,
+      promotion_plan_id: "REL-0001"
+    });
+    await expect(showUpdateChannel(root)).resolves.toMatchObject({
+      status: "unconfigured"
+    });
   });
 });

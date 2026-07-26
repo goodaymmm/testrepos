@@ -71,9 +71,9 @@ local build provenanceのhashを記録します。npm tar metadataの時刻差�
 commitから同じinventoryと検証可能metadataを得られることを再現性の基準とします。
 詳細は`docs/release-provenance-v0.md`を参照します。
 
-現行のGitHub Release publication contractはT179でSBOM/provenance assetへ拡張します。
-T178時点のlocal verificationでは5ファイルを同じdirectoryへ配置します。配布担当者は
-承認済みの`kairon release github publish`だけを使い、利用前にremote artifactを再検証します。
+GitHub Release publication contractはattestation付きmanifestでSBOM/provenanceを含む
+5ファイルを同じreleaseへ配置します。配布担当者は承認済みの
+`kairon release github publish`だけを使い、利用前にremote artifactを再検証します。
 
 ```powershell
 kairon release github verify --version 0.3.0 --repository owner/repo
@@ -82,7 +82,10 @@ kairon release verify .\kairon-0.3.0.tgz `
   --release-manifest .\release-manifest.json
 ```
 
-GitHub Releaseの既定channelはprereleaseです。stable releaseを利用する場合は、配布側のplan / verifyで`--stable`が明示され、tag SHAとmanifestのsource commitが一致していることを確認します。
+GitHub Releaseの既定channelはprereleaseです。既存prereleaseをStableへ昇格する場合は
+`kairon release github promote plan`と`promote apply`を使い、昇格後のverifyへ`--stable`を
+指定します。promotionは既存assetを差し替えず、tag SHA、manifest source commit、5 assetの
+ID / digestがplanと一致する場合だけ実行されます。
 
 ## First Install
 

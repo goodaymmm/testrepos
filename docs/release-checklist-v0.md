@@ -204,16 +204,52 @@ kairon release github verify `
   --repository owner/repo
 ```
 
-- 既定はprerelease。stable公開時だけplanとverifyの両方へ`--stable`を付ける。
+- 既定はprerelease。attestation付きmanifestではpackage、checksum manifest、
+  release manifest、SBOM、provenanceの5 assetを同一releaseへ公開する。
 - plan作成後に`main`、local HEAD、release artifact、approval bindingが変化した場合はpublishしない。
 - approvalの`plan_id`、`plan_digest`、artifact pathが一致し、decisionが`approve`の場合だけpublishする。
 - tag、release、asset nameが既存の場合はsource SHA、channel、asset SHA-256が完全一致することを確認する。
 - network / rate limitによる途中失敗は同じplan IDで再実行し、検証済みassetを重複uploadしない。
 - result artifactにはtokenやraw GitHub responseを含めず、tag SHA、release ID、asset ID / size / SHA-256、正規化errorだけを残す。
 
+### Guarded Stable Promotion
+
+検証済みprereleaseをStableへ変更する場合は、新規Stable releaseを作らず専用promotion経路を
+使います。promotion中のasset upload、release削除、tag更新、asset上書きは禁止です。
+
+```powershell
+kairon release github promote plan `
+  --version 0.3.0 `
+  --repository owner/repo `
+  --expires-in-minutes 30
+
+kairon approval show APR-0002
+kairon approval decide APR-0002 --action approve --reason "Stable promotion approved"
+
+kairon release github promote apply REL-0002 `
+  --approval-id APR-0002 `
+  --confirm REL-0002
+
+kairon release github verify `
+  --version 0.3.0 `
+  --repository owner/repo `
+  --stable
+```
+
+- planはrelease ID、tag SHA、source commit、5 assetのID / size / SHA-256、
+  SBOM / provenance digest、有効期限を固定する。
+- applyはlock取得後にclean HEAD、local asset、remote branch / tag / release / assetを再取得し、
+  完全一致時だけprerelease flagを解除する。
+- stale、expired、approval取り違え、追加・欠落・差替えasset、tag / release ID driftは
+  GitHub write前にblockする。
+- 完全一致したStableへの再実行は`already_promoted`とし、GitHub writeを行わない。
+- 成功時はsanitized auditに加えて`.kairon/update/stable-release.json`へStable versionを記録する。
+
 ## Verified Update And Rollback
 
 release利用側では`stable | beta | pinned`のmanual channelを明示設定し、check / download / applyを分離します。
+attestation付きreleaseは5 assetをdownloadし、SBOM / provenanceをrelease manifestとともに
+user-local cacheで再検証します。
 
 ```powershell
 kairon update channel set beta --repository owner/repo --write --confirm beta

@@ -20,6 +20,8 @@ export type VerifiedUpdateDownload = {
   package_path: string;
   checksum_manifest_path: string;
   release_manifest_path: string;
+  sbom_path?: string;
+  provenance_path?: string;
   downloaded_at: string;
 };
 
@@ -51,6 +53,22 @@ export type UpdateRegistry = {
   automatic_updates: false;
   history: UpdateRegistryHistoryEntry[];
   updated_at: string;
+};
+
+export type StableReleasePointer = {
+  schema_version: "0.1";
+  artifact_kind: "stable_release_pointer";
+  repository: string;
+  base_branch: string;
+  version: string;
+  tag: string;
+  source_commit: string;
+  release_id: number;
+  promotion_plan_id: string;
+  promotion_plan_digest: string;
+  sbom_sha256: string;
+  provenance_sha256: string;
+  promoted_at: string;
 };
 
 export async function loadUpdateRegistry(
@@ -207,6 +225,41 @@ export async function writeVerifiedUpdateDownload(
   return filePath;
 }
 
+export async function recordStableReleasePromotion(
+  projectRoot: string,
+  pointer: StableReleasePointer
+): Promise<string> {
+  if (!isStableReleasePointer(pointer)) {
+    throw new Error("Stable release pointer is invalid.");
+  }
+  const filePath = stableReleasePointerPath(projectRoot);
+  await writeJsonFileAtomic(filePath, pointer);
+  return filePath;
+}
+
+export async function readStableReleasePromotion(
+  projectRoot: string
+): Promise<StableReleasePointer | null> {
+  const filePath = stableReleasePointerPath(projectRoot);
+  let value: unknown;
+  try {
+    value = JSON.parse(await readFile(filePath, "utf8")) as unknown;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return null;
+    }
+    throw new Error(`Failed to read stable release pointer ${filePath}.`);
+  }
+  if (!isStableReleasePointer(value)) {
+    throw new Error(`Stable release pointer is invalid: ${filePath}`);
+  }
+  return value;
+}
+
+export function stableReleasePointerPath(projectRoot: string): string {
+  return resolveInside(projectRoot, ".kairon", "update", "stable-release.json");
+}
+
 export function updateRegistryPath(projectRoot: string): string {
   return resolveInside(projectRoot, ".kairon", "update", "registry.json");
 }
@@ -252,8 +305,42 @@ function isVerifiedUpdateDownload(value: unknown): value is VerifiedUpdateDownlo
     isAbsolutePath(candidate.package_path) &&
     isAbsolutePath(candidate.checksum_manifest_path) &&
     isAbsolutePath(candidate.release_manifest_path) &&
+    (candidate.sbom_path === undefined || isAbsolutePath(candidate.sbom_path)) &&
+    (candidate.provenance_path === undefined || isAbsolutePath(candidate.provenance_path)) &&
+    ((candidate.sbom_path === undefined) === (candidate.provenance_path === undefined)) &&
     typeof candidate.downloaded_at === "string" &&
     !Number.isNaN(Date.parse(candidate.downloaded_at));
+}
+
+function isStableReleasePointer(value: unknown): value is StableReleasePointer {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Partial<StableReleasePointer>;
+  return candidate.schema_version === "0.1" &&
+    candidate.artifact_kind === "stable_release_pointer" &&
+    typeof candidate.repository === "string" &&
+    /^[^/\s]+\/[^/\s]+$/u.test(candidate.repository) &&
+    typeof candidate.base_branch === "string" &&
+    candidate.base_branch.length > 0 &&
+    typeof candidate.version === "string" &&
+    isCoreVersion(candidate.version) &&
+    candidate.tag === `v${candidate.version}` &&
+    typeof candidate.source_commit === "string" &&
+    /^[a-f0-9]{40,64}$/u.test(candidate.source_commit) &&
+    typeof candidate.release_id === "number" &&
+    Number.isInteger(candidate.release_id) &&
+    candidate.release_id > 0 &&
+    typeof candidate.promotion_plan_id === "string" &&
+    /^REL-\d{4,}$/u.test(candidate.promotion_plan_id) &&
+    typeof candidate.promotion_plan_digest === "string" &&
+    /^sha256:[a-f0-9]{64}$/u.test(candidate.promotion_plan_digest) &&
+    typeof candidate.sbom_sha256 === "string" &&
+    /^[a-f0-9]{64}$/u.test(candidate.sbom_sha256) &&
+    typeof candidate.provenance_sha256 === "string" &&
+    /^[a-f0-9]{64}$/u.test(candidate.provenance_sha256) &&
+    typeof candidate.promoted_at === "string" &&
+    !Number.isNaN(Date.parse(candidate.promoted_at));
 }
 
 function isUpdateRegistry(value: unknown): value is UpdateRegistry {

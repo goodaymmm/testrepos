@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { gzipSync } from "node:zlib";
 import {
@@ -8,6 +8,9 @@ import {
   type ReleaseInventoryEntry,
   type ReleaseManifest
 } from "../src/release/release-manifest.js";
+import { createReleaseProvenance } from "../src/release/provenance.js";
+import { createReleaseSbom } from "../src/release/sbom.js";
+import type { CommandRunner } from "../src/agents/command-runner.js";
 
 export async function createReleaseBundleFixture(
   projectRoot: string,
@@ -105,6 +108,101 @@ export async function createReleaseBundleFixture(
     writeFile(releaseManifestPath, `${JSON.stringify(releaseManifest, null, 2)}\n`, "utf8")
   ]);
   return { artifactRoot, packagePath, checksumPath, releaseManifestPath };
+}
+
+export async function createAttestedReleaseBundleFixture(
+  projectRoot: string,
+  sourceCommit: string,
+  version = "0.2.0"
+): Promise<Awaited<ReturnType<typeof createReleaseBundleFixture>> & {
+  sbomPath: string;
+  provenancePath: string;
+}> {
+  const bundle = await createReleaseBundleFixture(projectRoot, sourceCommit, version);
+  await writeFile(
+    path.join(projectRoot, "package-lock.json"),
+    `${JSON.stringify({
+      name: "kairon",
+      version,
+      lockfileVersion: 3,
+      requires: true,
+      packages: {
+        "": {
+          name: "kairon",
+          version,
+          license: "UNLICENSED"
+        }
+      }
+    }, null, 2)}\n`,
+    "utf8"
+  );
+  const sbomPath = path.join(bundle.artifactRoot, "sbom.cdx.json");
+  const provenancePath = path.join(bundle.artifactRoot, "provenance.json");
+  const runner = fixtureCommandRunner(sourceCommit);
+  const sbom = await createReleaseSbom(projectRoot, bundle.checksumPath, {
+    output: sbomPath
+  });
+  const provenance = await createReleaseProvenance(
+    projectRoot,
+    bundle.packagePath,
+    bundle.checksumPath,
+    sbomPath,
+    {
+      output: provenancePath,
+      commandRunner: runner,
+      npmVersion: "10.9.2",
+      nodeVersion: "v22.17.0",
+      now: () => new Date("2026-07-22T00:00:30.000Z")
+    }
+  );
+  const manifest = JSON.parse(
+    await readFile(bundle.releaseManifestPath, "utf8")
+  ) as ReleaseManifest;
+  manifest.attestations = {
+    sbom: {
+      file: path.basename(sbomPath),
+      format: "cyclonedx-json",
+      schema_version: "1.6",
+      sha256: sbom.sha256,
+      size_bytes: sbom.size_bytes
+    },
+    provenance: {
+      file: path.basename(provenancePath),
+      format: "kairon-local-build-provenance",
+      schema_version: "0.1",
+      sha256: provenance.sha256,
+      size_bytes: provenance.size_bytes
+    }
+  };
+  await writeFile(
+    bundle.releaseManifestPath,
+    `${JSON.stringify(manifest, null, 2)}\n`,
+    "utf8"
+  );
+  return { ...bundle, sbomPath, provenancePath };
+}
+
+function fixtureCommandRunner(sourceCommit: string): CommandRunner {
+  return async (invocation) => {
+    const stdout = invocation.command === "git" && invocation.args[0] === "rev-parse"
+      ? `${sourceCommit}\n`
+      : invocation.command === "npm"
+        ? "10.9.2\n"
+        : "";
+    return {
+      command: invocation.command,
+      args: invocation.args,
+      cwd: invocation.cwd,
+      pid: 1,
+      exitCode: 0,
+      signal: null,
+      stdout,
+      stderr: "",
+      startedAt: "2026-07-22T00:00:00.000Z",
+      finishedAt: "2026-07-22T00:00:01.000Z",
+      timedOut: false
+    };
+  };
 }
 
 function createTar(entries: Array<{ path: string; content: Buffer }>): Buffer {

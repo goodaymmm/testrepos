@@ -129,6 +129,8 @@ import {
   releaseGitHubPlanCommand,
   releaseGitHubPublishCommand,
   releaseGitHubVerifyCommand,
+  releaseStablePromotionApplyCommand,
+  releaseStablePromotionPlanCommand,
   releaseManifestCommand,
   releaseNotesCommand,
   releasePackCommand,
@@ -2026,6 +2028,51 @@ export function createProgram(): Command {
       tokenEnv?: string;
     }) => {
       console.log(await releaseGitHubVerifyCommand(process.cwd(), options));
+    });
+
+  const releaseGitHubPromote = releaseGitHub
+    .command("promote")
+    .description("Promote one verified GitHub prerelease to Stable without replacing assets.");
+
+  releaseGitHubPromote
+    .command("plan")
+    .description("Create an expiring approval-bound Stable promotion plan.")
+    .requiredOption("--version <version>", "Release version, for example 0.3.0.")
+    .requiredOption("--repository <owner/repo>", "Target GitHub repository.")
+    .option("--base-branch <branch>", "Remote release source branch. Defaults to main.")
+    .option("--artifact-dir <path>", "Local release artifact directory.")
+    .option(
+      "--expires-in-minutes <minutes>",
+      "Plan lifetime in minutes. Defaults to 30.",
+      (value: string) => Number(value)
+    )
+    .option("--token-env <envName>", "Token environment variable. Defaults to GH_TOKEN then GITHUB_TOKEN.")
+    .action(async (options: {
+      version: string;
+      repository: string;
+      baseBranch?: string;
+      artifactDir?: string;
+      expiresInMinutes?: number;
+      tokenEnv?: string;
+    }) => {
+      console.log(await releaseStablePromotionPlanCommand(process.cwd(), options));
+    });
+
+  releaseGitHubPromote
+    .command("apply")
+    .description("Promote one approved and unchanged prerelease to Stable.")
+    .argument("<plan-id>", "Stable promotion plan id.")
+    .requiredOption("--approval-id <id>", "Approval bound to the promotion plan.")
+    .requiredOption("--confirm <plan-id>", "Exact promotion plan id confirmation.")
+    .option("--token-env <envName>", "Token environment variable. Defaults to GH_TOKEN then GITHUB_TOKEN.")
+    .action(async (planId: string, options: {
+      approvalId: string;
+      confirm: string;
+      tokenEnv?: string;
+    }) => {
+      console.log(
+        await releaseStablePromotionApplyCommand(process.cwd(), planId, options)
+      );
     });
 
   release

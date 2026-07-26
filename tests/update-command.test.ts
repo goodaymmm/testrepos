@@ -16,7 +16,10 @@ import {
   rollbackUpdate
 } from "../src/update/downloader.js";
 import { loadUpdateRegistry } from "../src/update/registry.js";
-import { createReleaseBundleFixture } from "./release-test-fixture.js";
+import {
+  createAttestedReleaseBundleFixture,
+  createReleaseBundleFixture
+} from "./release-test-fixture.js";
 import { createTempProject } from "./test-utils.js";
 
 const sourceCommit = "a".repeat(40);
@@ -205,9 +208,37 @@ describe("verified update commands", () => {
     const entries = await readdir(fixture.cacheRoot).catch(() => [] as string[]);
     expect(entries.some((entry) => entry.startsWith(".partial-"))).toBe(false);
   });
+
+  it("downloads and verifies SBOM and provenance for an attested Stable release", async () => {
+    const fixture = await createUpdateFixture(true);
+    await setUpdateChannel(fixture.root, {
+      channel: "stable",
+      repository: "goodaymmm/Kairon",
+      write: true,
+      confirm: "stable",
+      now: () => new Date("2026-07-23T00:01:00.000Z")
+    });
+    fixture.release.prerelease = false;
+    fixture.release.name = "Kairon 0.2.0";
+
+    const downloaded = await downloadUpdate(
+      fixture.root,
+      "0.2.0",
+      {},
+      fixture.dependencies
+    );
+
+    expect(downloaded.download).toMatchObject({
+      release_channel: "stable",
+      sbom_path: expect.stringContaining("sbom.cdx.json"),
+      provenance_path: expect.stringContaining("provenance.json")
+    });
+    await expect(access(downloaded.download.sbom_path!)).resolves.toBeUndefined();
+    await expect(access(downloaded.download.provenance_path!)).resolves.toBeUndefined();
+  });
 });
 
-async function createUpdateFixture() {
+async function createUpdateFixture(attested = false) {
   const root = await createTempProject();
   await initializeProject({ projectRoot: root });
   await setUpdateChannel(root, {
@@ -217,12 +248,21 @@ async function createUpdateFixture() {
     confirm: "beta",
     now: () => new Date("2026-07-23T00:00:00.000Z")
   });
-  const bundle = await createReleaseBundleFixture(root, sourceCommit, "0.2.0");
-  const bytes = new Map<number, Uint8Array>([
-    [1, await readFile(bundle.packagePath)],
-    [2, await readFile(bundle.checksumPath)],
-    [3, await readFile(bundle.releaseManifestPath)]
-  ]);
+  const bundle = attested
+    ? await createAttestedReleaseBundleFixture(root, sourceCommit, "0.2.0")
+    : await createReleaseBundleFixture(root, sourceCommit, "0.2.0");
+  const files = [
+    bundle.packagePath,
+    bundle.checksumPath,
+    bundle.releaseManifestPath
+  ];
+  if ("sbomPath" in bundle && "provenancePath" in bundle) {
+    files.push(bundle.sbomPath as string, bundle.provenancePath as string);
+  }
+  const bytes = new Map<number, Uint8Array>();
+  for (const [index, file] of files.entries()) {
+    bytes.set(index + 1, await readFile(file));
+  }
   const release: GitHubReleaseRecord = {
     id: 163,
     tag_name: "v0.2.0",
@@ -230,11 +270,12 @@ async function createUpdateFixture() {
     draft: false,
     prerelease: true,
     html_url: "https://github.com/goodaymmm/Kairon/releases/tag/v0.2.0",
-    assets: [
-      { id: 1, name: "kairon-0.2.0.tgz", size_bytes: bytes.get(1)!.byteLength, state: "uploaded" },
-      { id: 2, name: "kairon-0.2.0.tgz.sha256.json", size_bytes: bytes.get(2)!.byteLength, state: "uploaded" },
-      { id: 3, name: "release-manifest.json", size_bytes: bytes.get(3)!.byteLength, state: "uploaded" }
-    ]
+    assets: files.map((file, index) => ({
+      id: index + 1,
+      name: path.basename(file),
+      size_bytes: bytes.get(index + 1)!.byteLength,
+      state: "uploaded"
+    }))
   };
   const client: GitHubReleaseClient = {
     listReleases: vi.fn(async () => [release]),
@@ -249,7 +290,8 @@ async function createUpdateFixture() {
     createTag: vi.fn(async () => { throw new Error("not used"); }),
     createDraftRelease: vi.fn(async () => { throw new Error("not used"); }),
     uploadAsset: vi.fn(async () => { throw new Error("not used"); }),
-    publishRelease: vi.fn(async () => { throw new Error("not used"); })
+    publishRelease: vi.fn(async () => { throw new Error("not used"); }),
+    promoteRelease: vi.fn(async () => { throw new Error("not used"); })
   };
   const cacheRoot = path.join(
     os.tmpdir(),
@@ -261,7 +303,7 @@ async function createUpdateFixture() {
     env: { GH_TOKEN: "secret-token" },
     now: () => new Date("2026-07-23T00:02:00.000Z")
   };
-  return { root, cacheRoot, client, dependencies };
+  return { root, cacheRoot, client, release, dependencies };
 }
 
 function commandResult(

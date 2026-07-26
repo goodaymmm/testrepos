@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type {
   CliInvocation,
@@ -10,7 +11,9 @@ import { ApprovalQueue } from "../src/approvals/approval-queue.js";
 import {
   releaseGitHubPlanCommand,
   releaseGitHubPublishCommand,
-  releaseGitHubVerifyCommand
+  releaseGitHubVerifyCommand,
+  releaseStablePromotionApplyCommand,
+  releaseStablePromotionPlanCommand
 } from "../src/cli/commands/release.js";
 import { readJsonFile } from "../src/core/fs/json-file.js";
 import {
@@ -26,6 +29,7 @@ import type {
   GitHubReleaseInspection,
   GitHubReleaseRecord,
   InspectGitHubReleaseRequest,
+  PromoteGitHubReleaseRequest,
   PublishGitHubReleaseRequest,
   UploadGitHubReleaseAssetRequest
 } from "../src/github/release-client.js";
@@ -40,7 +44,17 @@ import {
   type GitHubReleasePlan,
   type GitHubReleaseResult
 } from "../src/release/github-release.js";
-import { createReleaseBundleFixture } from "./release-test-fixture.js";
+import {
+  applyStablePromotion,
+  planStablePromotion,
+  stablePromotionPlanPath,
+  stablePromotionResultPath
+} from "../src/release/stable-promotion.js";
+import { readStableReleasePromotion } from "../src/update/registry.js";
+import {
+  createAttestedReleaseBundleFixture,
+  createReleaseBundleFixture
+} from "./release-test-fixture.js";
 import { createTempProject } from "./test-utils.js";
 
 const sourceCommit = "a".repeat(40);
@@ -300,6 +314,175 @@ describe("GitHub release commands", () => {
     expect(publishText).toContain("Kairon GitHub release published.");
     expect(verifyText).toContain("Kairon GitHub release verified.");
   });
+
+  it("promotes an approval-bound five-asset prerelease without replacing assets", async () => {
+    const fixture = await createPromotionFixture();
+    const planned = await planStablePromotion(
+      fixture.root,
+      request(),
+      fixture.deps
+    );
+
+    expect(planned).toMatchObject({
+      status: "approval_required",
+      execution_performed: false,
+      plan: {
+        release_id: 162,
+        source_commit: sourceCommit,
+        sbom_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        provenance_sha256: expect.stringMatching(/^[a-f0-9]{64}$/u),
+        expires_at: "2026-07-22T01:30:00.000Z"
+      }
+    });
+    expect(planned.plan?.assets).toHaveLength(5);
+    const approval = await new ApprovalQueue(fixture.root).show(
+      planned.plan!.approval_id
+    );
+    expect(approval).toMatchObject({
+      type: "github_release_promote",
+      plan_id: planned.plan?.plan_id,
+      plan_digest: planned.plan?.plan_digest,
+      release_id: 162
+    });
+    await new ApprovalQueue(fixture.root).decide({
+      approvalId: planned.plan!.approval_id,
+      action: "approve"
+    });
+
+    const applied = await applyStablePromotion(fixture.root, {
+      planId: planned.plan!.plan_id,
+      approvalId: planned.plan!.approval_id,
+      confirm: planned.plan!.plan_id
+    }, fixture.deps);
+    const repeated = await applyStablePromotion(fixture.root, {
+      planId: planned.plan!.plan_id,
+      approvalId: planned.plan!.approval_id,
+      confirm: planned.plan!.plan_id
+    }, fixture.deps);
+    const verified = await verifyGitHubRelease(
+      fixture.root,
+      { ...request(), stable: true },
+      fixture.deps
+    );
+    const pointer = await readStableReleasePromotion(fixture.root);
+
+    expect(applied).toMatchObject({
+      status: "promoted",
+      execution_performed: true,
+      result: {
+        status: "promoted",
+        idempotent: false
+      }
+    });
+    expect(applied.result?.assets).toHaveLength(5);
+    expect(repeated).toMatchObject({
+      status: "already_promoted",
+      execution_performed: false,
+      result: {
+        status: "already_promoted",
+        attempts: 2,
+        idempotent: true
+      }
+    });
+    expect(verified).toMatchObject({
+      status: "verified",
+      execution_performed: false
+    });
+    expect(verified.assets).toHaveLength(5);
+    expect(fixture.client.promoteCalls).toBe(1);
+    expect(fixture.client.uploadCalls).toBe(0);
+    expect(pointer).toMatchObject({
+      version: "0.2.0",
+      release_id: 162,
+      promotion_plan_id: planned.plan?.plan_id
+    });
+    expect(JSON.stringify(applied)).not.toContain("secret-token");
+  });
+
+  it("blocks expired and drifted promotion plans before GitHub write", async () => {
+    const expiredFixture = await createPromotionFixture();
+    const expiredPlan = await planStablePromotion(
+      expiredFixture.root,
+      { ...request(), expiresInMinutes: 1 },
+      expiredFixture.deps
+    );
+    await new ApprovalQueue(expiredFixture.root).decide({
+      approvalId: expiredPlan.plan!.approval_id,
+      action: "approve"
+    });
+    const expired = await applyStablePromotion(expiredFixture.root, {
+      planId: expiredPlan.plan!.plan_id,
+      approvalId: expiredPlan.plan!.approval_id,
+      confirm: expiredPlan.plan!.plan_id
+    }, {
+      ...expiredFixture.deps,
+      now: () => new Date("2026-07-22T01:02:00.000Z")
+    });
+
+    expect(expired).toMatchObject({
+      status: "blocked",
+      reason: "promotion_plan_expired",
+      execution_performed: false
+    });
+    expect(expiredFixture.client.promoteCalls).toBe(0);
+
+    const driftFixture = await createPromotionFixture();
+    const driftPlan = await planStablePromotion(
+      driftFixture.root,
+      request(),
+      driftFixture.deps
+    );
+    await new ApprovalQueue(driftFixture.root).decide({
+      approvalId: driftPlan.plan!.approval_id,
+      action: "approve"
+    });
+    driftFixture.client.tagSha = "b".repeat(40);
+    const drifted = await applyStablePromotion(driftFixture.root, {
+      planId: driftPlan.plan!.plan_id,
+      approvalId: driftPlan.plan!.approval_id,
+      confirm: driftPlan.plan!.plan_id
+    }, driftFixture.deps);
+
+    expect(drifted).toMatchObject({
+      status: "blocked",
+      reason: "tag_sha_drift",
+      execution_performed: false
+    });
+    expect(driftFixture.client.promoteCalls).toBe(0);
+  });
+
+  it("exposes Stable promotion plan and apply through release handlers", async () => {
+    const fixture = await createPromotionFixture();
+    const planText = await releaseStablePromotionPlanCommand(
+      fixture.root,
+      request(),
+      fixture.deps
+    );
+    const plan = await readJsonFile<{
+      plan_id: string;
+      approval_id: string;
+    }>(stablePromotionPlanPath(fixture.root, "REL-0001"));
+    await new ApprovalQueue(fixture.root).decide({
+      approvalId: plan.approval_id,
+      action: "approve"
+    });
+    const applyText = await releaseStablePromotionApplyCommand(
+      fixture.root,
+      plan.plan_id,
+      {
+        approvalId: plan.approval_id,
+        confirm: plan.plan_id
+      },
+      fixture.deps
+    );
+
+    expect(planText).toContain("Kairon Stable promotion plan created.");
+    expect(planText).toContain("assets=5");
+    expect(applyText).toContain("promoted to Stable");
+    await expect(readJsonFile(
+      stablePromotionResultPath(fixture.root, plan.plan_id)
+    )).resolves.toMatchObject({ status: "promoted" });
+  });
 });
 
 async function createFixture(): Promise<{
@@ -317,6 +500,31 @@ async function createFixture(): Promise<{
   await initializeProject({ projectRoot: root });
   const bundle = await createReleaseBundleFixture(root, sourceCommit);
   const client = new FakeGitHubReleaseClient(sourceCommit);
+  return {
+    root,
+    bundle,
+    client,
+    deps: {
+      env: { GH_TOKEN: "secret-token" },
+      client,
+      commandRunner: cleanGitRunner,
+      now: () => new Date("2026-07-22T01:00:00.000Z")
+    }
+  };
+}
+
+async function createPromotionFixture() {
+  const root = await createTempProject();
+  await initializeProject({ projectRoot: root });
+  const bundle = await createAttestedReleaseBundleFixture(root, sourceCommit);
+  const client = new FakeGitHubReleaseClient(sourceCommit);
+  await client.seedPublishedPrereleaseBundle([
+    bundle.packagePath,
+    bundle.checksumPath,
+    bundle.releaseManifestPath,
+    bundle.sbomPath,
+    bundle.provenancePath
+  ]);
   return {
     root,
     bundle,
@@ -370,6 +578,7 @@ class FakeGitHubReleaseClient implements GitHubReleaseClient {
   createReleaseCalls = 0;
   uploadCalls = 0;
   publishCalls = 0;
+  promoteCalls = 0;
   failUploadNumber?: number;
   failDownloads = false;
   private nextAssetId = 1;
@@ -461,6 +670,17 @@ class FakeGitHubReleaseClient implements GitHubReleaseClient {
     return { ...this.release, assets: [...this.release.assets] };
   }
 
+  async promoteRelease(request: PromoteGitHubReleaseRequest) {
+    this.promoteCalls += 1;
+    this.release = {
+      ...this.release!,
+      name: request.name,
+      draft: false,
+      prerelease: false
+    };
+    return { ...this.release, assets: [...this.release.assets] };
+  }
+
   seedPublishedAsset(name: string, content: Uint8Array): void {
     this.tagSha = sourceCommit;
     const asset: GitHubReleaseAsset = {
@@ -479,6 +699,32 @@ class FakeGitHubReleaseClient implements GitHubReleaseClient {
       prerelease: true,
       html_url: "https://github.com/goodaymmm/Kairon/releases/tag/v0.2.0",
       assets: [asset]
+    };
+  }
+
+  async seedPublishedPrereleaseBundle(files: string[]): Promise<void> {
+    this.tagSha = sourceCommit;
+    const assets: GitHubReleaseAsset[] = [];
+    for (const file of files) {
+      const content = new Uint8Array(await readFile(file));
+      const asset: GitHubReleaseAsset = {
+        id: this.nextAssetId++,
+        name: path.basename(file),
+        size_bytes: content.byteLength,
+        state: "uploaded",
+        digest: `sha256:${hash(content)}`
+      };
+      this.content.set(asset.id, content);
+      assets.push(asset);
+    }
+    this.release = {
+      id: 162,
+      tag_name: "v0.2.0",
+      name: "Kairon 0.2.0 Local Beta",
+      draft: false,
+      prerelease: true,
+      html_url: "https://github.com/goodaymmm/Kairon/releases/tag/v0.2.0",
+      assets
     };
   }
 }

@@ -39,6 +39,14 @@ import {
   type GitHubReleasePublishRequest,
   type GitHubReleaseVerifyRequest
 } from "../../release/github-release.js";
+import {
+  applyStablePromotion,
+  formatStablePromotionResult,
+  planStablePromotion,
+  type StablePromotionApplyRequest,
+  type StablePromotionDependencies,
+  type StablePromotionPlanRequest
+} from "../../release/stable-promotion.js";
 
 export type ReleaseCheckResult = {
   schema_version: string;
@@ -151,6 +159,11 @@ export type ReleaseGitHubPublishCommandOptions = Omit<
   "planId"
 >;
 export type ReleaseGitHubVerifyCommandOptions = GitHubReleaseVerifyRequest;
+export type ReleaseStablePromotionPlanCommandOptions = StablePromotionPlanRequest;
+export type ReleaseStablePromotionApplyCommandOptions = Omit<
+  StablePromotionApplyRequest,
+  "planId"
+>;
 
 type PackageJson = {
   version?: unknown;
@@ -319,6 +332,29 @@ export async function releaseGitHubVerifyCommand(
 ): Promise<string> {
   return formatGitHubReleaseResult(
     await verifyGitHubRelease(projectRoot, options, deps),
+    projectRoot
+  );
+}
+
+export async function releaseStablePromotionPlanCommand(
+  projectRoot: string,
+  options: ReleaseStablePromotionPlanCommandOptions,
+  deps: StablePromotionDependencies = {}
+): Promise<string> {
+  return formatStablePromotionResult(
+    await planStablePromotion(projectRoot, options, deps),
+    projectRoot
+  );
+}
+
+export async function releaseStablePromotionApplyCommand(
+  projectRoot: string,
+  planId: string,
+  options: ReleaseStablePromotionApplyCommandOptions,
+  deps: StablePromotionDependencies = {}
+): Promise<string> {
+  return formatStablePromotionResult(
+    await applyStablePromotion(projectRoot, { planId, ...options }, deps),
     projectRoot
   );
 }

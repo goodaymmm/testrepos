@@ -6,6 +6,7 @@ import {
   GitHubReleaseClientError,
   inspectGitHubRelease,
   listGitHubReleases,
+  promoteGitHubRelease,
   publishGitHubRelease,
   uploadGitHubReleaseAsset
 } from "../src/github/release-client.js";
@@ -142,6 +143,12 @@ describe("GitHub release client", () => {
       prerelease: true,
       token: "secret-token"
     });
+    await promoteGitHubRelease({
+      repository: "goodaymmm/Kairon",
+      releaseId: 162,
+      name: "Kairon 0.2.0",
+      token: "secret-token"
+    });
 
     const calls = fetchMock.mock.calls.map(([url, init]) => ({
       url: String(url),
@@ -162,6 +169,11 @@ describe("GitHub release client", () => {
     });
     expect(calls[3].init?.headers).toMatchObject({
       Accept: "application/octet-stream"
+    });
+    expect(JSON.parse(String(calls[5].init?.body))).toEqual({
+      name: "Kairon 0.2.0",
+      draft: false,
+      prerelease: false
     });
     expect(JSON.stringify(calls.map((call) => call.url))).not.toContain("secret-token");
   });

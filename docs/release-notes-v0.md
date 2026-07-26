@@ -10,6 +10,10 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
   provenanceとともにpackage、checksum manifest、source commitへbindするrelease contractを追加。
 - `kairon release sbom`、`kairon release provenance`を追加し、`release manifest`と
   `release verify`でSBOM/provenanceのsize、SHA-256、lockfile、inventory、source driftを検証。
+- T179で公開済みGitHub prereleaseを同一tag・source・5 assetのままStableへ昇格する
+  approval-gated promotion plan/applyを追加。
+- promotion planへrelease ID、asset ID/digest、SBOM/provenance digest、expiryを固定し、
+  fresh preflight、exact confirm、idempotent再実行、Stable pointer記録を追加。
 
 各PR本文とmerge履歴を一次記録とし、local operation resultやgenerated evidenceはrelease
 notesへ埋め込まず、再実行方法と判定結果だけを記録します。
@@ -82,7 +86,7 @@ notesへ埋め込まず、再実行方法と判定結果だけを記録します
 ### Known Limitations
 
 - public npm registryへpublishしない。
-- `0.3.0`はLocal RCであり、GitHub prereleaseへのpublishとremote asset再検証はT179で行う。
+- `0.3.0`はLocal RCであり、GitHub prereleaseへのpublishとStable昇格は専用のapproval-bound commandによる明示操作とする。
 - npm tar metadataの時刻差を許容し、再現性は同一source commit、正規化inventory、runtime support、検証可能metadataで判定する。
 - background auto-updateとsilent updateは提供しない。
 

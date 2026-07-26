@@ -615,9 +615,14 @@ release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動�
 
 local packageはpublic npm registryへpublishせず、`npm run release:pack`でchecksummed tarballを生成します。Windowsでのinstall、update/rollback、uninstall手順は [docs/installation.md](docs/installation.md) を参照してください。uninstallはprojectの`.kairon/`を削除しません。
 
-検証済みartifactは`kairon release github plan`で高risk approvalへbindし、承認後に`kairon release github publish`でGitHub Releaseへ配布できます。既定はprereleaseで、publish時にplan IDの完全一致確認、approval binding、local / remote source SHA、asset SHA-256を再検証します。`kairon release github verify`は公開assetを再downloadしてmanifestへ照合します。
+検証済みartifactは`kairon release github plan`で高risk approvalへbindし、承認後に`kairon release github publish`でGitHub Releaseへ配布できます。attestation付きreleaseはpackage、checksum manifest、release manifest、SBOM、provenanceの5 assetを公開し、publish時にplan IDの完全一致確認、approval binding、local / remote source SHA、asset SHA-256を再検証します。`kairon release github verify`は公開assetを再downloadしてmanifestへ照合します。
 
-利用側は`kairon update channel set`で`stable | beta | pinned`を明示設定し、`update check`、`update download`、`update apply`を分離して実行できます。downloadはuser-local cacheで3 assetとtag SHAを検証し、apply / rollbackはexact confirm後に既存PowerShell lifecycleへ渡します。成功時だけupdate registryを更新し、background auto-updateは行いません。
+検証済みprereleaseをStableへ昇格する場合は`kairon release github promote plan`と
+`promote apply`を使います。planはrelease / tag / source / 5 asset / attestation digest / expiryを
+固定し、fresh preflightが完全一致する場合だけprerelease flagを解除します。promotion中にasset、
+tag、release identityを差し替えず、再実行済みの場合はGitHub writeなしで`already_promoted`を返します。
+
+利用側は`kairon update channel set`で`stable | beta | pinned`を明示設定し、`update check`、`update download`、`update apply`を分離して実行できます。downloadはuser-local cacheで旧releaseの3 assetまたはattestation付きreleaseの5 assetとtag SHAを検証し、apply / rollbackはexact confirm後に既存PowerShell lifecycleへ渡します。成功時だけupdate registryを更新し、background auto-updateは行いません。
 
 ### 初期運用テストの履歴 (T11-T15)
 
