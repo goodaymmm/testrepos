@@ -196,7 +196,7 @@ kairon support bundle --output C:\path\to\support-output
 kairon support verify C:\path\to\support-output\kairon-support-SUP-0001.zip
 ```
 
-障害調査用bundleはsystem、runtime、queue、provider、workflow、notification、integrityのallowlist済みsummaryだけを収録します。project source、`.env`、credential、raw stdout / stderr、prompt、diff、logはcopyしません。archive生成前後にsecret pattern scanを行い、ZIP内のpath、CRC、SHA-256 manifestも再検証します。自動uploadやclipboard copyは行いません。安全境界と共有前の確認事項は [docs/support-bundle-v0.md](docs/support-bundle-v0.md) を参照してください。
+障害調査用bundleはsystem、runtime、queue、provider、workflow、notification、observability、integrityのallowlist済みsummaryだけを収録します。project source、`.env`、credential、raw stdout / stderr、prompt、diff、logはcopyしません。archive生成前後にsecret pattern scanを行い、ZIP内のpath、CRC、SHA-256 manifestも再検証します。自動uploadやclipboard copyは行いません。安全境界と共有前の確認事項は [docs/support-bundle-v0.md](docs/support-bundle-v0.md) を参照してください。
 
 ### Agent Smoke
 
@@ -487,7 +487,7 @@ kairon watchdog show <alert-id>
 kairon watchdog resolve <alert-id> --reason "operator confirmed recovery"
 ```
 
-Watchdogはdaemon heartbeat、fatal error、restart loop、queue backlog、Discord通知失敗、provider suspend、Windows Task Scheduler登録状態を評価し、`.kairon/watchdog/`へdeduplicate済みalertを保存します。同じ異常はfingerprintでまとめ、cooldown中の再通知を抑制します。検知失敗はruntime tickの成否を変更せず、Watchdog自身は自動再起動、queue変更、provider切替を行いません。詳細は [docs/runtime-watchdog-v0.md](docs/runtime-watchdog-v0.md) を参照してください。
+Watchdogはdaemon heartbeat、fatal error、restart loop、queue backlog、Discord通知失敗、provider suspend、Windows Task Scheduler登録状態、保存済みSLO summaryを評価し、`.kairon/watchdog/`へdeduplicate済みalertを保存します。同じ異常はfingerprintでまとめ、cooldown中の再通知を抑制します。検知失敗はruntime tickの成否を変更せず、Watchdog自身はraw metricを毎tick集約せず、自動再起動、queue変更、provider切替も行いません。詳細は [docs/runtime-watchdog-v0.md](docs/runtime-watchdog-v0.md) と [docs/observability-v0.md](docs/observability-v0.md) を参照してください。
 
 ### Active Work 終了
 
@@ -710,6 +710,7 @@ T160-T176ではLocal Betaを配布可能なRelease Candidateへ拡張し、T175 
 - [docs/release-checklist-v0.md](docs/release-checklist-v0.md)
 - [docs/release-provenance-v0.md](docs/release-provenance-v0.md)
 - [docs/windows-daemon-ops-v0.md](docs/windows-daemon-ops-v0.md)
+- [docs/observability-v0.md](docs/observability-v0.md)
 - [docs/discord-approval-v0.md](docs/discord-approval-v0.md)
 - [docs/board-public-safety-v0.md](docs/board-public-safety-v0.md)
 - [docs/rag-memory-v0.md](docs/rag-memory-v0.md)

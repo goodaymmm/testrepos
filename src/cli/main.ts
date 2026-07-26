@@ -87,6 +87,11 @@ import {
   runMigrations
 } from "./commands/migrate.js";
 import {
+  metricsReportCommand,
+  metricsSloCheckCommand,
+  metricsSnapshotCommand
+} from "./commands/metrics.js";
+import {
   buildRagVectorCommand,
   compactRagIndexCommand,
   evaluateRagCommand,
@@ -953,6 +958,37 @@ export function createProgram(): Command {
     .description("Show runtime, queue, session, approval, and artifact status.")
     .action(async () => {
       console.log(await getStatusText(process.cwd()));
+    });
+
+  const metrics = program
+    .command("metrics")
+    .description("Inspect local runtime metrics and persisted SLO summaries.");
+
+  metrics
+    .command("snapshot")
+    .description("Create a bounded aggregate snapshot from local raw metrics.")
+    .option("--window-minutes <minutes>", "Aggregation window in minutes.", "60")
+    .action(async (options: { windowMinutes?: string }) => {
+      console.log(await metricsSnapshotCommand(process.cwd(), options));
+    });
+
+  metrics
+    .command("report")
+    .description("Create a daily or weekly local metrics rollup.")
+    .option("--period <period>", "Report period: daily or weekly.", "daily")
+    .action(async (options: { period?: string }) => {
+      console.log(await metricsReportCommand(process.cwd(), options));
+    });
+
+  const metricsSlo = metrics
+    .command("slo")
+    .description("Evaluate local runtime service-level objectives.");
+
+  metricsSlo
+    .command("check")
+    .description("Evaluate and persist the latest SLO summary.")
+    .action(async () => {
+      console.log(await metricsSloCheckCommand(process.cwd()));
     });
 
   const watchdog = program

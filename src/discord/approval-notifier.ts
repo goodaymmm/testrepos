@@ -22,6 +22,7 @@ import {
   type RemoteNotificationsConfig
 } from "../remote/profile.js";
 import { prepareBoardProfile } from "../board/profile.js";
+import { recordNotificationResult } from "../observability/runtime-metrics.js";
 
 export type DiscordApprovalChannel = {
   id?: string;
@@ -645,6 +646,23 @@ async function appendDiscordNotificationAudit(
     ...record,
     correlation_id: correlation?.correlation_id ?? record.correlation_id
   });
+  if (record.status === "failed") {
+    await recordNotificationResult(projectRoot, {
+      provider: "discord",
+      result: "failed",
+      recordedAt: new Date(record.recorded_at)
+    }).catch(() => undefined);
+  } else if (
+    record.status === "sent" ||
+    record.status === "resent" ||
+    record.status === "updated"
+  ) {
+    await recordNotificationResult(projectRoot, {
+      provider: "discord",
+      result: "success",
+      recordedAt: new Date(record.recorded_at)
+    }).catch(() => undefined);
+  }
   if (correlation !== undefined && record.message_id !== undefined) {
     await trackCorrelationMember(projectRoot, {
       correlationId: correlation.correlation_id,

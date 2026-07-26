@@ -43,6 +43,20 @@ const watchdogRuleSchema = z
     { message: "watchdog rule requires threshold or threshold_seconds" }
   );
 
+const sloThresholdSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    warning: z.number().nonnegative().optional(),
+    critical: z.number().nonnegative().optional()
+  })
+  .refine(
+    (value) =>
+      value.warning === undefined ||
+      value.critical === undefined ||
+      value.warning !== value.critical,
+    { message: "SLO warning and critical thresholds must differ" }
+  );
+
 const runtimeConfigSchema = schemaVersion
   .extend({
     workflow: z
@@ -91,6 +105,26 @@ const runtimeConfigSchema = schemaVersion
           .optional()
       })
       .optional(),
+    observability: z
+      .object({
+        enabled: z.boolean().optional(),
+        slo: z
+          .object({
+            window_minutes: z.number().int().min(1).max(525_600).optional(),
+            minimum_samples: z.number().int().min(1).max(1_000_000).optional(),
+            objectives: z
+              .object({
+                tick_duration: sloThresholdSchema.optional(),
+                queue_ready_age: sloThresholdSchema.optional(),
+                run_latency: sloThresholdSchema.optional(),
+                notification_success: sloThresholdSchema.optional(),
+                remote_readiness: sloThresholdSchema.optional()
+              })
+              .optional()
+          })
+          .optional()
+      })
+      .optional(),
     watchdog: z
       .object({
         enabled: z.boolean(),
@@ -106,7 +140,8 @@ const runtimeConfigSchema = schemaVersion
           remote_external_unreachable: watchdogRuleSchema.optional(),
           remote_identity_bypass: watchdogRuleSchema.optional(),
           remote_url_drift: watchdogRuleSchema.optional(),
-          remote_tunnel_disconnected: watchdogRuleSchema.optional()
+          remote_tunnel_disconnected: watchdogRuleSchema.optional(),
+          slo_breach: watchdogRuleSchema.optional()
         })
       })
       .optional()
@@ -217,7 +252,9 @@ const cleanupRetentionSchema = z.object({
     sessions: cleanupRetentionRuleSchema,
     daemon_logs: cleanupRetentionRuleSchema,
     audits: cleanupRetentionRuleSchema,
-    reports: cleanupRetentionRuleSchema
+    reports: cleanupRetentionRuleSchema,
+    metrics_raw: cleanupRetentionRuleSchema.optional(),
+    metrics_rollups: cleanupRetentionRuleSchema.optional()
   })
 });
 

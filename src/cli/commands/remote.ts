@@ -6,8 +6,10 @@ import {
 } from "../../remote/profile.js";
 import {
   formatStableRemoteStatus,
-  inspectStableRemoteOperations
+  inspectStableRemoteOperations,
+  type RemoteProbeState
 } from "../../remote/status.js";
+import { recordRemoteReadiness } from "../../observability/runtime-metrics.js";
 
 type OutputFormat = "text" | "json";
 
@@ -100,10 +102,20 @@ export async function runRemoteDoctorCommand(
   projectRoot: string,
   options: { format?: string } = {}
 ): Promise<string> {
-  return formatStableRemoteStatus(
-    await inspectStableRemoteOperations(projectRoot, { probeExternal: true }),
-    { format: parseOutputFormat(options.format) }
-  );
+  const status = await inspectStableRemoteOperations(projectRoot, {
+    probeExternal: true
+  });
+  await recordRemoteReadiness(projectRoot, {
+    provider: "discord",
+    result: metricReadiness(status.discord.external_readiness)
+  }).catch(() => undefined);
+  await recordRemoteReadiness(projectRoot, {
+    provider: "board",
+    result: metricReadiness(status.board.external_readiness)
+  }).catch(() => undefined);
+  return formatStableRemoteStatus(status, {
+    format: parseOutputFormat(options.format)
+  });
 }
 
 async function loadNotifications(
@@ -121,4 +133,16 @@ function parseOutputFormat(value: string | undefined): OutputFormat {
     return format;
   }
   throw new Error(`Unsupported output format: ${format}`);
+}
+
+function metricReadiness(
+  value: RemoteProbeState
+): "ready" | "unreachable" | "setup_required" | "unknown" {
+  if (value === "ready" || value === "identity_enforced") {
+    return "ready";
+  }
+  if (value === "unreachable" || value === "identity_bypass_detected") {
+    return "unreachable";
+  }
+  return value === "not_checked" ? "unknown" : "setup_required";
 }

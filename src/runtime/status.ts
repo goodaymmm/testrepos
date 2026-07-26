@@ -13,6 +13,11 @@ import {
   readWatchdogAlertSummary,
   type WatchdogAlertSummary
 } from "./watchdog.js";
+import {
+  latestSloSummaryPath,
+  readLatestSloSummary,
+  type RuntimeSloSummary
+} from "../observability/slo.js";
 
 export type RuntimeStatus = {
   schedule: ScheduleStatus;
@@ -83,6 +88,12 @@ export type RuntimeStatus = {
     http_status?: number;
   };
   watchdog: WatchdogAlertSummary;
+  observability: {
+    slo_status: RuntimeSloSummary["status"] | "NOT_EVALUATED";
+    evaluated_at?: string;
+    minimum_samples?: number;
+    corrupt_samples?: number;
+  };
   artifacts: {
     last_tick: string;
     latest_daily_report?: string;
@@ -91,6 +102,7 @@ export type RuntimeStatus = {
     latest_next_day_plan?: string;
     board_projection?: string;
     latest_daemon_log?: string;
+    latest_slo_summary?: string;
   };
 };
 
@@ -115,6 +127,7 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     sessions,
     discordGateway,
     watchdog,
+    observability,
     artifacts
   ] = await Promise.all([
     getScheduleStatus(projectRoot),
@@ -126,6 +139,7 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     readLatestSessionSummary(projectRoot),
     readDiscordGatewaySummary(projectRoot),
     readWatchdogAlertSummary(projectRoot),
+    readObservabilitySummary(projectRoot),
     readOperationalArtifacts(projectRoot)
   ]);
 
@@ -166,6 +180,7 @@ export async function getRuntimeStatus(projectRoot: string): Promise<RuntimeStat
     daemonHealth,
     discordGateway,
     watchdog,
+    observability,
     artifacts
   };
 }
@@ -324,6 +339,13 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
     status.watchdog.last_checked_at === undefined
       ? null
       : `watchdog.lastCheckedAt=${status.watchdog.last_checked_at}`,
+    `observability.sloStatus=${status.observability.slo_status}`,
+    status.observability.evaluated_at === undefined
+      ? null
+      : `observability.evaluatedAt=${status.observability.evaluated_at}`,
+    status.observability.corrupt_samples === undefined
+      ? null
+      : `observability.corruptSamples=${status.observability.corrupt_samples}`,
     `artifacts.lastTick=${status.artifacts.last_tick}`,
     status.artifacts.latest_daily_report === undefined
       ? null
@@ -342,7 +364,10 @@ export function formatRuntimeStatus(status: RuntimeStatus): string {
       : `artifacts.boardProjection=${status.artifacts.board_projection}`,
     status.artifacts.latest_daemon_log === undefined
       ? null
-      : `artifacts.latestDaemonLog=${status.artifacts.latest_daemon_log}`
+      : `artifacts.latestDaemonLog=${status.artifacts.latest_daemon_log}`,
+    status.artifacts.latest_slo_summary === undefined
+      ? null
+      : `artifacts.latestSloSummary=${status.artifacts.latest_slo_summary}`
   ]
     .filter((line): line is string => line !== null)
     .join("\n");
@@ -375,8 +400,26 @@ async function readOperationalArtifacts(
     latest_daemon_log: await latestJsonlPath(
       projectRoot,
       path.join(paths.runtimeDir, "daemon")
+    ),
+    latest_slo_summary: await optionalJsonPath(
+      projectRoot,
+      latestSloSummaryPath(projectRoot)
     )
   };
+}
+
+async function readObservabilitySummary(
+  projectRoot: string
+): Promise<RuntimeStatus["observability"]> {
+  const summary = await readLatestSloSummary(projectRoot);
+  return summary === undefined
+    ? { slo_status: "NOT_EVALUATED" }
+    : {
+        slo_status: summary.status,
+        evaluated_at: summary.evaluated_at,
+        minimum_samples: summary.minimum_samples,
+        corrupt_samples: summary.corrupt_samples
+      };
 }
 
 async function readDaemonHealth(

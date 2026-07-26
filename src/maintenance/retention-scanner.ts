@@ -161,6 +161,18 @@ async function collectInventory(projectRoot: string): Promise<{
       root: paths.reportsDir,
       recursiveFiles: true,
       extensions: [".json", ".md"]
+    },
+    {
+      category: "metrics_raw" as const,
+      root: resolveInside(paths.metricsDir, "raw"),
+      recursiveFiles: true,
+      extensions: [".jsonl"]
+    },
+    {
+      category: "metrics_rollups" as const,
+      root: resolveInside(paths.metricsDir, "rollups"),
+      recursiveFiles: true,
+      extensions: [".json"]
     }
   ]) {
     const result = specification.recursiveFiles

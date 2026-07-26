@@ -36,6 +36,7 @@ describe("sanitized support bundle", () => {
     expect(result.manifest?.files.map((entry) => entry.path)).toEqual([
       "diagnostics/integrity.json",
       "diagnostics/notification.json",
+      "diagnostics/observability.json",
       "diagnostics/provider.json",
       "diagnostics/queue.json",
       "diagnostics/runtime.json",
@@ -49,7 +50,7 @@ describe("sanitized support bundle", () => {
     expect(verified).toMatchObject({
       ok: true,
       bundle_id: "SUP-0001",
-      files: 10,
+      files: 11,
       secret_scan: { status: "passed", finding_count: 0 }
     });
     expect(verified.checks).toHaveLength(5);
@@ -64,7 +65,7 @@ describe("sanitized support bundle", () => {
       status: "dry_run",
       archive_name: "kairon-support-SUP-DRY-RUN.zip"
     });
-    expect(result.plan.files).toHaveLength(8);
+    expect(result.plan.files).toHaveLength(9);
     expect(result.plan.exclusions.map((entry) => entry.kind)).toEqual(
       expect.arrayContaining(["project_source", "protected_paths", "agent_output", "raw_logs"])
     );

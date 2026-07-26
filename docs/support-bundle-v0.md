@@ -18,6 +18,7 @@
 | provider | provider status、quota counter、retry時刻、policy |
 | workflow | task / run / reviewのstatus別件数。最大500 recordを集計 |
 | notification | Discord / Boardのstatusとdoctor check |
+| observability | 最新SLO statusと固定集約値だけを含むlocal metrics summary |
 | integrity | RAG、secret scan、backup、readiness関連のstatus |
 
 次の内容は常に除外する。
@@ -65,6 +66,7 @@ diagnostics/queue.json
 diagnostics/provider.json
 diagnostics/workflow.json
 diagnostics/notification.json
+diagnostics/observability.json
 diagnostics/integrity.json
 ```
 

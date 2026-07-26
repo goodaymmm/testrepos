@@ -36,7 +36,7 @@ describe("runDoctor", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.summary).toMatchObject({ error: 0, warning: 0 });
+    expect(result.summary).toMatchObject({ error: 0, warning: 1 });
     expect(statusById(result, "git.repository")).toBe("pass");
     expect(statusById(result, "git.gitignore")).toBe("pass");
     expect(statusById(result, "cli.availability")).toBe("pass");
@@ -49,6 +49,7 @@ describe("runDoctor", () => {
     expect(statusById(result, "remote.profile")).toBe("pass");
     expect(statusById(result, "runtime.recovery")).toBe("pass");
     expect(statusById(result, "watchdog.alerts")).toBe("pass");
+    expect(statusById(result, "runtime.observability")).toBe("warning");
     expect(checkById(result, "discord.config")?.details).toContain(
       "live_status=not_configured"
     );

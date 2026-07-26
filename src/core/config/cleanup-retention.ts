@@ -3,7 +3,9 @@ export const cleanupRetentionCategories = [
   "sessions",
   "daemon_logs",
   "audits",
-  "reports"
+  "reports",
+  "metrics_raw",
+  "metrics_rollups"
 ] as const;
 
 export type CleanupRetentionCategory =
@@ -60,6 +62,18 @@ export const defaultCleanupRetentionPolicy: CleanupRetentionPolicy = {
       max_files: 365,
       max_bytes: 536_870_912,
       min_keep: 30
+    },
+    metrics_raw: {
+      max_age_days: 14,
+      max_files: 14,
+      max_bytes: 268_435_456,
+      min_keep: 2
+    },
+    metrics_rollups: {
+      max_age_days: 180,
+      max_files: 400,
+      max_bytes: 268_435_456,
+      min_keep: 7
     }
   }
 };
