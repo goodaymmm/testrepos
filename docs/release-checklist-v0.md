@@ -62,7 +62,7 @@ kairon test summarize --result-root .\operation-test-results
 kairon readiness manifest `
   --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\summary.json `
   --evidence CONFIG_MIGRATION_DOCTOR=.\.kairon\reports\doctor.json `
-  --evidence PACKAGE_LIFECYCLE=.\release-artifacts\0.2.0\verification.json
+  --evidence PACKAGE_LIFECYCLE=.\release-artifacts\0.3.0\verification.json
 
 kairon readiness check
 kairon readiness report --format markdown
@@ -121,7 +121,7 @@ git diff --cached --stat
 ## Versioning方針
 
 <!-- kairon:versioning-policy -->
-現在の配布済みartifactはT159までのoperation test結果を収録した`0.2.0` Local Betaで、現行sourceはT175 Release Candidate baselineです。T160以降の変更は次のversion確定まで`Unreleased`です。packageは `private: true` のため、
+現在のLocal RC artifactはT160-T176を収録した`0.3.0`で、現行source commitから再生成・検証します。GitHub prereleaseへ公開するまではlocal artifactとして扱います。packageは `private: true` のため、
 npm publishを前提にしたversion bumpではなく、運用上のrelease tag / release noteの
 判断材料としてversionを扱います。
 
@@ -135,8 +135,8 @@ Release helperを使う場合は、先にdry-runを確認してからwriteしま
 
 ```powershell
 kairon release validate
-kairon release bump --version 0.3.0
-kairon release bump --version 0.3.0 --write
+kairon release bump --version <next-version>
+kairon release bump --version <next-version> --write
 ```
 
 `release validate` は次を一括確認し、不整合時はexit code 1を返します。
@@ -149,18 +149,18 @@ kairon release bump --version 0.3.0 --write
 `--write` はtracked worktreeがcleanな場合だけ実行できます。
 実行時は `.kairon/release/backups/<timestamp>/` に変更前の対象fileを保存します。
 
-## Reproducible Local Beta Artifact
+## Reproducible Local RC Artifact
 
 version bumpをcommitしたclean tracked worktreeでpackageを生成し、そのpackageとchecksum manifestをsource commitへbindします。
 
 ```powershell
 npm run release:pack
 kairon release manifest `
-  --package .\release-artifacts\0.2.0\kairon-0.2.0.tgz `
-  --manifest .\release-artifacts\0.2.0\kairon-0.2.0.tgz.sha256.json
-kairon release verify .\release-artifacts\0.2.0\kairon-0.2.0.tgz `
-  --manifest .\release-artifacts\0.2.0\kairon-0.2.0.tgz.sha256.json `
-  --release-manifest .\release-artifacts\0.2.0\release-manifest.json
+  --package .\release-artifacts\0.3.0\kairon-0.3.0.tgz `
+  --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json
+kairon release verify .\release-artifacts\0.3.0\kairon-0.3.0.tgz `
+  --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json `
+  --release-manifest .\release-artifacts\0.3.0\release-manifest.json
 ```
 
 `release-manifest.json`はsource commit、`dirty=false`、Windows runtime support、artifact SHA-256、checksum manifest SHA-256、sorted package inventoryとそのSHA-256を保持します。tracked変更が残る場合は生成を拒否します。npm tar metadataの時刻差によるbyte-for-byte一致は要件にせず、同じsourceから同じinventoryと検証可能metadataが得られることを確認します。
@@ -168,11 +168,11 @@ kairon release verify .\release-artifacts\0.2.0\kairon-0.2.0.tgz `
 ## Approval-gated GitHub Release
 
 <!-- kairon:github-release-distribution -->
-検証済みLocal Beta artifactをGitHub Releaseへ配布する場合は、planとpublishを分離します。tokenには対象repositoryのContents read/write権限が必要です。`GH_TOKEN`または`GITHUB_TOKEN`を使い、値自体は表示・保存しません。
+検証済みLocal RC artifactをGitHub Releaseへ配布する場合は、planとpublishを分離します。tokenには対象repositoryのContents read/write権限が必要です。`GH_TOKEN`または`GITHUB_TOKEN`を使い、値自体は表示・保存しません。
 
 ```powershell
 kairon release github plan `
-  --version 0.2.0 `
+  --version 0.3.0 `
   --repository owner/repo
 
 kairon approval show APR-0001
@@ -183,7 +183,7 @@ kairon release github publish REL-0001 `
   --confirm REL-0001
 
 kairon release github verify `
-  --version 0.2.0 `
+  --version 0.3.0 `
   --repository owner/repo
 ```
 
@@ -201,7 +201,7 @@ release利用側では`stable | beta | pinned`のmanual channelを明示設定�
 ```powershell
 kairon update channel set beta --repository owner/repo --write --confirm beta
 kairon update check
-kairon update download 0.2.0
+kairon update download 0.3.0
 kairon update apply UPD-0001 --confirm UPD-0001 --dry-run
 kairon update apply UPD-0001 --confirm UPD-0001
 ```

@@ -5,29 +5,13 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 
 ## Unreleased
 
-- T176: README、architecture、release checklist、installation、Windows daemon、stable remote operationsをT175 Release Candidate baselineへ収束し、`0.2.0`配布済みartifactと`Unreleased` sourceの境界をdocs回帰testで固定。
-- T175: T160-T174のfresh evidenceを14 gateへ集約し、external setup、checksum、鮮度、source commit、重大incident、secret findingを検証するRelease Candidate readiness gateとcanonical JSON / Markdown reportを追加。
-- T174: Discord HTTP Interactionsとremote read-only Boardを固定HTTPS host・trusted proxy・allowed origin・identity headerで統合するstable remote operations profile、remote CLI、readiness / URL drift診断、Watchdog rule、secret-free Board deep linkを追加。
-- T173: user-local multi-project registry、atomic lock、project移動・欠落・破損診断、read-only supervisor、runtime縮約summary、Board / Discord HTTP port・external URL衝突検出、provider limit集計、`projects` CLIを追加。
-- T172: local-only vector provider、incremental embedding cache、confirmed vector build、lexical/vector/hybrid retriever、drift検出、expected/forbidden sourceによるRAG quality gateを追加。
-- T171: task / persona / Agent / connectorのcapability trust policy、default deny、approval連携、実行前gate、sanitized decision artifact、evaluate / explain CLIを追加。
-- T170: Agent sessionのprompt byte数、job数、経過秒数、compaction回数を追跡するcontext budget、soft-limit compaction plan、hard-limit dispatch停止、sanitized handoff付きrotationと中断復旧を追加。
-- T169: canonical JSON checkpointを維持する`WorkflowCheckpointStore`、optional Node SQLite mirror、checksum / fencing検証、degraded継続、exact-confirm付きindex rebuildを追加。
 <!-- kairon:release-notes-unreleased -->
-現時点の未release変更は、各PR本文とmerge履歴を一次記録とします。local operation resultやgenerated evidenceはrelease notesへ埋め込まず、再実行方法と判定結果だけを記録します。
-
-- approval-gated GitHub Release配布とremote asset再検証を追加。
-- verified manual update channel、user-local cache、successful apply / rollback registryを追加。
-- local-only sanitized support bundle、pre/post secret scan、ZIP hash検証を追加。
-- runtime heartbeat、queue、provider、notification、Task Schedulerを監視するdeduplicated Watchdog alertとDiscord routingを追加。
-- Watchdog alertとruntime recovery targetを集約するIncident lifecycle、append-only timeline、Incident限定support bundle、approval-gated assisted recoveryを追加。
-- production workflowを明示`runtime.json`設定、proposal適用、env互換fallback、doctor競合診断を持つ正式configへ昇格。
-- production workflowへtyped definition、allowlist condition、parallel branch、明示join policy、manual gate、approval-gated compensation plan / executionを追加。
+現時点で`0.3.0`以降の未release変更はありません。各PR本文とmerge履歴を一次記録とし、local operation resultやgenerated evidenceはrelease notesへ埋め込まず、再実行方法と判定結果だけを記録します。
 
 ## Versioning
 
 <!-- kairon:versioning-policy -->
-現在の配布済みLocal Beta versionは `0.2.0`、現行source baselineはT175 Release Candidateです。T160以降の変更は次のversion entryへ移すまで`Unreleased`に保持します。version変更時は `package.json`、
+現在のLocal RC versionは `0.3.0`です。T160-T176の変更をcurrent source commitへ固定し、GitHub Releaseへ公開するまではlocal artifactとして扱います。version変更時は `package.json`、
 `package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。
 `kairon release validate` は、この同期とcore SemVer形式に加えて、`Unreleased` marker、
 現在versionのrelease entry、release checklistの必須markerを一括確認します。
@@ -61,6 +45,40 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 
 -
 ```
+
+## 0.3.0 - 2026-07-26
+
+### Summary
+
+- T160-T168のapproval-gated GitHub Release、verified manual update / rollback、sanitized support bundle、Watchdog、Incident lifecycle、production workflowをLocal RCへ収録。
+- T169-T174のdurable workflow checkpoint、Agent context budget、capability trust policy、hybrid local RAG、multi-project supervisor、stable remote operationsを収録。
+- T175の14 gate Release Candidate readinessと、T176のoperator document baselineを収録。
+- package / CLI / lockfileのversionを`0.3.0`へ同期し、同一source commitから生成したartifactの正規化inventory、runtime support、source identityを比較できる再現性testを追加。
+
+### Migration / Upgrade
+
+- `0.2.0`からの更新は、`kairon update download 0.3.0`とexact confirm付き`kairon update apply`、または`update-local-beta.ps1`を使う。
+- update前に`kairon doctor`とstate backupを確認し、rollback用`0.2.0` artifactをverified cacheへ保持する。
+- config migration、state backup / restore、rollback、uninstall後のproject `.kairon/`保持は既存contractを維持する。
+
+### Tests
+
+- `npm run build`
+- `npx vitest run tests\release-command.test.ts tests\local-beta-package.test.ts tests\release-manifest.test.ts tests\pr-release-docs.test.ts tests\documentation-inventory.test.ts`
+- `npm test`
+- clean tracked sourceからの`release:pack`、`release manifest`、`release verify`
+
+### Manual / Operation Test Evidence
+
+- T160-T175 operation testでRC readiness 14 gate、global blocker 0件、secret finding 0件を確認。
+- release artifactは公開時にrelease commitから再生成し、clean Windowsでinstall / update / rollback / uninstallを再確認する。
+
+### Known Limitations
+
+- public npm registryへpublishしない。
+- `0.3.0`はLocal RCであり、GitHub prereleaseへのpublishとremote asset再検証はT179で行う。
+- npm tar metadataの時刻差を許容し、再現性は同一source commit、正規化inventory、runtime support、検証可能metadataで判定する。
+- background auto-updateとsilent updateは提供しない。
 
 ## 0.2.0 - 2026-07-22
 

@@ -13,8 +13,8 @@ import {
 const powershell = findPowerShell();
 const runIfPowerShell = powershell === undefined ? it.skip : it;
 
-describe("local beta package", () => {
-  it("packs and verifies only the fixed private local beta file set", async () => {
+describe("local release package", () => {
+  it("packs and verifies only the fixed private local release file set", async () => {
     const output = await mkdtemp(path.join(os.tmpdir(), "kairon-local-beta-pack-"));
     const result = await createLocalBetaPackage(path.resolve("."), {
       output,
@@ -24,7 +24,7 @@ describe("local beta package", () => {
     expect(result).toMatchObject({
       status: "created",
       package_name: "kairon",
-      package_version: "0.2.0",
+      package_version: "0.3.0",
       verification: { ok: true }
     });
     expect(result.files).toBeGreaterThan(10);

@@ -7,7 +7,8 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 ## 現在の位置づけ
 
 <!-- kairon:t175-rc-baseline -->
-このリポジトリの現行sourceは、T160-T175の実装とoperation testを完了した個人運用向けRelease Candidate baselineです。build、unit / integration test、state integrity、secret scanに加え、配布・更新・復旧・workflow・Agent・RAG・複数project・stable remoteを対象とするRC readiness 14 gateがすべて`PASS`し、global blocker 0件を確認済みです。現在の配布済みLocal Beta artifactは`0.2.0`のままで、T160以降の変更は次のrelease作業まで`Unreleased`として扱います。
+<!-- kairon:t177-local-rc-baseline -->
+このリポジトリの現行sourceは、T160-T176の実装とoperation testを`0.3.0`へ固定した個人運用向けLocal RC baselineです。build、unit / integration test、state integrity、secret scanに加え、配布・更新・復旧・workflow・Agent・RAG・複数project・stable remoteを対象とするRC readiness 14 gateがすべて`PASS`し、global blocker 0件を確認済みです。`0.3.0` artifactはcurrent source commitから再生成・検証し、GitHub prereleaseへの公開は別の承認済みrelease作業として扱います。
 
 Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Agent CLI、approval、Git / deploy guard、maintenanceをローカルで統合します。外部writeと高リスク操作はdefault disabledまたはapproval requiredであり、Boardはread-onlyを維持します。
 
@@ -38,15 +39,15 @@ Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Age
 - user-local multi-project registry、read-only supervisor、resource conflict診断
 - provider quota / suspend policy、operation test profile / summary支援
 - checksummed private local package、install / update / rollback / uninstall
-- reproducible `0.2.0` artifact、approval-gated GitHub Release、verified manual update channel
+- reproducible `0.3.0` Local RC artifact、approval-gated GitHub Release、verified manual update channel
 - allowlist収集、secret scan、hash manifest付きのsanitized support bundle
 - evidence manifest、Beta互換gate、Release Candidate readiness 14 gate
 
-T175 Release Candidate後の次のrelease作業:
+`0.3.0` Local RC後の次のrelease作業:
 
-- `Unreleased`変更のversion確定とpackage / CLI / lockfile同期
-- current source commitからのrelease artifact再生成とremote再検証
-- release notes、installation guide、配布channelの確定
+- release commitからのartifact再生成とclean Windows検証
+- approval-gated GitHub prerelease publishとremote asset再検証
+- operation evidenceをbindした配布可否の最終判断
 
 ## 前提
 
@@ -425,12 +426,12 @@ checkpointのcanonical stateは常にJSON fileです。`runtime.json.workflow.ch
 
 `runtime.json.workflow.enabled=true`をproposal経由で適用した場合だけproduction workflow itemをruntimeがclaimし、既定は無効です。旧projectの`KAIRON_WORKFLOW_RUNTIME`はconfigに`enabled`がない場合だけ互換fallbackとして利用されます。`--candidate`を使う`.kairon/experimental/workflows/`経路は互換性とdry-run評価用であり、production canonical stateの代替ではありません。
 
-### Local Beta package / Readiness
+### Local RC package / Readiness
 
 ```powershell
 npm run release:pack
-kairon release manifest --package .\release-artifacts\0.2.0\kairon-0.2.0.tgz --manifest .\release-artifacts\0.2.0\kairon-0.2.0.tgz.sha256.json
-kairon release verify .\release-artifacts\0.2.0\kairon-0.2.0.tgz --manifest .\release-artifacts\0.2.0\kairon-0.2.0.tgz.sha256.json --release-manifest .\release-artifacts\0.2.0\release-manifest.json
+kairon release manifest --package .\release-artifacts\0.3.0\kairon-0.3.0.tgz --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json
+kairon release verify .\release-artifacts\0.3.0\kairon-0.3.0.tgz --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json --release-manifest .\release-artifacts\0.3.0\release-manifest.json
 kairon readiness manifest --evidence <GATE_ID=path>
 kairon readiness check
 kairon readiness report --format markdown
@@ -603,9 +604,9 @@ README更新が必要な代表条件:
 
 release判断では [docs/release-checklist-v0.md](docs/release-checklist-v0.md) を使い、`npm run build`、`npm test`、対象operation test、secret / generated artifact確認、README更新要否、version同期を確認します。
 `kairon readiness manifest`でBeta互換証跡を、`kairon readiness rc manifest`でRC証跡のSHA-256・source commit・有効期限を固定します。RCは`kairon readiness rc check`で14 gateとglobal blockerを判定し、全gateが`PASS`かつblocker 0件の場合だけ`rc_ready=true`となります。外部未設定は`SETUP_REQUIRED`、期限切れ・別commit・改変済み証跡は`UNKNOWN`として扱います。
-release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在の配布済みLocal Beta versionは `0.2.0`、現行source baselineはT175 Release Candidateです。versionを変更する場合は `package.json`、`package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。`kairon release validate` でversion形式・同期、release checklist marker、`Unreleased` marker、現在version entryを一括確認できます。
+release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在のLocal RC versionは `0.3.0`で、T160-T176をcurrent source commitへ固定します。versionを変更する場合は `package.json`、`package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。`kairon release validate` でversion形式・同期、release checklist marker、`Unreleased` marker、現在version entryを一括確認できます。
 
-local betaはpublic npm registryへpublishせず、`npm run release:pack`でchecksummed tarballを生成します。Windowsでのinstall、update/rollback、uninstall手順は [docs/installation.md](docs/installation.md) を参照してください。uninstallはprojectの`.kairon/`を削除しません。
+local packageはpublic npm registryへpublishせず、`npm run release:pack`でchecksummed tarballを生成します。Windowsでのinstall、update/rollback、uninstall手順は [docs/installation.md](docs/installation.md) を参照してください。uninstallはprojectの`.kairon/`を削除しません。
 
 検証済みartifactは`kairon release github plan`で高risk approvalへbindし、承認後に`kairon release github publish`でGitHub Releaseへ配布できます。既定はprereleaseで、publish時にplan IDの完全一致確認、approval binding、local / remote source SHA、asset SHA-256を再検証します。`kairon release github verify`は公開assetを再downloadしてmanifestへ照合します。
 
@@ -657,11 +658,11 @@ T67-T75では、local runtimeだけでなくGitHub / Discordを含む外部接�
 
 ### T175 Release Candidate baseline
 
-T160-T175ではLocal Betaを配布可能なRelease Candidateへ拡張し、T175 readinessで全14 gate、global blocker 0件、secret finding 0、未PASS系status 0を確認しました。local operation resultはgenerated evidenceのためrepositoryへcommitせず、再検証時は現在commitに対して生成し直します。
+T160-T176ではLocal Betaを配布可能なRelease Candidateへ拡張し、T175 readinessで全14 gate、global blocker 0件、secret finding 0、未PASS系status 0を確認しました。T177でこの範囲を`0.3.0` Local RCへ固定します。local operation resultはgenerated evidenceのためrepositoryへcommitせず、再検証時は現在commitに対して生成し直します。
 
 | 分類 | T175時点の検証範囲 |
 | --- | --- |
-| Distribution | reproducible `0.2.0` package、approval-gated GitHub Release、verified update / rollback、sanitized support bundle |
+| Distribution | reproducible `0.3.0` Local RC package、approval-gated GitHub Release、verified update / rollback、sanitized support bundle |
 | Runtime and recovery | Windows daemon certification、Watchdog alert routing、Incident lifecycle、approval-gated assisted recovery |
 | Controlled execution | workflow config、branch / join / compensation、durable checkpoint store、guarded Git / deploy |
 | Agent and data | session context budget、capability trust policy、hybrid local RAG、quality gate |
