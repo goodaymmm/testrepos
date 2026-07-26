@@ -1,11 +1,11 @@
-# Kairon Local Beta Installation
+# Kairon Local Package Installation
 
 ## Scope
 
-Kairon local betaはpublic npm registryへpublishせず、`npm pack`で生成したtarballとSHA-256 manifestを使ってWindowsへ配布します。packageは`private: true`と`license=UNLICENSED`を維持します。
+Kaironはpublic npm registryへpublishせず、`npm pack`で生成したtarballとSHA-256 manifestを使ってWindowsへ配布します。packageは`private: true`と`license=UNLICENSED`を維持します。
 
-<!-- kairon:t161-package-baseline -->
-現在の`0.2.0` packageはT159までの検証済み機能を収録するLocal Betaです。version番号は`package.json`、`package-lock.json`、`src/index.ts`を一次情報とし、release manifestでsource commitとartifactを結び付けます。
+<!-- kairon:t175-distribution-baseline -->
+現在の配布済み`0.2.0` packageはT159までの検証済み機能を収録するLocal Betaです。現行sourceはT175 Release Candidate baselineで、T160以降の変更は次のversion artifactがcurrent source commitから生成・検証されるまで`Unreleased`です。version番号は`package.json`、`package-lock.json`、`src/index.ts`を一次情報とし、release manifestでsource commitとartifactを結び付けます。
 
 ## Requirements
 

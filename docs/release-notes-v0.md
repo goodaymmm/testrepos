@@ -5,6 +5,7 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 
 ## Unreleased
 
+- T176: README、architecture、release checklist、installation、Windows daemon、stable remote operationsをT175 Release Candidate baselineへ収束し、`0.2.0`配布済みartifactと`Unreleased` sourceの境界をdocs回帰testで固定。
 - T175: T160-T174のfresh evidenceを14 gateへ集約し、external setup、checksum、鮮度、source commit、重大incident、secret findingを検証するRelease Candidate readiness gateとcanonical JSON / Markdown reportを追加。
 - T174: Discord HTTP Interactionsとremote read-only Boardを固定HTTPS host・trusted proxy・allowed origin・identity headerで統合するstable remote operations profile、remote CLI、readiness / URL drift診断、Watchdog rule、secret-free Board deep linkを追加。
 - T173: user-local multi-project registry、atomic lock、project移動・欠落・破損診断、read-only supervisor、runtime縮約summary、Board / Discord HTTP port・external URL衝突検出、provider limit集計、`projects` CLIを追加。
@@ -26,7 +27,7 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 ## Versioning
 
 <!-- kairon:versioning-policy -->
-現在のLocal Beta versionは `0.2.0` です。version変更時は `package.json`、
+現在の配布済みLocal Beta versionは `0.2.0`、現行source baselineはT175 Release Candidateです。T160以降の変更は次のversion entryへ移すまで`Unreleased`に保持します。version変更時は `package.json`、
 `package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。
 `kairon release validate` は、この同期とcore SemVer形式に加えて、`Unreleased` marker、
 現在versionのrelease entry、release checklistの必須markerを一括確認します。

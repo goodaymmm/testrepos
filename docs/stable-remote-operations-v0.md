@@ -8,6 +8,9 @@
 
 KaironはDNS、TLS certificate、Cloudflare Tunnel、VPN、IdP applicationを作成・変更しない。外部基盤の自動provision、Board write API、token付きdeep linkも提供しない。
 
+<!-- kairon:t175-stable-remote-baseline -->
+T175 Release Candidate baselineでは、固定hostnameでのDiscord interactionとBoard readiness、IdP認証後のsmartphone read-only閲覧、access revoke後の拒否、tunnel disconnect / URL drift alert、再起動後の同一URL復旧、secret-free Board deep linkをoperation test済みである。外部host、tunnel、IdPはoperator管理のため、release判定時はcurrent source commitに対するfresh evidenceを再取得する。
+
 ## Config
 
 `.kairon/config/notifications.json`へ次を設定する。

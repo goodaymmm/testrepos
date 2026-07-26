@@ -6,12 +6,12 @@
 起動順序、日次運用、Job 実行手順は `docs/workflow-v0.md` に分離する。
 実装 module 構成と内部 API は `docs/implementation-skeleton-v0.md` に分離する。
 
-## T159実装baseline
+## T175実装baseline
 
-<!-- kairon:t159-architecture-baseline -->
-T159時点では、file-based canonical state、公式CLI session、approval / review / Git guard、Windows daemon、production workflow、Discord Gateway / HTTP Interactions、remote read-only Board、local lexical RAG、state backup、Local Beta package、readiness gateまでを実装・operation test済みである。
+<!-- kairon:t175-architecture-baseline -->
+T175時点では、file-based canonical state、公式CLI session、approval / review / Git guard、Windows daemon、Watchdog / Incident recovery、branch / join / compensationを含むproduction workflow、durable checkpoint store、capability trust policy、hybrid local RAG、multi-project supervisor、Discord Gateway / HTTP Interactions、stable remote read-only Board、reproducible local package、verified update / rollback、Release Candidate readiness 14 gateまでを実装・operation test済みである。
 
-`.kairon/`をcanonical sourceとする境界、external writeのapproval、Boardのread-only、public npmへpublishしない方針は継続する。`.kairon/experimental/workflows/`はcandidate compatibility pathであり、production workflow stateは`.kairon/workflows/`に保存する。
+`.kairon/`をcanonical sourceとする境界、external writeのapproval、Boardのread-only、public npmへpublishしない方針は継続する。credentialはenvironmentまたは明示したOS credential storeから実行時に解決し、canonical stateやevidenceへ保存しない。`.kairon/experimental/workflows/`はcandidate compatibility pathであり、production workflow stateは`.kairon/workflows/`に保存する。
 
 ## 前提
 
