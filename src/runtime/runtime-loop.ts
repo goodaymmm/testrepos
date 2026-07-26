@@ -53,6 +53,11 @@ import {
   replyToDiscordApprovalResult,
   type DiscordApprovalResultReply
 } from "../discord/approval-result-reply.js";
+import {
+  readOldestReadyQueueAge,
+  recordRuntimeTickMetrics,
+  startRuntimeMetricTimer
+} from "../observability/runtime-metrics.js";
 
 export type RuntimeTickAction =
   | "processed-command"
@@ -117,7 +122,12 @@ export class RuntimeLoop {
   ) {}
 
   async runTick(): Promise<RuntimeTickResult> {
+    const metricTimer = startRuntimeMetricTimer();
     const now = this.now();
+    const oldestReadyAgeMilliseconds = await readOldestReadyQueueAge(
+      this.projectRoot,
+      now
+    ).catch(() => undefined);
     const schedule = await getScheduleStatus(this.projectRoot, now);
     const workerId = this.options.workerId ?? `runtime-${process.pid}`;
     const date = getLocalDateKey(now, schedule.timezone);
@@ -141,10 +151,17 @@ export class RuntimeLoop {
           ...this.baseTick(schedule, workerId, now, sessions),
           action: "processed-command",
           queue_result: commandResult
+        }, {
+          durationMilliseconds: metricTimer.elapsedMilliseconds(),
+          oldestReadyAgeMilliseconds
         });
       }
       return this.recordTick(
-        await this.runMaintenanceTick(schedule, workerId, now, sessions)
+        await this.runMaintenanceTick(schedule, workerId, now, sessions),
+        {
+          durationMilliseconds: metricTimer.elapsedMilliseconds(),
+          oldestReadyAgeMilliseconds
+        }
       );
     }
 
@@ -173,6 +190,9 @@ export class RuntimeLoop {
       ...this.baseTick(schedule, workerId, now, sessions),
       action: queueResult.status === "idle" ? "idle" : queueResult.status,
       queue_result: queueResult
+    }, {
+      durationMilliseconds: metricTimer.elapsedMilliseconds(),
+      oldestReadyAgeMilliseconds
     });
   }
 
@@ -271,8 +291,25 @@ export class RuntimeLoop {
     };
   }
 
-  private async recordTick(result: RuntimeTickResult): Promise<RuntimeTickResult> {
+  private async recordTick(
+    result: RuntimeTickResult,
+    metrics: {
+      durationMilliseconds: number;
+      oldestReadyAgeMilliseconds?: number;
+    }
+  ): Promise<RuntimeTickResult> {
     await writeJsonFileAtomic(runtimeLastTickPath(this.projectRoot), result);
+    await recordRuntimeTickMetrics(this.projectRoot, {
+      recordedAt: new Date(result.created_at),
+      durationMilliseconds: metrics.durationMilliseconds,
+      mode: result.mode,
+      action: result.action,
+      oldestReadyAgeMilliseconds: metrics.oldestReadyAgeMilliseconds,
+      processedItemId:
+        result.queue_result?.status === "processed-item"
+          ? result.queue_result.item_id
+          : undefined
+    }).catch(() => undefined);
     return result;
   }
 

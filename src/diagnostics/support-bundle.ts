@@ -39,6 +39,7 @@ export type SupportCategory =
   | "provider"
   | "workflow"
   | "notification"
+  | "observability"
   | "incident"
   | "integrity";
 
@@ -143,6 +144,7 @@ const requiredDiagnosticPaths = [
   "diagnostics/provider.json",
   "diagnostics/workflow.json",
   "diagnostics/notification.json",
+  "diagnostics/observability.json",
   "diagnostics/integrity.json"
 ] as const;
 
@@ -481,6 +483,16 @@ async function collectSupportEntries(
         category: "notification",
         discord_gateway: runtime.discordGateway ?? null,
         doctor_checks: doctorChecks(["discord.", "board."])
+      }
+    },
+    {
+      category: "observability",
+      value: {
+        schema_version: "0.1",
+        category: "observability",
+        slo: runtime.observability,
+        latest_summary_path: runtime.artifacts.latest_slo_summary ?? null,
+        doctor_checks: doctorChecks(["runtime.observability"])
       }
     },
     {
@@ -1157,7 +1169,7 @@ function expectedCategory(entryPath: string): SupportCategory | "summary" | unde
   if (entryPath === "diagnostics/incident.json") {
     return "incident";
   }
-  const match = /^diagnostics\/(system|runtime|queue|provider|workflow|notification|integrity)\.json$/u
+  const match = /^diagnostics\/(system|runtime|queue|provider|workflow|notification|observability|integrity)\.json$/u
     .exec(entryPath);
   return match?.[1] as SupportCategory | undefined;
 }

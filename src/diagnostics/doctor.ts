@@ -52,6 +52,7 @@ import {
   currentConfigSchemaVersion,
   inspectConfigSchemaVersion
 } from "../migration/schema-registry.js";
+import { readLatestSloSummary } from "../observability/slo.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -240,6 +241,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkRuntimeRecovery(options.projectRoot));
   checks.push(await checkDaemonHealth(options.projectRoot));
   checks.push(await checkWatchdogAlerts(options.projectRoot));
+  checks.push(await checkRuntimeObservability(options.projectRoot));
   checks.push(await checkRagStatus(options.projectRoot));
   if (await readinessManifestExists(options.projectRoot)) {
     checks.push(await checkBetaReadiness(options.projectRoot));
@@ -255,6 +257,52 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
     ok: summary.error === 0,
     checks: sanitizedChecks,
     summary
+  };
+}
+
+async function checkRuntimeObservability(
+  projectRoot: string
+): Promise<DoctorCheck> {
+  const runtime = await loadConfigFile<{
+    observability?: { enabled?: boolean };
+  }>(projectRoot, "runtime.json");
+  const enabled = runtime.observability?.enabled ?? true;
+  if (!enabled) {
+    return {
+      id: "runtime.observability",
+      title: "Local runtime observability",
+      status: "pass",
+      details: ["enabled=false"]
+    };
+  }
+  const summary = await readLatestSloSummary(projectRoot);
+  if (summary === undefined) {
+    return {
+      id: "runtime.observability",
+      title: "Local runtime observability",
+      status: "warning",
+      details: ["enabled=true", "slo_status=not_evaluated"],
+      next_action: "run kairon metrics slo check"
+    };
+  }
+  return {
+    id: "runtime.observability",
+    title: "Local runtime observability",
+    status: summary.status === "CORRUPT_DATA" ? "error" : summary.status === "PASS" ? "pass" : "warning",
+    details: [
+      "enabled=true",
+      `slo_status=${summary.status}`,
+      `evaluated_at=${summary.evaluated_at}`,
+      `corrupt_samples=${summary.corrupt_samples}`
+    ],
+    next_action:
+      summary.status === "CORRUPT_DATA"
+        ? "inspect .kairon/metrics/raw and rerun kairon metrics slo check"
+        : summary.status === "INSUFFICIENT_DATA"
+          ? "collect more runtime samples and rerun kairon metrics slo check"
+          : summary.status === "WARNING" || summary.status === "CRITICAL"
+            ? "run kairon metrics report --period daily"
+            : undefined
   };
 }
 

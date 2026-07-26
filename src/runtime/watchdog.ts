@@ -15,6 +15,7 @@ import { WorkQueue } from "../queue/work-queue.js";
 import { attachIncidentResource } from "../incidents/store.js";
 import { readRuntimeLockStatus } from "./runtime-lock.js";
 import { getStoredStableRemoteStatus } from "../remote/status.js";
+import { readLatestSloSummary } from "../observability/slo.js";
 import {
   compareWatchdogSeverity,
   defaultWatchdogPolicy,
@@ -372,7 +373,8 @@ async function collectWatchdogRuleInput(
     daemonEvents,
     notificationRecords,
     scheduler,
-    remoteStatus
+    remoteStatus,
+    sloSummary
   ] =
     await Promise.all([
       loadConfigFile<{ project_id?: string }>(projectRoot, "project.json"),
@@ -382,7 +384,8 @@ async function collectWatchdogRuleInput(
       readRecentDaemonEvents(projectRoot),
       readNotificationRecords(projectRoot),
       readTaskSchedulerStatus(projectRoot),
-      getStoredStableRemoteStatus(projectRoot)
+      getStoredStableRemoteStatus(projectRoot),
+      readLatestSloSummary(projectRoot)
     ]);
   const latestDaemonEvent = daemonEvents
     .slice()
@@ -446,6 +449,13 @@ async function collectWatchdogRuleInput(
             url_drift:
               remoteStatus.discord.url_drift || remoteStatus.board.url_drift,
             tunnel_disconnected: remoteStatus.tunnel.status === "disconnected"
+          },
+    slo:
+      sloSummary === undefined
+        ? undefined
+        : {
+            status: sloSummary.status,
+            evaluated_at: sloSummary.evaluated_at
           }
   };
 }

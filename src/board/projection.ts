@@ -44,6 +44,7 @@ export type BoardProjection = {
     secret_scan: BoardSecretScanSummary;
   };
   runtime: RuntimeStatus;
+  observability: RuntimeStatus["observability"];
   queue: {
     ready: number;
     claimed: number;
@@ -681,6 +682,7 @@ export async function createBoardProjection(
     kind: "board_projection",
     generated_at: generatedAt,
     runtime,
+    observability: runtime.observability,
     queue: {
       ready: queueItems.filter((item) => item.status === "ready").length,
       claimed: queueItems.filter((item) => item.status === "claimed").length,

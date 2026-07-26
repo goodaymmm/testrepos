@@ -32,6 +32,7 @@ describe("createProgram", () => {
       "leave",
       "maintenance",
       "merge",
+      "metrics",
       "migrate",
       "projects",
       "rag",

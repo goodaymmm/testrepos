@@ -55,6 +55,40 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           backoff_seconds: 30
         }
       },
+      observability: {
+        enabled: true,
+        slo: {
+          window_minutes: 60,
+          minimum_samples: 5,
+          objectives: {
+            tick_duration: {
+              enabled: true,
+              warning: 1000,
+              critical: 5000
+            },
+            queue_ready_age: {
+              enabled: true,
+              warning: 300000,
+              critical: 900000
+            },
+            run_latency: {
+              enabled: true,
+              warning: 600000,
+              critical: 1800000
+            },
+            notification_success: {
+              enabled: true,
+              warning: 0.9,
+              critical: 0.75
+            },
+            remote_readiness: {
+              enabled: true,
+              warning: 0.98,
+              critical: 0.9
+            }
+          }
+        }
+      },
       watchdog: {
         enabled: true,
         cooldown_seconds: 900,
@@ -114,6 +148,11 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           remote_tunnel_disconnected: {
             enabled: true,
             severity: "critical",
+            threshold: 1
+          },
+          slo_breach: {
+            enabled: true,
+            severity: "high",
             threshold: 1
           }
         }
@@ -504,6 +543,13 @@ export const kaironDirectories = [
   "runtime/ticks",
   "runtime/discord",
   "runtime/remote",
+  "metrics",
+  "metrics/raw",
+  "metrics/snapshots",
+  "metrics/rollups",
+  "metrics/rollups/daily",
+  "metrics/rollups/weekly",
+  "metrics/slo",
   "watchdog",
   "watchdog/alerts",
   "incidents",

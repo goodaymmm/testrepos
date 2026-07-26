@@ -36,8 +36,9 @@ kairon watchdog resolve ALT-0001 --reason "原因を確認し復旧済み"
 | `remote_identity_bypass` | critical | 未認証requestがremote Boardへ2xxで到達 |
 | `remote_url_drift` | high | runtime external URLが固定profile URLと不一致 |
 | `remote_tunnel_disconnected` | critical | DiscordとBoardの両外部endpointが到達不能 |
+| `slo_breach` | high | 保存済みSLO summaryが`CRITICAL`または`CORRUPT_DATA` |
 
-閾値はinclusiveで評価する。未来時刻のheartbeatはclock skewとしてageを0へ丸め、誤検知しない。Task Scheduler ruleは`.kairon/runtime/daemon/task-status.json`が存在する場合だけ評価し、daemon heartbeatとは別の状態として扱う。remote ruleは`kairon remote doctor`が保存した`.kairon/runtime/remote/status.json`を評価し、Watchdog自身は外部networkへ接続しない。
+閾値はinclusiveで評価する。未来時刻のheartbeatはclock skewとしてageを0へ丸め、誤検知しない。Task Scheduler ruleは`.kairon/runtime/daemon/task-status.json`が存在する場合だけ評価し、daemon heartbeatとは別の状態として扱う。remote ruleは`kairon remote doctor`が保存した`.kairon/runtime/remote/status.json`、SLO ruleは`.kairon/metrics/slo/latest.json`を評価する。Watchdog自身は外部networkへ接続せず、raw metricの再集約も行わない。
 
 ## Config
 

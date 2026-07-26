@@ -13,7 +13,8 @@ export type WatchdogRuleId =
   | "remote_external_unreachable"
   | "remote_identity_bypass"
   | "remote_url_drift"
-  | "remote_tunnel_disconnected";
+  | "remote_tunnel_disconnected"
+  | "slo_breach";
 
 export type WatchdogRulePolicy = {
   enabled: boolean;
@@ -60,6 +61,15 @@ export type WatchdogRuleInput = {
     identity_bypass: boolean;
     url_drift: boolean;
     tunnel_disconnected: boolean;
+  };
+  slo?: {
+    status:
+      | "PASS"
+      | "WARNING"
+      | "CRITICAL"
+      | "INSUFFICIENT_DATA"
+      | "CORRUPT_DATA";
+    evaluated_at: string;
   };
 };
 
@@ -133,6 +143,11 @@ export const defaultWatchdogPolicy: WatchdogPolicy = {
     remote_tunnel_disconnected: {
       enabled: true,
       severity: "critical",
+      threshold: 1
+    },
+    slo_breach: {
+      enabled: true,
+      severity: "high",
       threshold: 1
     }
   }
@@ -374,6 +389,25 @@ export function evaluateWatchdogRules(
         )
       );
     }
+  }
+
+  const sloPolicy = policy.rules.slo_breach;
+  if (
+    sloPolicy.enabled &&
+    input.slo !== undefined &&
+    (input.slo.status === "CRITICAL" || input.slo.status === "CORRUPT_DATA")
+  ) {
+    findings.push(
+      finding(input, policy, "slo_breach", "observability:slo", {
+        title: "Persisted runtime SLO requires attention",
+        summary:
+          "The latest persisted SLO summary is critical or contains corrupt metric data.",
+        evidence: {
+          slo_status: input.slo.status,
+          evaluated_at: input.slo.evaluated_at
+        }
+      })
+    );
   }
 
   return findings.sort((left, right) =>

@@ -60,6 +60,9 @@ kairon daemon task uninstall [--dry-run] [--task-name <name>] [--project-root <p
 kairon daemon task restart [--task-name <name>] [--project-root <path>]
 kairon stop
 kairon status
+kairon metrics snapshot --window-minutes 60
+kairon metrics report --period daily|weekly
+kairon metrics slo check
 kairon task create
 kairon task run TASK-0001
 kairon review run REV-0001
@@ -265,7 +268,7 @@ kairon support verify <bundle.zip>
 
 `bundle --dry-run`は収録予定file、category、推定payload size、除外理由を表示し、counter、plan、ZIPを変更しない。実生成時は`.kairon/support/plans/SUP-xxxx.json`へplanを保存し、指定先または`.kairon/support/bundles/`へ`kairon-support-SUP-xxxx.zip`をatomic finalizeする。
 
-収録対象はsystem、runtime、queue、provider、workflow、notification、integrityのsanitized JSONと`summary.md`だけである。project source、protected path、raw log、agent stdout / stderr、prompt、diffはdirectory単位でcopyしない。`manifest.json`と`hashes.sha256`が各payloadのsizeとSHA-256をbindし、生成前とarchive parse後のsecret scanに失敗した場合はZIPを残さない。`verify`はZIP traversal、duplicate、link、CRC、allowlist、manifest hash、secret findingを検査する。upload処理は持たない。詳細は`docs/support-bundle-v0.md`を参照する。
+収録対象はsystem、runtime、queue、provider、workflow、notification、observability、integrityのsanitized JSONと`summary.md`だけである。project source、protected path、raw log、agent stdout / stderr、prompt、diffはdirectory単位でcopyしない。`manifest.json`と`hashes.sha256`が各payloadのsizeとSHA-256をbindし、生成前とarchive parse後のsecret scanに失敗した場合はZIPを残さない。`verify`はZIP traversal、duplicate、link、CRC、allowlist、manifest hash、secret findingを検査する。upload処理は持たない。詳細は`docs/support-bundle-v0.md`を参照する。
 
 ## kairon agent smoke
 
@@ -701,6 +704,19 @@ daemon option。
 ```
 
 `--daemon` は長時間運用の入口であり、heartbeat、last error、stop reasonをruntime lockとdaemon logに記録する。24時間以上の連続運用エビデンス取得は運用テスト側で行う。
+
+## kairon metrics
+
+外部telemetryへ送信せず、local runtime metricの集約、rollup、SLO判定を行う。
+
+```text
+kairon metrics snapshot --window-minutes 60
+kairon metrics report --period daily
+kairon metrics report --period weekly
+kairon metrics slo check
+```
+
+raw sampleは`.kairon/metrics/raw/YYYY-MM-DD.jsonl`へ日次保存し、metric名とlabel値を固定集合へ制限する。task本文、prompt、diff、username、token、raw error、project / task / run IDは保存しない。`snapshot`は指定windowの集約、`report`はdaily / weeklyの派生artifact、`slo check`は保存済みthreshold policyによる判定を作成する。sample不足は`INSUFFICIENT_DATA`、破損sampleは`CORRUPT_DATA`であり、PASSへ昇格しない。詳細は`docs/observability-v0.md`を参照する。
 
 ## kairon watchdog
 
