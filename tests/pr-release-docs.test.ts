@@ -37,6 +37,7 @@ describe("PR and release documentation", () => {
     expect(readme).toContain("docs/manual-test-results-v0.md");
     expect(readme).toContain("docs/pr-release-checklist-v0.md");
     expect(readme).toContain("docs/release-checklist-v0.md");
+    expect(readme).toContain("docs/release-provenance-v0.md");
     expect(readme).toContain("docs/release-notes-v0.md");
     expect(readme).toContain("docs/installation.md");
   });
@@ -58,10 +59,26 @@ describe("PR and release documentation", () => {
     expect(commands).toContain("kairon release pack");
     expect(commands).toContain("kairon release verify");
     expect(commands).toContain("kairon release manifest");
+    expect(commands).toContain("kairon release sbom");
+    expect(commands).toContain("kairon release provenance");
     expect(commands).toContain("kairon release github plan");
     expect(commands).toContain("kairon release github publish");
     expect(commands).toContain("kairon release github verify");
     expect(checklist).toContain("<!-- kairon:github-release-distribution -->");
+    expect(checklist).toContain("docs/release-provenance-v0.md");
+  });
+
+  it("documents deterministic SBOM and local build provenance boundaries", async () => {
+    const provenance = await readUtf8("docs/release-provenance-v0.md");
+
+    expect(provenance).toContain("<!-- kairon:release-provenance-sbom -->");
+    expect(provenance).toContain("CycloneDX JSON 1.6");
+    expect(provenance).toContain("kairon_local_build_provenance");
+    expect(provenance).toContain("SLSA認証や署名済みattestationを称しない");
+    expect(provenance).toContain("kairon release sbom");
+    expect(provenance).toContain("kairon release provenance");
+    expect(provenance).toContain("token");
+    expect(provenance).toContain("絶対path");
   });
 
   it("documents GitHub branch protection sandbox and token redaction policy", async () => {

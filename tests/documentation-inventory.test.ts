@@ -98,6 +98,7 @@ describe("T177 documentation inventory", () => {
       daemon: await readUtf8("docs/windows-daemon-ops-v0.md"),
       installation: await readUtf8("docs/installation.md"),
       release: await readUtf8("docs/release-checklist-v0.md"),
+      provenance: await readUtf8("docs/release-provenance-v0.md"),
       workflow: await readUtf8("docs/workflow-v0.md"),
       watchdog: await readUtf8("docs/runtime-watchdog-v0.md"),
       incident: await readUtf8("docs/incident-lifecycle-v0.md"),
@@ -164,6 +165,16 @@ describe("T177 documentation inventory", () => {
         source: "src/release/release-manifest.ts",
         document: documents.installation,
         marker: "release-manifest.json"
+      },
+      {
+        source: "src/release/sbom.ts",
+        document: documents.provenance,
+        marker: "<!-- kairon:release-provenance-sbom -->"
+      },
+      {
+        source: "src/release/provenance.ts",
+        document: documents.provenance,
+        marker: "kairon_local_build_provenance"
       },
       {
         source: "src/release/github-release.ts",

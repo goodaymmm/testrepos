@@ -736,6 +736,8 @@ describe("createProgram", () => {
       "manifest",
       "notes",
       "pack",
+      "provenance",
+      "sbom",
       "validate",
       "verify"
     ]);

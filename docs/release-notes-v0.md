@@ -6,7 +6,13 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 ## Unreleased
 
 <!-- kairon:release-notes-unreleased -->
-現時点で`0.3.0`以降の未release変更はありません。各PR本文とmerge履歴を一次記録とし、local operation resultやgenerated evidenceはrelease notesへ埋め込まず、再実行方法と判定結果だけを記録します。
+- T178でpackage-lock v3から決定的なCycloneDX 1.6 SBOMを生成し、local build
+  provenanceとともにpackage、checksum manifest、source commitへbindするrelease contractを追加。
+- `kairon release sbom`、`kairon release provenance`を追加し、`release manifest`と
+  `release verify`でSBOM/provenanceのsize、SHA-256、lockfile、inventory、source driftを検証。
+
+各PR本文とmerge履歴を一次記録とし、local operation resultやgenerated evidenceはrelease
+notesへ埋め込まず、再実行方法と判定結果だけを記録します。
 
 ## Versioning
 

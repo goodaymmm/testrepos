@@ -430,14 +430,21 @@ checkpointのcanonical stateは常にJSON fileです。`runtime.json.workflow.ch
 
 ```powershell
 npm run release:pack
-kairon release manifest --package .\release-artifacts\0.3.0\kairon-0.3.0.tgz --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json
+kairon release sbom --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json --output .\release-artifacts\0.3.0\sbom.cdx.json
+kairon release provenance --package .\release-artifacts\0.3.0\kairon-0.3.0.tgz --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json --sbom .\release-artifacts\0.3.0\sbom.cdx.json --output .\release-artifacts\0.3.0\provenance.json
+kairon release manifest --package .\release-artifacts\0.3.0\kairon-0.3.0.tgz --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json --sbom .\release-artifacts\0.3.0\sbom.cdx.json --provenance .\release-artifacts\0.3.0\provenance.json
 kairon release verify .\release-artifacts\0.3.0\kairon-0.3.0.tgz --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json --release-manifest .\release-artifacts\0.3.0\release-manifest.json
 kairon readiness manifest --evidence <GATE_ID=path>
 kairon readiness check
 kairon readiness report --format markdown
 ```
 
-local packageはpublic npm registryへpublishせず、tarball、checksum manifest、release manifest、sorted file inventoryを検証してWindowsへinstallします。release manifestはclean source commit、runtime support、artifact hashをbindします。readinessはevidenceのsource commit、hash、size、freshnessを再検証し、必須gateがすべて`PASS`の場合だけ成功します。外部未設定、別commit、期限切れ、改変済み証跡を自動的にPASSへ昇格しません。
+local packageはpublic npm registryへpublishせず、tarball、checksum manifest、CycloneDX
+SBOM、local build provenance、release manifest、sorted file inventoryを検証してWindowsへ
+installします。release manifestはclean source commit、runtime support、artifact hash、
+SBOM/provenance digestをbindします。readinessはevidenceのsource commit、hash、size、
+freshnessを再検証し、必須gateがすべて`PASS`の場合だけ成功します。外部未設定、別commit、
+期限切れ、改変済み証跡を自動的にPASSへ昇格しません。
 
 ### 状態確認
 
@@ -687,6 +694,7 @@ T160-T176ではLocal Betaを配布可能なRelease Candidateへ拡張し、T175 
 - [docs/cli-commands-v0.md](docs/cli-commands-v0.md)
 - [docs/installation.md](docs/installation.md)
 - [docs/release-checklist-v0.md](docs/release-checklist-v0.md)
+- [docs/release-provenance-v0.md](docs/release-provenance-v0.md)
 - [docs/windows-daemon-ops-v0.md](docs/windows-daemon-ops-v0.md)
 - [docs/discord-approval-v0.md](docs/discord-approval-v0.md)
 - [docs/board-public-safety-v0.md](docs/board-public-safety-v0.md)

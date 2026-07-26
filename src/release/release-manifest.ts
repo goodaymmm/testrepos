@@ -10,11 +10,25 @@ import {
   verifyLocalBetaPackage,
   type LocalBetaPackageManifest
 } from "./local-beta.js";
+import {
+  verifyReleaseProvenance
+} from "./provenance.js";
+import {
+  verifyReleaseSbom
+} from "./sbom.js";
 
 export type ReleaseInventoryEntry = {
   path: string;
   size_bytes: number;
   type: "file" | "directory";
+};
+
+export type ReleaseAttestationBinding = {
+  file: string;
+  format: string;
+  schema_version: string;
+  sha256: string;
+  size_bytes: number;
 };
 
 export type ReleaseManifest = {
@@ -45,6 +59,16 @@ export type ReleaseManifest = {
     sha256: string;
     files: ReleaseInventoryEntry[];
   };
+  attestations?: {
+    sbom: ReleaseAttestationBinding & {
+      format: "cyclonedx-json";
+      schema_version: "1.6";
+    };
+    provenance: ReleaseAttestationBinding & {
+      format: "kairon-local-build-provenance";
+      schema_version: "0.1";
+    };
+  };
   created_at: string;
 };
 
@@ -56,7 +80,9 @@ export type ReleaseManifestCheck = {
     | "package_verification"
     | "package_binding"
     | "checksum_manifest_binding"
-    | "package_inventory_binding";
+    | "package_inventory_binding"
+    | "sbom_binding"
+    | "provenance_binding";
   status: "pass" | "fail";
   details: string;
 };
@@ -83,13 +109,22 @@ export type ReleaseManifestResult = {
   artifact_sha256: string;
   inventory_sha256: string;
   files: number;
+  sbom_path?: string;
+  provenance_path?: string;
   verification: ReleaseManifestVerificationResult;
 };
 
 export type CreateReleaseManifestOptions = {
   output?: string;
+  sbom?: string;
+  provenance?: string;
   commandRunner?: CommandRunner;
   now?: () => Date;
+};
+
+export type VerifyReleaseManifestOptions = {
+  projectRoot?: string;
+  commandRunner?: CommandRunner;
 };
 
 export function parseReleaseManifestContent(
@@ -129,6 +164,16 @@ export async function createReleaseManifest(
   const root = path.resolve(projectRoot);
   const packagePath = resolveFromRoot(root, packageFile);
   const checksumManifestPath = resolveFromRoot(root, checksumManifestFile);
+  const selectedAttestations = options.sbom !== undefined || options.provenance !== undefined;
+  if (selectedAttestations && (options.sbom === undefined || options.provenance === undefined)) {
+    throw new Error("Release manifest requires --sbom and --provenance together.");
+  }
+  const sbomPath = options.sbom === undefined
+    ? undefined
+    : resolveFromRoot(root, options.sbom);
+  const provenancePath = options.provenance === undefined
+    ? undefined
+    : resolveFromRoot(root, options.provenance);
   const commandRunner = options.commandRunner ?? spawnCommandRunner;
   const sourceCommit = await collectCleanSourceCommit(root, commandRunner);
   const packageVerification = await verifyLocalBetaPackage(
@@ -168,6 +213,18 @@ export async function createReleaseManifest(
   }
 
   const inventory = normalizeReleaseInventory(checksumManifest.files);
+  const attestations = sbomPath === undefined || provenancePath === undefined
+    ? undefined
+    : await createAttestationBindings({
+      root,
+      packagePath,
+      checksumManifestPath,
+      sbomPath,
+      provenancePath,
+      packageVersion,
+      sourceCommit,
+      commandRunner
+    });
   const releaseManifest: ReleaseManifest = {
     schema_version: "0.1",
     artifact_kind: "kairon_release",
@@ -196,6 +253,7 @@ export async function createReleaseManifest(
       sha256: calculateReleaseInventorySha256(inventory),
       files: inventory
     },
+    ...(attestations === undefined ? {} : { attestations }),
     created_at: (options.now?.() ?? new Date()).toISOString()
   };
   const releaseManifestPath = options.output === undefined
@@ -206,7 +264,8 @@ export async function createReleaseManifest(
   const verification = await verifyReleaseManifest(
     releaseManifestPath,
     packagePath,
-    checksumManifestPath
+    checksumManifestPath,
+    { projectRoot: root, commandRunner }
   );
   if (!verification.ok) {
     throw new Error(
@@ -228,6 +287,8 @@ export async function createReleaseManifest(
     artifact_sha256: releaseManifest.artifact.sha256,
     inventory_sha256: releaseManifest.package_inventory.sha256,
     files: inventory.length,
+    ...(sbomPath === undefined ? {} : { sbom_path: sbomPath }),
+    ...(provenancePath === undefined ? {} : { provenance_path: provenancePath }),
     verification
   };
 }
@@ -235,7 +296,8 @@ export async function createReleaseManifest(
 export async function verifyReleaseManifest(
   releaseManifestFile: string,
   packageFile?: string,
-  checksumManifestFile?: string
+  checksumManifestFile?: string,
+  options: VerifyReleaseManifestOptions = {}
 ): Promise<ReleaseManifestVerificationResult> {
   const releaseManifestPath = path.resolve(releaseManifestFile);
   const rawManifest = await readUnknownJson(releaseManifestPath, "release manifest");
@@ -344,6 +406,73 @@ export async function verifyReleaseManifest(
       : "Package inventory or inventory SHA-256 does not match the checksum manifest."
   ));
 
+  if (manifest?.attestations !== undefined) {
+    const sbomPath = path.resolve(
+      path.dirname(releaseManifestPath),
+      manifest.attestations.sbom.file
+    );
+    const provenancePath = path.resolve(
+      path.dirname(releaseManifestPath),
+      manifest.attestations.provenance.file
+    );
+    let sbomBound = false;
+    let provenanceBound = false;
+    try {
+      const [sbomBytes, sbomInfo, sbomVerification] = await Promise.all([
+        readFile(sbomPath),
+        stat(sbomPath),
+        verifyReleaseSbom(sbomPath, {
+          projectRoot: options.projectRoot,
+          checksumManifest: checksumManifestPath
+        })
+      ]);
+      sbomBound =
+        sbomVerification.ok &&
+        sbomVerification.package_version === manifest.package_version &&
+        manifest.attestations.sbom.sha256 === sha256(sbomBytes) &&
+        manifest.attestations.sbom.size_bytes === sbomInfo.size;
+    } catch {
+      sbomBound = false;
+    }
+    checks.push(resultCheck(
+      "sbom_binding",
+      sbomBound,
+      sbomBound
+        ? "CycloneDX SBOM content, size, and release bindings match."
+        : "CycloneDX SBOM content or release binding does not match."
+    ));
+
+    try {
+      const [provenanceBytes, provenanceInfo, provenanceVerification] =
+        await Promise.all([
+          readFile(provenancePath),
+          stat(provenancePath),
+          verifyReleaseProvenance(provenancePath, {
+            projectRoot: options.projectRoot,
+            package: packagePath,
+            checksumManifest: checksumManifestPath,
+            sbom: sbomPath,
+            commandRunner: options.commandRunner
+          })
+        ]);
+      provenanceBound =
+        provenanceVerification.ok &&
+        provenanceVerification.package_version === manifest.package_version &&
+        provenanceVerification.source_commit === manifest.source.commit_sha &&
+        manifest.attestations.provenance.sha256 === sha256(provenanceBytes) &&
+        manifest.attestations.provenance.size_bytes === provenanceInfo.size;
+    } catch {
+      provenanceBound = false;
+    }
+    checks.push(resultCheck(
+      "provenance_binding",
+      provenanceBound,
+      provenanceBound
+        ? "Local build provenance content, size, source, and release bindings match."
+        : "Local build provenance content or release binding does not match."
+    ));
+  }
+
   return {
     schema_version: "0.1",
     ok: checks.every((entry) => entry.status === "pass"),
@@ -386,6 +515,10 @@ export function formatReleaseManifest(result: ReleaseManifestResult): string {
     `artifact_sha256=${result.artifact_sha256}`,
     `inventory_sha256=${result.inventory_sha256}`,
     `files=${result.files}`,
+    ...(result.sbom_path === undefined ? [] : [`sbom=${result.sbom_path}`]),
+    ...(result.provenance_path === undefined
+      ? []
+      : [`provenance=${result.provenance_path}`]),
     `verification.ok=${result.verification.ok}`
   ].join("\n");
 }
@@ -539,8 +672,105 @@ export function isReleaseManifest(value: unknown): value is ReleaseManifest {
       Number.isInteger(entry.size_bytes) &&
       (entry.type === "file" || entry.type === "directory")
     ) &&
+    (candidate.attestations === undefined ||
+      isReleaseAttestations(candidate.attestations)) &&
     typeof candidate.created_at === "string" &&
     !Number.isNaN(Date.parse(candidate.created_at));
+}
+
+async function createAttestationBindings(input: {
+  root: string;
+  packagePath: string;
+  checksumManifestPath: string;
+  sbomPath: string;
+  provenancePath: string;
+  packageVersion: string;
+  sourceCommit: string;
+  commandRunner: CommandRunner;
+}): Promise<NonNullable<ReleaseManifest["attestations"]>> {
+  const [sbomBytes, sbomInfo, sbomVerification, provenanceBytes, provenanceInfo,
+    provenanceVerification] = await Promise.all([
+    readFile(input.sbomPath),
+    stat(input.sbomPath),
+    verifyReleaseSbom(input.sbomPath, {
+      projectRoot: input.root,
+      checksumManifest: input.checksumManifestPath
+    }),
+    readFile(input.provenancePath),
+    stat(input.provenancePath),
+    verifyReleaseProvenance(input.provenancePath, {
+      projectRoot: input.root,
+      package: input.packagePath,
+      checksumManifest: input.checksumManifestPath,
+      sbom: input.sbomPath,
+      commandRunner: input.commandRunner
+    })
+  ]);
+  if (
+    !sbomVerification.ok ||
+    sbomVerification.package_version !== input.packageVersion
+  ) {
+    throw new Error("Release manifest requires an SBOM bound to the selected release.");
+  }
+  if (
+    !provenanceVerification.ok ||
+    provenanceVerification.package_version !== input.packageVersion ||
+    provenanceVerification.source_commit !== input.sourceCommit
+  ) {
+    throw new Error("Release manifest requires provenance bound to the selected release.");
+  }
+  return {
+    sbom: {
+      file: path.basename(input.sbomPath),
+      format: "cyclonedx-json",
+      schema_version: "1.6",
+      sha256: sha256(sbomBytes),
+      size_bytes: sbomInfo.size
+    },
+    provenance: {
+      file: path.basename(input.provenancePath),
+      format: "kairon-local-build-provenance",
+      schema_version: "0.1",
+      sha256: sha256(provenanceBytes),
+      size_bytes: provenanceInfo.size
+    }
+  };
+}
+
+function isReleaseAttestations(
+  value: unknown
+): value is NonNullable<ReleaseManifest["attestations"]> {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Partial<NonNullable<ReleaseManifest["attestations"]>>;
+  return isAttestationBinding(
+    candidate.sbom,
+    "cyclonedx-json",
+    "1.6"
+  ) && isAttestationBinding(
+    candidate.provenance,
+    "kairon-local-build-provenance",
+    "0.1"
+  );
+}
+
+function isAttestationBinding(
+  value: unknown,
+  format: string,
+  schemaVersion: string
+): value is ReleaseAttestationBinding {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  const candidate = value as Partial<ReleaseAttestationBinding>;
+  return isPlainFilename(candidate.file) &&
+    candidate.format === format &&
+    candidate.schema_version === schemaVersion &&
+    typeof candidate.sha256 === "string" &&
+    /^[a-f0-9]{64}$/u.test(candidate.sha256) &&
+    Number.isInteger(candidate.size_bytes) &&
+    (candidate.size_bytes ?? -1) >= 0;
 }
 
 function resultCheck(
