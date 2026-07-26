@@ -13,6 +13,7 @@ import {
   releaseManifestCommand,
   releaseVerifyCommand
 } from "../src/cli/commands/release.js";
+import { createLocalBetaPackage } from "../src/release/local-beta.js";
 import {
   createReleaseManifest,
   formatReleaseManifest,
@@ -44,7 +45,7 @@ describe("release manifest", () => {
     releaseManifestPath = released.release_manifest_path;
   }, 60_000);
 
-  it("binds a verified 0.2.0 package to clean source and normalized inventory", async () => {
+  it("binds a verified 0.3.0 package to clean source and normalized inventory", async () => {
     const manifest = JSON.parse(
       await readFile(releaseManifestPath, "utf8")
     ) as ReleaseManifest;
@@ -58,7 +59,7 @@ describe("release manifest", () => {
     expect(manifest).toMatchObject({
       artifact_kind: "kairon_release",
       release_channel: "local_beta",
-      package_version: "0.2.0",
+      package_version: "0.3.0",
       source: {
         commit_sha: sourceCommit,
         dirty: false
@@ -177,6 +178,48 @@ describe("release manifest", () => {
       status: "pass"
     }));
   });
+
+  it("reproduces normalized inventory and release metadata from the same source", async () => {
+    const firstOutput = await mkdtemp(path.join(os.tmpdir(), "kairon-rc-first-"));
+    const secondOutput = await mkdtemp(path.join(os.tmpdir(), "kairon-rc-second-"));
+    const fixedNow = () => new Date("2026-07-26T00:00:00.000Z");
+    const firstPackage = await createLocalBetaPackage(
+      path.resolve("."),
+      { output: firstOutput, now: fixedNow }
+    );
+    const secondPackage = await createLocalBetaPackage(
+      path.resolve("."),
+      { output: secondOutput, now: fixedNow }
+    );
+    const [firstRelease, secondRelease] = await Promise.all([
+      createReleaseManifest(
+        path.resolve("."),
+        firstPackage.package_path,
+        firstPackage.manifest_path,
+        { commandRunner: cleanGitRunner, now: fixedNow }
+      ),
+      createReleaseManifest(
+        path.resolve("."),
+        secondPackage.package_path,
+        secondPackage.manifest_path,
+        { commandRunner: cleanGitRunner, now: fixedNow }
+      )
+    ]);
+    const [firstManifest, secondManifest] = await Promise.all([
+      readReleaseManifest(firstRelease.release_manifest_path),
+      readReleaseManifest(secondRelease.release_manifest_path)
+    ]);
+
+    expect(firstManifest.package_version).toBe("0.3.0");
+    expect(secondManifest.package_version).toBe("0.3.0");
+    expect(secondManifest.source).toEqual(firstManifest.source);
+    expect(secondManifest.runtime_support).toEqual(firstManifest.runtime_support);
+    expect(secondManifest.package_inventory).toEqual(firstManifest.package_inventory);
+    expect(secondManifest.artifact.package_file).toBe(firstManifest.artifact.package_file);
+    expect(secondManifest.artifact.checksum_manifest_file).toBe(
+      firstManifest.artifact.checksum_manifest_file
+    );
+  }, 120_000);
 });
 
 const cleanGitRunner: CommandRunner = async (invocation) =>
@@ -210,7 +253,7 @@ async function createPackageFixture(root: string): Promise<{
 }> {
   const packageMetadata = {
     name: "kairon",
-    version: "0.2.0",
+    version: "0.3.0",
     private: true,
     license: "UNLICENSED",
     bin: {
@@ -240,14 +283,14 @@ async function createPackageFixture(root: string): Promise<{
     content: Buffer.from(entry.content, "utf8")
   }));
   const packageBytes = gzipSync(createTar(entries), { mtime: 0 });
-  const packagePath = path.join(root, "kairon-0.2.0.tgz");
+  const packagePath = path.join(root, "kairon-0.3.0.tgz");
   const manifestPath = `${packagePath}.sha256.json`;
   await writeFile(packagePath, packageBytes);
   await writeFile(manifestPath, `${JSON.stringify({
     schema_version: "0.1",
     artifact_kind: "local_beta_package",
     package_name: "kairon",
-    package_version: "0.2.0",
+    package_version: "0.3.0",
     package_file: path.basename(packagePath),
     sha256: createHash("sha256").update(packageBytes).digest("hex"),
     size_bytes: packageBytes.length,
@@ -259,6 +302,10 @@ async function createPackageFixture(root: string): Promise<{
     created_at: "2026-07-22T00:00:00.000Z"
   }, null, 2)}\n`, "utf8");
   return { packagePath, manifestPath };
+}
+
+async function readReleaseManifest(file: string): Promise<ReleaseManifest> {
+  return JSON.parse(await readFile(file, "utf8")) as ReleaseManifest;
 }
 
 function createTar(entries: Array<{ path: string; content: Buffer }>): Buffer {

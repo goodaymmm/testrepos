@@ -1802,7 +1802,7 @@ export function createProgram(): Command {
     .option("--version <version>", "Required version for the pinned channel.")
     .option("--dry-run", "Preview the channel change. This is the default.")
     .option("--write", "Write the channel config after exact confirmation.")
-    .option("--confirm <value>", "Exact channel confirmation, such as beta or pinned@0.2.0.")
+    .option("--confirm <value>", "Exact channel confirmation, such as beta or pinned@0.3.0.")
     .action(async (channel: string, options: {
       repository?: string;
       baseBranch?: string;
@@ -1898,7 +1898,7 @@ export function createProgram(): Command {
 
   release
     .command("pack")
-    .description("Build a checksummed private local beta tarball.")
+    .description("Build a checksummed private local release tarball.")
     .option("--output <path>", "Output directory. Defaults to release-artifacts/<version>.")
     .action(async (options: { output?: string }) => {
       console.log(await releasePackCommand(process.cwd(), options));
@@ -1906,8 +1906,8 @@ export function createProgram(): Command {
 
   release
     .command("verify")
-    .description("Verify a local beta tarball and its checksum manifest.")
-    .argument("<package>", "Path to the local beta .tgz package.")
+    .description("Verify a local release tarball and its checksum manifest.")
+    .argument("<package>", "Path to the local release .tgz package.")
     .option("--manifest <path>", "Checksum manifest path. Defaults to <package>.sha256.json.")
     .option("--release-manifest <path>", "Release manifest path for source and artifact binding verification.")
     .action(async (packageFile: string, options: {
@@ -1924,7 +1924,7 @@ export function createProgram(): Command {
   release
     .command("manifest")
     .description("Create a release manifest bound to clean source and a verified package.")
-    .requiredOption("--package <path>", "Path to the verified local beta .tgz package.")
+    .requiredOption("--package <path>", "Path to the verified local release .tgz package.")
     .requiredOption("--manifest <path>", "Path to the package checksum manifest.")
     .option("--output <path>", "Output path. Defaults to release-manifest.json beside the package.")
     .action(async (options: {
@@ -1942,7 +1942,7 @@ export function createProgram(): Command {
   releaseGitHub
     .command("plan")
     .description("Create an approval-bound GitHub Release publication plan.")
-    .requiredOption("--version <version>", "Release version, for example 0.2.0.")
+    .requiredOption("--version <version>", "Release version, for example 0.3.0.")
     .requiredOption("--repository <owner/repo>", "Target GitHub repository.")
     .option("--base-branch <branch>", "Remote release source branch. Defaults to main.")
     .option("--artifact-dir <path>", "Local release artifact directory.")
@@ -1977,7 +1977,7 @@ export function createProgram(): Command {
   releaseGitHub
     .command("verify")
     .description("Verify the remote tag, release state, and downloaded asset hashes.")
-    .requiredOption("--version <version>", "Release version, for example 0.2.0.")
+    .requiredOption("--version <version>", "Release version, for example 0.3.0.")
     .requiredOption("--repository <owner/repo>", "Target GitHub repository.")
     .option("--base-branch <branch>", "Remote release source branch. Defaults to main.")
     .option("--artifact-dir <path>", "Local release artifact directory.")
@@ -2008,7 +2008,7 @@ export function createProgram(): Command {
     .command("bump")
     .description("Plan or apply a synchronized package and CLI version bump.")
     .option("--type <type>", "major, minor, or patch.")
-    .option("--version <version>", "Explicit next semantic version, for example 0.2.0.")
+    .option("--version <version>", "Explicit next semantic version, for example 0.3.0.")
     .option("--dry-run", "Show planned changes without writing files. This is the default.")
     .option("--write", "Apply the version bump to package.json and src/index.ts.")
     .action(async (options: {

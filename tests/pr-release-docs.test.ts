@@ -41,7 +41,7 @@ describe("PR and release documentation", () => {
     expect(readme).toContain("docs/installation.md");
   });
 
-  it("documents private local beta packaging and state-preserving uninstall", async () => {
+  it("documents private local RC packaging and state-preserving uninstall", async () => {
     const installation = await readUtf8("docs/installation.md");
     const commands = await readUtf8("docs/cli-commands-v0.md");
     const checklist = await readUtf8("docs/release-checklist-v0.md");
@@ -90,6 +90,7 @@ describe("PR and release documentation", () => {
     const prChecklist = await readUtf8("docs/pr-release-checklist-v0.md");
 
     expect(readme).toContain("<!-- kairon:t175-rc-baseline -->");
+    expect(readme).toContain("<!-- kairon:t177-local-rc-baseline -->");
     expect(checklist).toContain("<!-- kairon:release-readiness -->");
     expect(checklist).toContain("<!-- kairon:versioning-policy -->");
     expect(checklist).toContain("<!-- kairon:release-evidence -->");
@@ -103,8 +104,8 @@ describe("PR and release documentation", () => {
     expect(checklist).toContain("external_required");
     expect(notes).toContain("<!-- kairon:release-notes-unreleased -->");
     expect(notes).toContain("<!-- kairon:versioning-policy -->");
-    expect(notes).toContain("T176:");
-    expect(notes).toContain("現行source baselineはT175 Release Candidate");
+    expect(notes).toContain("## 0.3.0 - 2026-07-26");
+    expect(notes).toContain("現在のLocal RC versionは `0.3.0`");
     expect(notes).toContain("kairon release validate");
     expect(prChecklist).toContain("docs/release-checklist-v0.md");
     expect(prChecklist).toContain("docs/release-notes-v0.md");

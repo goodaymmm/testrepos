@@ -163,7 +163,7 @@ export async function createReleaseManifest(
     packageVersion !== checksumManifest.package_version
   ) {
     throw new Error(
-      "Release manifest package metadata does not match the private local beta source and artifact."
+      "Release manifest package metadata does not match the private local release source and artifact."
     );
   }
 
@@ -280,8 +280,8 @@ export async function verifyReleaseManifest(
     "runtime_support",
     runtimeValid,
     runtimeValid
-      ? "Runtime support matrix matches the Windows local beta baseline."
-      : "Runtime support matrix does not match the Windows local beta baseline."
+      ? "Runtime support matrix matches the Windows local release baseline."
+      : "Runtime support matrix does not match the Windows local release baseline."
   ));
 
   let packageVerification;
@@ -299,8 +299,8 @@ export async function verifyReleaseManifest(
     "package_verification",
     packageVerified,
     packageVerified
-      ? "Local beta package and checksum manifest verification passed."
-      : "Local beta package or checksum manifest verification failed."
+      ? "Local release package and checksum manifest verification passed."
+      : "Local release package or checksum manifest verification failed."
   ));
 
   const packageBound = manifest !== null &&

@@ -4,15 +4,16 @@ import { describe, expect, it } from "vitest";
 import { createProgram } from "../src/cli/main.js";
 import { createDefaultConfigs } from "../src/core/config/defaults.js";
 
-describe("T176 documentation inventory", () => {
-  it("identifies the T175 Release Candidate baseline and current distribution boundary", async () => {
+describe("T177 documentation inventory", () => {
+  it("identifies the T175 readiness evidence and current 0.3.0 Local RC boundary", async () => {
     const readme = await readUtf8("README.md");
 
     expect(readme).toContain("<!-- kairon:t175-rc-baseline -->");
-    expect(readme).toContain("T175 Release Candidate baseline");
+    expect(readme).toContain("<!-- kairon:t177-local-rc-baseline -->");
+    expect(readme).toContain("Local RC baseline");
     expect(readme).toContain("RC readiness 14 gate");
     expect(readme).toContain("global blocker 0件");
-    expect(readme).toContain("現在の配布済みLocal Beta versionは `0.2.0`");
+    expect(readme).toContain("現在のLocal RC versionは `0.3.0`");
     expect(readme).toContain("24時間daemon");
     expect(readme).toContain("production workflow");
     expect(readme).toContain("HTTP Interactions");
@@ -28,23 +29,28 @@ describe("T176 documentation inventory", () => {
     const baselines = [
       {
         path: "docs/architecture-v0.md",
-        marker: "<!-- kairon:t175-architecture-baseline -->"
+        marker: "<!-- kairon:t175-architecture-baseline -->",
+        baseline: "T175"
       },
       {
         path: "docs/release-checklist-v0.md",
-        marker: "<!-- kairon:t175-rc-validation-baseline -->"
+        marker: "<!-- kairon:t175-rc-validation-baseline -->",
+        baseline: "T175"
       },
       {
         path: "docs/installation.md",
-        marker: "<!-- kairon:t175-distribution-baseline -->"
+        marker: "<!-- kairon:t177-local-rc-distribution -->",
+        baseline: "T177"
       },
       {
         path: "docs/windows-daemon-ops-v0.md",
-        marker: "<!-- kairon:t175-daemon-baseline -->"
+        marker: "<!-- kairon:t175-daemon-baseline -->",
+        baseline: "T175"
       },
       {
         path: "docs/stable-remote-operations-v0.md",
-        marker: "<!-- kairon:t175-stable-remote-baseline -->"
+        marker: "<!-- kairon:t175-stable-remote-baseline -->",
+        baseline: "T175"
       }
     ];
 
@@ -53,8 +59,8 @@ describe("T176 documentation inventory", () => {
       expect(document, `missing RC baseline in ${baseline.path}`).toContain(
         baseline.marker
       );
-      expect(document, `missing T175 baseline wording in ${baseline.path}`).toContain(
-        "T175"
+      expect(document, `missing ${baseline.baseline} baseline wording in ${baseline.path}`).toContain(
+        baseline.baseline
       );
     }
 

@@ -56,6 +56,18 @@ describe("release commands", () => {
     expect(formatReleaseValidation(result)).toContain("summary.fail=0");
   });
 
+  it("validates the current 0.3.0 Local RC release contract", async () => {
+    const result = await validateRelease(path.resolve("."));
+
+    expect(result).toMatchObject({
+      ok: true,
+      target_version: "0.3.0",
+      package_version: "0.3.0",
+      cli_version: "0.3.0"
+    });
+    expect(result.checks.every((check) => check.status === "pass")).toBe(true);
+  });
+
   it("reports version and release documentation validation failures together", async () => {
     const root = await createReleaseProject("01.0.0", "0.2.0");
     await writeFile(path.join(root, "docs", "release-checklist-v0.md"), "# Checklist\n", "utf8");

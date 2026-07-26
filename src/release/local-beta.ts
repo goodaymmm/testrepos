@@ -171,7 +171,7 @@ export async function createLocalBetaPackage(
   const verification = await verifyLocalBetaPackage(packagePath, manifestPath);
   if (!verification.ok) {
     throw new Error(
-      `Local beta package verification failed: ${verification.checks
+      `Local release package verification failed: ${verification.checks
         .filter((check) => check.status === "fail")
         .map((check) => check.id)
         .join(", ")}`
@@ -204,7 +204,7 @@ export async function verifyLocalBetaPackage(
     packagePath.toLowerCase().endsWith(".tgz"),
     packagePath.toLowerCase().endsWith(".tgz")
       ? "Package uses the .tgz extension."
-      : "Local beta package must use the .tgz extension."
+      : "Local release package must use the .tgz extension."
   ));
 
   const manifest = await readManifest(manifestPath);
@@ -295,7 +295,7 @@ export async function verifyLocalBetaPackage(
     "package_metadata",
     metadataValid,
     metadataValid
-      ? `Package metadata is valid for private local beta ${packageVersion}.`
+      ? `Package metadata is valid for private local release ${packageVersion}.`
       : "Package metadata must keep name=kairon, private=true, license=UNLICENSED, the CLI bin, and the fixed files allowlist."
   ));
 
@@ -345,7 +345,7 @@ function isAllowedPackagePath(value: string): boolean {
 
 export function formatLocalBetaPack(result: LocalBetaPackResult): string {
   return [
-    "Kairon local beta package created.",
+    "Kairon local release package created.",
     `status=${result.status}`,
     `package=${result.package_path}`,
     `manifest=${result.manifest_path}`,
@@ -362,7 +362,7 @@ export function formatLocalBetaVerification(
   result: LocalBetaVerificationResult
 ): string {
   return [
-    "Kairon local beta package verification:",
+    "Kairon local release package verification:",
     `verification.ok=${result.ok}`,
     `package=${result.package_path}`,
     `manifest=${result.manifest_path}`,
@@ -389,7 +389,7 @@ async function assertLocalBetaSource(projectRoot: string): Promise<void> {
     !hasExpectedFilesAllowlist(packageJson.files)
   ) {
     throw new Error(
-      "package.json does not satisfy the private local beta package policy."
+      "package.json does not satisfy the private local release package policy."
     );
   }
 
@@ -409,7 +409,7 @@ async function inspectPackage(packagePath: string): Promise<{
   try {
     tar = gunzipSync(buffer);
   } catch {
-    throw new Error("Local beta package is not a valid gzip archive.");
+    throw new Error("Local release package is not a valid gzip archive.");
   }
   return {
     sha256: createHash("sha256").update(buffer).digest("hex"),
@@ -494,7 +494,7 @@ async function readManifest(manifestPath: string): Promise<unknown> {
   try {
     return JSON.parse(await readFile(manifestPath, "utf8")) as unknown;
   } catch (error) {
-    throw new Error(`Failed to read local beta checksum manifest: ${String(error)}`);
+    throw new Error(`Failed to read local release checksum manifest: ${String(error)}`);
   }
 }
 
