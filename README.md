@@ -382,9 +382,13 @@ kairon state events compact --dry-run
 kairon state backup create --dry-run
 kairon state backup verify <backup-id>
 kairon state backup rehearse <backup-id>
+kairon state backup dr plan <backup-id> --destination <directory>
+kairon state backup dr copy <plan-id> --confirm <plan-id>
+kairon state backup dr verify <backup-id>
+kairon state backup dr rehearse <backup-id>
 ```
 
-file-based canonical stateの参照整合性、checkpoint、snapshot、backup manifestとSHA-256を検証します。restoreやevent compactionはdry-runとexact confirmationを要求し、backup rehearsalは隔離したtemporary projectへ展開して元projectを変更しません。
+file-based canonical stateの参照整合性、checkpoint、snapshot、backup manifestとSHA-256を検証します。restoreやevent compactionはdry-runとexact confirmationを要求し、backup rehearsalは隔離したtemporary projectへ展開して元projectを変更しません。`backup dr`はoperatorが用意したproject外の保存先へatomic copyし、user-local catalog、定期verify、隔離rehearsal、検証済み世代を保護するretentionを提供します。
 
 ### RAG
 
@@ -710,6 +714,7 @@ T160-T176ではLocal Betaを配布可能なRelease Candidateへ拡張し、T175 
 - [docs/release-checklist-v0.md](docs/release-checklist-v0.md)
 - [docs/release-provenance-v0.md](docs/release-provenance-v0.md)
 - [docs/windows-daemon-ops-v0.md](docs/windows-daemon-ops-v0.md)
+- [docs/disaster-recovery-v0.md](docs/disaster-recovery-v0.md)
 - [docs/observability-v0.md](docs/observability-v0.md)
 - [docs/discord-approval-v0.md](docs/discord-approval-v0.md)
 - [docs/board-public-safety-v0.md](docs/board-public-safety-v0.md)

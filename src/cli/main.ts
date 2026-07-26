@@ -163,6 +163,10 @@ import { runReviewLoopCommand } from "./commands/review.js";
 import { startRuntime } from "./commands/start.js";
 import {
   stateBackupCreateCommand,
+  stateBackupDrCopyCommand,
+  stateBackupDrPlanCommand,
+  stateBackupDrRehearseCommand,
+  stateBackupDrVerifyCommand,
   stateBackupRehearseCommand,
   stateBackupRestoreCommand,
   stateBackupVerifyCommand,
@@ -1339,6 +1343,90 @@ export function createProgram(): Command {
       options: { confirm?: string; source?: string; format?: string }
     ) => {
       console.log(await stateBackupRestoreCommand(process.cwd(), backupId, options));
+    });
+
+  const stateBackupDr = stateBackup
+    .command("dr")
+    .description("Copy, verify, and rehearse off-device disaster recovery backups.");
+
+  stateBackupDr
+    .command("plan")
+    .description("Plan a verified copy to a project-external destination.")
+    .argument("<backup-id>", "Source backup id.")
+    .requiredOption("--destination <path>", "Existing project-external destination root.")
+    .option("--source <path>", "Source backup package path.")
+    .option("--minimum-free-bytes <bytes>", "Required free bytes in addition to backup size.")
+    .option("--verification-interval-days <days>", "Verification interval in days.")
+    .option("--max-backups <count>", "Maximum retained backup generations.")
+    .option("--max-age-days <days>", "Maximum backup age in days.")
+    .option("--min-keep <count>", "Minimum retained generations.")
+    .option("--catalog-path <path>", "Override the user-local backup catalog path.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (
+      backupId: string,
+      options: {
+        destination: string;
+        source?: string;
+        minimumFreeBytes?: string;
+        verificationIntervalDays?: string;
+        maxBackups?: string;
+        maxAgeDays?: string;
+        minKeep?: string;
+        catalogPath?: string;
+        format?: string;
+      }
+    ) => {
+      console.log(await stateBackupDrPlanCommand(process.cwd(), backupId, options));
+    });
+
+  stateBackupDr
+    .command("copy")
+    .description("Copy a planned backup atomically and record it in the catalog.")
+    .argument("<plan-id>", "Disaster recovery plan id.")
+    .requiredOption("--confirm <planId>", "Copy only when this value matches plan-id.")
+    .option("--catalog-path <path>", "Override the user-local backup catalog path.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (
+      planId: string,
+      options: { confirm?: string; catalogPath?: string; format?: string }
+    ) => {
+      console.log(await stateBackupDrCopyCommand(process.cwd(), planId, options));
+    });
+
+  stateBackupDr
+    .command("verify")
+    .description("Verify an off-device backup against its user-local catalog.")
+    .argument("<backup-id>", "Backup id.")
+    .option("--package <path>", "Select a catalog entry by package path.")
+    .option("--catalog-path <path>", "Override the user-local backup catalog path.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (
+      backupId: string,
+      options: { package?: string; catalogPath?: string; format?: string }
+    ) => {
+      console.log(await stateBackupDrVerifyCommand(process.cwd(), backupId, {
+        packagePath: options.package,
+        catalogPath: options.catalogPath,
+        format: options.format
+      }));
+    });
+
+  stateBackupDr
+    .command("rehearse")
+    .description("Rehearse a cataloged backup in an isolated temporary project.")
+    .argument("<backup-id>", "Backup id.")
+    .option("--package <path>", "Select a catalog entry by package path.")
+    .option("--catalog-path <path>", "Override the user-local backup catalog path.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (
+      backupId: string,
+      options: { package?: string; catalogPath?: string; format?: string }
+    ) => {
+      console.log(await stateBackupDrRehearseCommand(process.cwd(), backupId, {
+        packagePath: options.package,
+        catalogPath: options.catalogPath,
+        format: options.format
+      }));
     });
 
   const git = program

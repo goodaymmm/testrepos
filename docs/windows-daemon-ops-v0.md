@@ -265,6 +265,7 @@ kairon cleanup apply <retention-proposal-id> --dry-run
 ## State backup / restore drill
 
 backupはdaemon停止中に作成・復元します。保存先はtarget projectとは別driveまたは同期対象外の外部directoryを推奨します。
+長期保管用のoff-device copy、catalog、世代保持、隔離rehearsalは [disaster-recovery-v0.md](disaster-recovery-v0.md) を参照してください。
 
 ```powershell
 $TARGET = "M:\EnglishApp"
@@ -287,6 +288,19 @@ kairon state backup rehearse $BACKUP_ID --format json | ConvertFrom-Json
 ```powershell
 kairon state backup verify $BACKUP_ID --source $BACKUP_PACKAGE
 kairon state backup rehearse $BACKUP_ID --source $BACKUP_PACKAGE
+```
+
+外付けdriveまたは別volumeへ検証付きで複製する場合は、単純なfilesystem copyではなくDR commandを使用します。
+
+```powershell
+$plan = kairon state backup dr plan $BACKUP_ID `
+  --destination "E:\KaironDisasterRecovery" `
+  --format json |
+  ConvertFrom-Json
+$PLAN_ID = $plan.plan.plan_id
+kairon state backup dr copy $PLAN_ID --confirm $PLAN_ID
+kairon state backup dr verify $BACKUP_ID
+kairon state backup dr rehearse $BACKUP_ID
 ```
 
 復元前に対象projectを別名へ複製するのではなく、Kaironの確認付きrestoreを使用します。restoreは現行stateのpre-restore snapshotを自動作成します。

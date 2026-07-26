@@ -63,6 +63,10 @@ import {
   prepareAlertPolicy,
   type AlertPolicyConfig
 } from "../notifications/alert-policy.js";
+import {
+  BackupCatalog,
+  BackupCatalogCorruptError
+} from "../state/backup-catalog.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -250,6 +254,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkStableRemoteProfile(options.projectRoot));
   checks.push(await checkCorrelationIntegrity(options.projectRoot));
   checks.push(await checkConfigBackups(options.projectRoot));
+  checks.push(await checkDisasterRecoveryCatalog(options.projectRoot, env));
   checks.push(await checkRuntimeRecovery(options.projectRoot));
   checks.push(await checkDaemonHealth(options.projectRoot));
   checks.push(await checkWatchdogAlerts(options.projectRoot));
@@ -1172,6 +1177,103 @@ async function checkConfigBackups(projectRoot: string): Promise<DoctorCheck> {
     [`count=${backups.length}`, ...backups.slice(0, 5).map((backup) => `backup=${backup}`)],
     "Run kairon maintenance run and review the cleanup proposal before moving old config backups."
   );
+}
+
+async function checkDisasterRecoveryCatalog(
+  projectRoot: string,
+  env: NodeJS.ProcessEnv
+): Promise<DoctorCheck> {
+  const id = "state.disaster_recovery";
+  const title = "Off-device disaster recovery backups";
+  const catalog = new BackupCatalog({ env });
+  if (!(await catalog.exists())) {
+    return pass(id, title, ["status=not_configured", "catalog_entries=0"]);
+  }
+
+  try {
+    const project = await loadConfigFile<{ project_id?: unknown }>(
+      projectRoot,
+      "project.json"
+    );
+    const projectId =
+      typeof project.project_id === "string" ? project.project_id : undefined;
+    const entries = await catalog.list(projectId);
+    if (entries.length === 0) {
+      return pass(id, title, ["status=no_project_entries", "catalog_entries=0"]);
+    }
+
+    let missingPackages = 0;
+    let failedVerifications = 0;
+    let staleVerifications = 0;
+    let failedRehearsals = 0;
+    const now = Date.now();
+    for (const entry of entries) {
+      try {
+        await access(entry.package_path, constants.R_OK);
+      } catch {
+        missingPackages += 1;
+      }
+      if (entry.verification_status === "failed") {
+        failedVerifications += 1;
+      }
+      if (
+        entry.verification_status === "verified" &&
+        (entry.verified_at === undefined ||
+          !Number.isFinite(Date.parse(entry.verified_at)) ||
+          Date.parse(entry.verified_at) +
+              entry.verification_interval_days * 86_400_000 <
+            now)
+      ) {
+        staleVerifications += 1;
+      }
+      if (entry.rehearsal_status === "failed") {
+        failedRehearsals += 1;
+      }
+    }
+    const verifiedGenerations = entries.filter(
+      (entry) =>
+        entry.verification_status === "verified" &&
+        entry.verified_at !== undefined
+    ).length;
+    const details = [
+      `catalog_entries=${entries.length}`,
+      `verified_generations=${verifiedGenerations}`,
+      `missing_packages=${missingPackages}`,
+      `failed_verifications=${failedVerifications}`,
+      `stale_verifications=${staleVerifications}`,
+      `failed_rehearsals=${failedRehearsals}`
+    ];
+    if (
+      verifiedGenerations === 0 ||
+      missingPackages > 0 ||
+      failedVerifications > 0 ||
+      staleVerifications > 0 ||
+      failedRehearsals > 0
+    ) {
+      return warning(
+        id,
+        title,
+        details,
+        "Reconnect the destination and run kairon state backup dr verify or rehearse for an affected generation."
+      );
+    }
+    return pass(id, title, details);
+  } catch (error) {
+    if (error instanceof BackupCatalogCorruptError) {
+      return warning(
+        id,
+        title,
+        ["status=catalog_corrupt"],
+        "Restore or repair the user-local off-device backup catalog before copying or pruning backups."
+      );
+    }
+    return warning(
+      id,
+      title,
+      ["status=inspection_failed"],
+      "Check the off-device backup catalog and retry kairon doctor."
+    );
+  }
 }
 
 async function checkBoardSecretScan(projectRoot: string): Promise<DoctorCheck> {

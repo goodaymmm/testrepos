@@ -104,7 +104,8 @@ describe("T177 documentation inventory", () => {
       watchdog: await readUtf8("docs/runtime-watchdog-v0.md"),
       incident: await readUtf8("docs/incident-lifecycle-v0.md"),
       cli: await readUtf8("docs/cli-commands-v0.md"),
-      remote: await readUtf8("docs/stable-remote-operations-v0.md")
+      remote: await readUtf8("docs/stable-remote-operations-v0.md"),
+      disasterRecovery: await readUtf8("docs/disaster-recovery-v0.md")
     };
     const inventory = [
       {
@@ -131,6 +132,16 @@ describe("T177 documentation inventory", () => {
         source: "src/state/backup.ts",
         document: documents.cli,
         marker: "kairon state backup"
+      },
+      {
+        source: "src/state/disaster-recovery.ts",
+        document: documents.disasterRecovery,
+        marker: "<!-- kairon:off-device-disaster-recovery -->"
+      },
+      {
+        source: "src/state/backup-catalog.ts",
+        document: documents.disasterRecovery,
+        marker: "user-local"
       },
       {
         source: "src/state/event-compaction.ts",

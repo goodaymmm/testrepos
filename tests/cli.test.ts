@@ -88,6 +88,29 @@ describe("createProgram", () => {
     expect(apply?.options.map((option) => option.long)).toContain("--confirm");
   });
 
+  it("registers guarded off-device disaster recovery commands", () => {
+    const state = createProgram().commands.find(
+      (command) => command.name() === "state"
+    );
+    const backup = state?.commands.find(
+      (command) => command.name() === "backup"
+    );
+    const dr = backup?.commands.find((command) => command.name() === "dr");
+    const plan = dr?.commands.find((command) => command.name() === "plan");
+    const copy = dr?.commands.find((command) => command.name() === "copy");
+
+    expect(dr?.commands.map((command) => command.name()).sort()).toEqual([
+      "copy",
+      "plan",
+      "rehearse",
+      "verify"
+    ]);
+    expect(plan?.options.map((option) => option.long)).toContain(
+      "--destination"
+    );
+    expect(copy?.options.map((option) => option.long)).toContain("--confirm");
+  });
+
   it("registers multi-project registry commands", () => {
     const projects = createProgram().commands.find(
       (command) => command.name() === "projects"
@@ -393,6 +416,7 @@ describe("createProgram", () => {
     expect(verify?.options.map((option) => option.long)).toContain("--format");
     expect(backup?.commands.map((command) => command.name()).sort()).toEqual([
       "create",
+      "dr",
       "rehearse",
       "restore",
       "verify"

@@ -111,8 +111,18 @@ describe("state backup", () => {
       now: () => new Date("2026-07-15T01:00:00.000Z")
     });
     const verification = await verifyStateBackup(root, backup.backup_id);
+    let inspectedIsolatedProject = false;
     const rehearsal = await rehearseStateBackup(root, backup.backup_id, {
-      now: () => new Date("2026-07-15T01:05:00.000Z")
+      now: () => new Date("2026-07-15T01:05:00.000Z"),
+      inspectIsolatedProject: async (isolatedRoot) => {
+        inspectedIsolatedProject = true;
+        await expect(
+          readFile(
+            path.join(isolatedRoot, ".kairon", "state", "sample.json"),
+            "utf8"
+          )
+        ).resolves.toContain('"saved"');
+      }
     });
 
     expect(verification).toMatchObject({
@@ -120,6 +130,7 @@ describe("state backup", () => {
       backup_id: backup.backup_id,
       content_sha256: backup.content_sha256
     });
+    expect(inspectedIsolatedProject).toBe(true);
     expect(rehearsal).toMatchObject({
       status: "passed",
       backup_id: backup.backup_id,

@@ -32,6 +32,12 @@ import {
   planEventCompaction,
   verifyEventCompaction
 } from "../../state/event-compaction.js";
+import {
+  copyDisasterRecoveryBackup,
+  planDisasterRecoveryCopy,
+  rehearseDisasterRecoveryBackup,
+  verifyDisasterRecoveryBackup
+} from "../../state/disaster-recovery.js";
 
 export type StateCheckCommandOptions = {
   format?: string;
@@ -72,6 +78,30 @@ export type StateBackupCommandOptions = {
 export type StateBackupRestoreCommandOptions = {
   confirm?: string;
   source?: string;
+  format?: string;
+};
+
+export type StateBackupDrPlanCommandOptions = {
+  destination: string;
+  source?: string;
+  minimumFreeBytes?: string;
+  verificationIntervalDays?: string;
+  maxBackups?: string;
+  maxAgeDays?: string;
+  minKeep?: string;
+  catalogPath?: string;
+  format?: string;
+};
+
+export type StateBackupDrCopyCommandOptions = {
+  confirm?: string;
+  catalogPath?: string;
+  format?: string;
+};
+
+export type StateBackupDrCatalogCommandOptions = {
+  packagePath?: string;
+  catalogPath?: string;
   format?: string;
 };
 
@@ -218,6 +248,121 @@ export async function stateBackupRestoreCommand(
   );
 }
 
+export async function stateBackupDrPlanCommand(
+  projectRoot: string,
+  backupId: string,
+  options: StateBackupDrPlanCommandOptions
+): Promise<string> {
+  const format = parseStateOutputFormat(options.format);
+  const result = await planDisasterRecoveryCopy(projectRoot, backupId, {
+    destinationRoot: options.destination,
+    source: options.source,
+    minimumFreeBytes: parseOptionalInteger(
+      options.minimumFreeBytes,
+      "minimum-free-bytes",
+      true
+    ),
+    verificationIntervalDays: parseOptionalInteger(
+      options.verificationIntervalDays,
+      "verification-interval-days"
+    ),
+    maxBackups: parseOptionalInteger(options.maxBackups, "max-backups"),
+    maxAgeDays: parseOptionalInteger(options.maxAgeDays, "max-age-days"),
+    minKeep: parseOptionalInteger(options.minKeep, "min-keep"),
+    catalogPath: options.catalogPath
+  });
+  if (format === "json") {
+    return JSON.stringify(result, null, 2);
+  }
+  return [
+    "Kairon off-device backup plan created.",
+    `plan_id=${result.plan.plan_id}`,
+    `backup_id=${result.plan.backup_id}`,
+    `destination=${result.plan.destination.destination_root}`,
+    `package=${result.plan.destination_package_path}`,
+    `source_digest=${result.plan.source_content_sha256}`,
+    `retention_candidates=${result.plan.retention_candidates.length}`,
+    `plan_path=${result.plan_path}`,
+    `confirm=${result.plan.confirmation.expected}`
+  ].join("\n");
+}
+
+export async function stateBackupDrCopyCommand(
+  projectRoot: string,
+  planId: string,
+  options: StateBackupDrCopyCommandOptions
+): Promise<string> {
+  if (options.confirm === undefined) {
+    throw new Error(`Off-device backup copy requires --confirm ${planId}.`);
+  }
+  const format = parseStateOutputFormat(options.format);
+  const result = await copyDisasterRecoveryBackup(projectRoot, planId, {
+    confirm: options.confirm,
+    catalogPath: options.catalogPath
+  });
+  if (format === "json") {
+    return JSON.stringify(result, null, 2);
+  }
+  return [
+    "Kairon off-device backup copied.",
+    `status=${result.status}`,
+    `plan_id=${result.plan_id}`,
+    `backup_id=${result.backup_id}`,
+    `package=${result.package_path}`,
+    `content_sha256=${result.content_sha256}`,
+    `verified_at=${result.verified_at}`,
+    `retention_removed=${result.retention_removed.join(",") || "none"}`
+  ].join("\n");
+}
+
+export async function stateBackupDrVerifyCommand(
+  projectRoot: string,
+  backupId: string,
+  options: StateBackupDrCatalogCommandOptions = {}
+): Promise<string> {
+  const format = parseStateOutputFormat(options.format);
+  const result = await verifyDisasterRecoveryBackup(projectRoot, backupId, {
+    packagePath: options.packagePath,
+    catalogPath: options.catalogPath
+  });
+  if (format === "json") {
+    return JSON.stringify(result, null, 2);
+  }
+  return [
+    "Kairon off-device backup verified.",
+    `backup_id=${result.backup_id}`,
+    `package=${result.package_path}`,
+    `content_sha256=${result.content_sha256}`,
+    `verified_at=${result.verified_at}`,
+    `verification_due_at=${result.verification_due_at}`
+  ].join("\n");
+}
+
+export async function stateBackupDrRehearseCommand(
+  projectRoot: string,
+  backupId: string,
+  options: StateBackupDrCatalogCommandOptions = {}
+): Promise<string> {
+  const format = parseStateOutputFormat(options.format);
+  const result = await rehearseDisasterRecoveryBackup(projectRoot, backupId, {
+    packagePath: options.packagePath,
+    catalogPath: options.catalogPath
+  });
+  if (format === "json") {
+    return JSON.stringify(result, null, 2);
+  }
+  return [
+    "Kairon off-device disaster recovery rehearsal completed.",
+    `status=${result.status}`,
+    `backup_id=${result.backup_id}`,
+    `package=${result.package_path}`,
+    `integrity_status=${result.integrity.status}`,
+    `config_ok=${result.config_validation.ok}`,
+    `workflow_replay=${result.workflow_replay.status}`,
+    `cleaned_up=${result.cleaned_up}`
+  ].join("\n");
+}
+
 function parseStateOutputFormat(value: string | undefined): "text" | "json" {
   if (value === undefined || value === "text") {
     return "text";
@@ -227,4 +372,24 @@ function parseStateOutputFormat(value: string | undefined): "text" | "json" {
   }
 
   throw new Error(`Invalid state output format: ${value}`);
+}
+
+function parseOptionalInteger(
+  value: string | undefined,
+  name: string,
+  allowZero = false
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (!/^\d+$/u.test(value)) {
+    throw new Error(`--${name} must be an integer.`);
+  }
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || (allowZero ? parsed < 0 : parsed <= 0)) {
+    throw new Error(
+      `--${name} must be ${allowZero ? "a non-negative" : "a positive"} integer.`
+    );
+  }
+  return parsed;
 }
