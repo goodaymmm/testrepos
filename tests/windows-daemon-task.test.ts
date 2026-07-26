@@ -73,6 +73,48 @@ describe("kairon-daemon-task.ps1", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
   });
+
+  it("keeps scheduled supervisor health read-only and secret-free", async () => {
+    const script = await readFile(
+      path.resolve("scripts", "kairon-supervisor-health-task.ps1"),
+      "utf8"
+    );
+
+    expect(script).toContain("Register-ScheduledTask");
+    expect(script).toContain("Unregister-ScheduledTask");
+    expect(script).toContain('"projects"');
+    expect(script).toContain('"health"');
+    expect(script).toContain('"scan"');
+    expect(script).toContain("-MultipleInstances IgnoreNew");
+    expect(script).not.toContain("runtime start");
+    expect(script).not.toContain("queue claim");
+    expect(script).not.toContain("GH_TOKEN");
+    expect(script).not.toContain("GITHUB_TOKEN");
+    expect(script).not.toContain("KAIRON_DISCORD");
+  });
+
+  runIfPowerShell("parses the scheduled supervisor health helper", async () => {
+    const scriptPath = path.resolve(
+      "scripts",
+      "kairon-supervisor-health-task.ps1"
+    );
+    const result = spawnSync(
+      powershell!,
+      [
+        "-NoProfile",
+        "-Command",
+        `[scriptblock]::Create((Get-Content -LiteralPath '${scriptPath.replaceAll("'", "''")}' -Raw)) | Out-Null`
+      ],
+      {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        timeout: 10_000
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+  });
 });
 
 async function readScript(): Promise<string> {

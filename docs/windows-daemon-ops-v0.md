@@ -338,3 +338,28 @@ cd C:\Users\hikar\Documents\AutoRunner
 - `.kairon/logs/daemon/*.log` と `.kairon/runtime/daemon/*.jsonl` はlocal evidenceであり、原則commitしない。
 - `.kairon/runtime/lock.json` を手動削除する前に `kairon recovery run` を使う。
 - 変更後は短い `--max-ticks` daemon testではなく、Task Scheduler経由で起動・停止を1回ずつ確認する。
+
+## Scheduled multi-project health
+
+runtime daemonとは別に、read-only supervisor scanをTask Schedulerへ登録できる。登録はplan artifactと完全一致confirmを必須とする。
+
+```powershell
+$planText = kairon projects health schedule plan `
+  --interval-minutes 60 `
+  --project-timeout-ms 5000 `
+  --concurrency 4 `
+  --retention-days 30
+
+$PLAN_ID = [regex]::Match($planText, "plan_id=([A-Za-z0-9._-]+)").Groups[1].Value
+kairon projects health schedule register $PLAN_ID --confirm $PLAN_ID
+kairon projects health schedule verify
+```
+
+登録解除にも同じplan IDの完全一致confirmを使う。taskが既にない場合も成功する。
+
+```powershell
+kairon projects health schedule unregister $PLAN_ID --confirm $PLAN_ID
+kairon projects health schedule verify
+```
+
+helperは`scripts/kairon-supervisor-health-task.ps1`である。Task Scheduler引数にはregistry pathと数値profileだけを保存し、token、password、Discord credentialは保存しない。登録・解除時に`task_scheduler_permission_denied`となる場合はWindows PowerShellを管理者として実行する。

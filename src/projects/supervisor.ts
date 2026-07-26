@@ -82,6 +82,9 @@ export type ProjectSupervisorReport = {
 export type ProjectSupervisorOptions = ProjectRegistryOptions & {
   registry?: ProjectRegistry;
   persistObservations?: boolean;
+  projectTimeoutMs?: number;
+  concurrency?: number;
+  projectInspector?: (entry: ProjectRegistryEntry) => Promise<ProjectHealth>;
 };
 
 type ProjectConfig = {
@@ -111,19 +114,31 @@ export class ProjectSupervisor {
   readonly registry: ProjectRegistry;
   private readonly now: () => Date;
   private readonly persistObservations: boolean;
+  private readonly projectTimeoutMs?: number;
+  private readonly concurrency: number;
+  private readonly projectInspector: (
+    entry: ProjectRegistryEntry
+  ) => Promise<ProjectHealth>;
 
   constructor(options: ProjectSupervisorOptions = {}) {
     this.registry = options.registry ?? new ProjectRegistry(options);
     this.now = options.now ?? (() => new Date());
     this.persistObservations = options.persistObservations ?? true;
+    this.projectTimeoutMs = positiveIntegerOrUndefined(
+      options.projectTimeoutMs,
+      "projectTimeoutMs"
+    );
+    this.concurrency = positiveInteger(options.concurrency ?? 1, "concurrency");
+    this.projectInspector = options.projectInspector ?? inspectProject;
   }
 
   async inspect(): Promise<ProjectSupervisorReport> {
     const entries = await this.registry.list();
-    const projects: ProjectHealth[] = [];
-    for (const entry of entries) {
-      projects.push(await inspectProject(entry));
-    }
+    const projects = await mapWithConcurrency(
+      entries,
+      this.concurrency,
+      async (entry) => this.inspectEntry(entry)
+    );
 
     const conflicts = detectConflicts(projects);
     applyConflicts(projects, conflicts);
@@ -153,6 +168,26 @@ export class ProjectSupervisor {
     }
 
     return report;
+  }
+
+  private async inspectEntry(entry: ProjectRegistryEntry): Promise<ProjectHealth> {
+    try {
+      if (this.projectTimeoutMs === undefined) {
+        return await this.projectInspector(entry);
+      }
+      return await withTimeout(
+        this.projectInspector(entry),
+        this.projectTimeoutMs,
+        entry.project_id
+      );
+    } catch (error) {
+      return failedProjectHealth(
+        entry,
+        error instanceof ProjectInspectionTimeoutError
+          ? "project_inspection_timeout"
+          : "project_inspection_failed"
+      );
+    }
   }
 }
 
@@ -508,7 +543,9 @@ function statusFromIssues(issues: string[]): ProjectHealthStatus {
         "root_unreadable",
         "project_config_unreadable",
         "project_identity_mismatch",
-        "config_invalid"
+        "config_invalid",
+        "project_inspection_timeout",
+        "project_inspection_failed"
       ].includes(issue)
     )
   ) {
@@ -558,4 +595,89 @@ function asInteger(value: unknown): number | undefined {
 function normalizeRootKey(root: string): string {
   const normalized = normalizeProjectRoot(root);
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+class ProjectInspectionTimeoutError extends Error {
+  constructor(projectId: string, timeoutMs: number) {
+    super(`Project inspection timed out: ${projectId} (${timeoutMs}ms)`);
+    this.name = "ProjectInspectionTimeoutError";
+  }
+}
+
+async function withTimeout<T>(
+  operation: Promise<T>,
+  timeoutMs: number,
+  projectId: string
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new ProjectInspectionTimeoutError(projectId, timeoutMs)),
+      timeoutMs
+    );
+    timer.unref();
+  });
+  try {
+    return await Promise.race([operation, timeout]);
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
+async function mapWithConcurrency<T, U>(
+  values: T[],
+  concurrency: number,
+  mapper: (value: T) => Promise<U>
+): Promise<U[]> {
+  const output = new Array<U>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, values.length) },
+    async () => {
+      while (nextIndex < values.length) {
+        const index = nextIndex;
+        nextIndex += 1;
+        output[index] = await mapper(values[index]);
+      }
+    }
+  );
+  await Promise.all(workers);
+  return output;
+}
+
+function failedProjectHealth(
+  entry: ProjectRegistryEntry,
+  issue: "project_inspection_timeout" | "project_inspection_failed"
+): ProjectHealth {
+  return {
+    project_id: entry.project_id,
+    root: entry.root,
+    status: "error",
+    issues: [issue],
+    registered_version: entry.kairon_version,
+    config: {
+      valid: false,
+      warnings: 0,
+      errors: 1
+    },
+    endpoints: [],
+    provider_limits: {},
+    last_seen_at: entry.last_seen_at
+  };
+}
+
+function positiveInteger(value: number, name: string): number {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return value;
+}
+
+function positiveIntegerOrUndefined(
+  value: number | undefined,
+  name: string
+): number | undefined {
+  return value === undefined ? undefined : positiveInteger(value, name);
 }
