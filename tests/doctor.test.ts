@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeProject } from "../src/cli/commands/init.js";
@@ -17,6 +17,7 @@ import { createTempProject } from "./test-utils.js";
 import { suspendProvider } from "../src/agents/provider-policy.js";
 import { runWatchdogCheck } from "../src/runtime/watchdog.js";
 import { ProjectRegistry } from "../src/projects/registry.js";
+import { BackupCatalog } from "../src/state/backup-catalog.js";
 
 const discordIds = {
   application: "111111111111111111",
@@ -49,6 +50,10 @@ describe("runDoctor", () => {
     expect(statusById(result, "board.secret_scan")).toBe("pass");
     expect(statusById(result, "remote.profile")).toBe("pass");
     expect(statusById(result, "runtime.recovery")).toBe("pass");
+    expect(statusById(result, "state.disaster_recovery")).toBe("pass");
+    expect(checkById(result, "state.disaster_recovery")?.details).toContain(
+      "status=not_configured"
+    );
     expect(statusById(result, "watchdog.alerts")).toBe("pass");
     expect(statusById(result, "runtime.observability")).toBe("warning");
     expect(checkById(result, "discord.config")?.details).toContain(
@@ -424,6 +429,64 @@ describe("runDoctor", () => {
     expect(checkById(result, "config.backups")?.details).toContain(
       "backup=.kairon/config/project.json.bak-20260601010101"
     );
+  });
+
+  it("reports disconnected and corrupt off-device backup catalogs without exposing paths", async () => {
+    const root = await createInitializedGitProject();
+    const catalogPath = path.join(await createTempProject(), "catalog.json");
+    const destinationRoot = await createTempProject();
+    const packagePath = path.join(destinationRoot, "kairon-dr", "project", "BKP-T186");
+    await mkdir(packagePath, { recursive: true });
+    const project = await readJsonFile<{ project_id: string }>(
+      path.join(root, ".kairon", "config", "project.json")
+    );
+    await new BackupCatalog({
+      catalogPath,
+      now: () => new Date("2026-07-27T00:00:00.000Z")
+    }).upsert({
+      backup_id: "BKP-T186",
+      project_id: project.project_id,
+      destination_root: destinationRoot,
+      package_path: packagePath,
+      content_sha256: `sha256:${"a".repeat(64)}`,
+      bytes: 1,
+      copied_at: "2026-07-27T00:00:00.000Z",
+      verification_interval_days: 30,
+      verification_status: "verified",
+      verified_at: "2099-07-27T00:00:00.000Z"
+    });
+
+    const connected = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: { KAIRON_DR_CATALOG_PATH: catalogPath }
+    });
+    expect(statusById(connected, "state.disaster_recovery")).toBe("pass");
+
+    await rm(packagePath, { recursive: true, force: true });
+    const disconnected = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: { KAIRON_DR_CATALOG_PATH: catalogPath }
+    });
+    const disconnectedCheck = checkById(
+      disconnected,
+      "state.disaster_recovery"
+    );
+    expect(disconnectedCheck?.status).toBe("warning");
+    expect(disconnectedCheck?.details).toContain("missing_packages=1");
+    expect(formatDoctorResult(disconnected)).not.toContain(destinationRoot);
+
+    await writeFile(catalogPath, "{ invalid", "utf8");
+    const corrupt = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: { KAIRON_DR_CATALOG_PATH: catalogPath }
+    });
+    expect(checkById(corrupt, "state.disaster_recovery")).toMatchObject({
+      status: "warning",
+      details: ["status=catalog_corrupt"]
+    });
   });
 
   it("passes GitHub branch protection when authenticated API verification finds required gates", async () => {

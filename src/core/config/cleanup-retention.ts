@@ -30,6 +30,18 @@ export type CleanupRetentionPolicyInput = {
   >;
 };
 
+export type BackupGenerationRetentionRule = {
+  max_age_days: number;
+  max_backups: number;
+  min_keep: number;
+};
+
+export const defaultBackupGenerationRetentionRule: BackupGenerationRetentionRule = {
+  max_age_days: 180,
+  max_backups: 12,
+  min_keep: 2
+};
+
 export const defaultCleanupRetentionPolicy: CleanupRetentionPolicy = {
   enabled: true,
   categories: {

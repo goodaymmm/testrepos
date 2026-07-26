@@ -166,6 +166,12 @@ export type StateBackupRestoreOptions = {
   ) => Promise<void>;
 };
 
+export type StateBackupRehearsalOptions = {
+  source?: string;
+  now?: () => Date;
+  inspectIsolatedProject?: (isolatedProjectRoot: string) => Promise<void>;
+};
+
 type StateBackupFileRecord = StateBackupManifestFile & {
   absolute_path: string;
   content?: Buffer;
@@ -340,7 +346,7 @@ export async function verifyStateBackup(
 export async function rehearseStateBackup(
   projectRoot: string,
   backupId: string,
-  options: { source?: string; now?: () => Date } = {}
+  options: StateBackupRehearsalOptions = {}
 ): Promise<StateBackupRehearsalResult> {
   const now = options.now?.() ?? new Date();
   const loaded = await loadAndVerifyStateBackup(
@@ -364,6 +370,7 @@ export async function rehearseStateBackup(
       await writeFile(destination, record.content);
     }
     integrity = await checkStateIntegrity(rehearsalRoot, { now: () => now });
+    await options.inspectIsolatedProject?.(rehearsalRoot);
   } finally {
     await rm(rehearsalRoot, { recursive: true, force: true });
   }
