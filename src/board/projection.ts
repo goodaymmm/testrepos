@@ -841,7 +841,8 @@ function summarizeIncident(
     active_resources: incident.resources.filter(
       (resource) =>
         (resource.kind === "watchdog_alert" ||
-          resource.kind === "recovery_target") &&
+          resource.kind === "recovery_target" ||
+          resource.kind === "self_healing_runbook") &&
         !["resolved", "completed", "passed"].includes(resource.status)
     ).length,
     recurrence_count: incident.recurrence_count,

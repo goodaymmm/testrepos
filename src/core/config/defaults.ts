@@ -156,6 +156,42 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
             threshold: 1
           }
         }
+      },
+      self_healing: {
+        mode: "notify_only",
+        approval_threshold: "medium",
+        actions: {
+          workflow_checkpoint_index_rebuild: {
+            enabled: true,
+            max_attempts: 1,
+            cooldown_seconds: 86400,
+            time_budget_seconds: 120
+          },
+          rag_index_verified_rebuild: {
+            enabled: true,
+            max_attempts: 1,
+            cooldown_seconds: 86400,
+            time_budget_seconds: 180
+          },
+          discord_notification_retry: {
+            enabled: true,
+            max_attempts: 1,
+            cooldown_seconds: 300,
+            time_budget_seconds: 30
+          },
+          stale_runtime_lock_recovery_plan: {
+            enabled: true,
+            max_attempts: 1,
+            cooldown_seconds: 3600,
+            time_budget_seconds: 30
+          },
+          read_only_helper_health_plan: {
+            enabled: true,
+            max_attempts: 1,
+            cooldown_seconds: 3600,
+            time_budget_seconds: 30
+          }
+        }
       }
     },
     "schedule.json": {
@@ -571,6 +607,7 @@ export const kaironDirectories = [
   "incidents/plans",
   "recovery",
   "recovery/resolutions",
+  "recovery/self-healing",
   "state",
   "migrations",
   "migrations/plans",

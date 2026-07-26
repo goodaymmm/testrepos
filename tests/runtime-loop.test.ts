@@ -666,6 +666,31 @@ describe("RuntimeLoop", () => {
     });
   });
 
+  it("records one bounded self-healing result in the runtime tick", async () => {
+    const root = await createInitializedProject();
+    const result = await new RuntimeLoop(root, {
+      now: () => new Date("2026-05-25T20:00:00.000Z"),
+      selfHealingRunner: async () => ({
+        status: "completed",
+        run_id: "SHR-0123456789abcdef0123",
+        runbook_id: "workflow_checkpoint_index_rebuild"
+      })
+    }).runTick();
+
+    expect(result.self_healing).toEqual({
+      status: "completed",
+      run_id: "SHR-0123456789abcdef0123",
+      runbook_id: "workflow_checkpoint_index_rebuild"
+    });
+    await expect(
+      readJsonFile<RuntimeTickResult>(
+        path.join(root, ".kairon", "runtime", "last-tick.json")
+      )
+    ).resolves.toMatchObject({
+      self_healing: result.self_healing
+    });
+  });
+
   it("dispatches connected workflow items only while the feature flag is enabled", async () => {
     const root = await createInitializedProject();
     const queue = new WorkQueue(root);

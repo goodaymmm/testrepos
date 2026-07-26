@@ -73,6 +73,13 @@ export async function notifyPendingDiscordWatchdogAlerts(
       result.skipped += 1;
       continue;
     }
+    if (
+      pending.attempts > 0 &&
+      (pending.attempts >= 2 || pending.retry_authorized_at === undefined)
+    ) {
+      result.skipped += 1;
+      continue;
+    }
     const decision = evaluateAlertPolicy(policy, alert, pending, {
       now,
       sent_today: sentToday

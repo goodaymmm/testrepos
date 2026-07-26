@@ -58,6 +58,10 @@ import {
   recordRuntimeTickMetrics,
   startRuntimeMetricTimer
 } from "../observability/runtime-metrics.js";
+import {
+  runBoundedSelfHealingTick,
+  type SelfHealingTickResult
+} from "../recovery/runbook.js";
 
 export type RuntimeTickAction =
   | "processed-command"
@@ -83,6 +87,7 @@ export type RuntimeTickResult = {
     handoff_count?: number;
     marker_path: string;
   };
+  self_healing?: SelfHealingTickResult;
 };
 
 export type RuntimeLoopOptions = {
@@ -109,6 +114,10 @@ export type RuntimeLoopOptions = {
       error?: unknown;
     }
   ) => Promise<DiscordApprovalResultReply>;
+  selfHealingRunner?: (
+    projectRoot: string,
+    options: { now: Date; env: NodeJS.ProcessEnv }
+  ) => Promise<SelfHealingTickResult>;
 };
 
 export type RuntimeGitTransactionRequest =
@@ -175,6 +184,20 @@ export class RuntimeLoop {
         this.options.env ?? process.env
       )
     ).effective_enabled;
+    const selfHealing = await (
+      this.options.selfHealingRunner ??
+      ((root, input) =>
+        runBoundedSelfHealingTick(root, {
+          now: input.now,
+          env: input.env
+        }))
+    )(this.projectRoot, {
+      now,
+      env: this.options.env ?? process.env
+    }).catch(() => ({
+      status: "failed" as const,
+      reason: "self_healing_tick_failed"
+    }));
 
     const queueResult = await this.createQueueWorker(
       now,
@@ -189,7 +212,10 @@ export class RuntimeLoop {
     return this.recordTick({
       ...this.baseTick(schedule, workerId, now, sessions),
       action: queueResult.status === "idle" ? "idle" : queueResult.status,
-      queue_result: queueResult
+      queue_result: queueResult,
+      ...(selfHealing.status === "disabled"
+        ? {}
+        : { self_healing: selfHealing })
     }, {
       durationMilliseconds: metricTimer.elapsedMilliseconds(),
       oldestReadyAgeMilliseconds
