@@ -84,21 +84,27 @@ describe("PR and release documentation", () => {
   });
 
   it("documents release readiness and versioning policy", async () => {
+    const readme = await readUtf8("README.md");
     const checklist = await readUtf8("docs/release-checklist-v0.md");
     const notes = await readUtf8("docs/release-notes-v0.md");
     const prChecklist = await readUtf8("docs/pr-release-checklist-v0.md");
 
+    expect(readme).toContain("<!-- kairon:t175-rc-baseline -->");
     expect(checklist).toContain("<!-- kairon:release-readiness -->");
     expect(checklist).toContain("<!-- kairon:versioning-policy -->");
     expect(checklist).toContain("<!-- kairon:release-evidence -->");
+    expect(checklist).toContain("<!-- kairon:t175-rc-validation-baseline -->");
     expect(checklist).toContain("npm run build");
     expect(checklist).toContain("npm test");
     expect(checklist).toContain("kairon release validate");
     expect(checklist).toContain("kairon readiness rc check");
+    expect(checklist).toContain("14 gateがすべて`PASS`");
     expect(checklist).toContain("rc_ready=true");
     expect(checklist).toContain("external_required");
     expect(notes).toContain("<!-- kairon:release-notes-unreleased -->");
     expect(notes).toContain("<!-- kairon:versioning-policy -->");
+    expect(notes).toContain("T176:");
+    expect(notes).toContain("現行source baselineはT175 Release Candidate");
     expect(notes).toContain("kairon release validate");
     expect(prChecklist).toContain("docs/release-checklist-v0.md");
     expect(prChecklist).toContain("docs/release-notes-v0.md");

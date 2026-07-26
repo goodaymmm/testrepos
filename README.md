@@ -6,8 +6,8 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 
 ## 現在の位置づけ
 
-<!-- kairon:t159-beta-baseline -->
-このリポジトリは、T159までの実装とoperation testを完了した個人運用向けLocal Betaです。build、unit / integration test、state integrity、secret scanに加え、24時間daemon、GitHub / Discord live経路、remote read-only Board、production workflow、Windows package lifecycleを検証済みです。
+<!-- kairon:t175-rc-baseline -->
+このリポジトリの現行sourceは、T160-T175の実装とoperation testを完了した個人運用向けRelease Candidate baselineです。build、unit / integration test、state integrity、secret scanに加え、配布・更新・復旧・workflow・Agent・RAG・複数project・stable remoteを対象とするRC readiness 14 gateがすべて`PASS`し、global blocker 0件を確認済みです。現在の配布済みLocal Beta artifactは`0.2.0`のままで、T160以降の変更は次のrelease作業まで`Unreleased`として扱います。
 
 Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Agent CLI、approval、Git / deploy guard、maintenanceをローカルで統合します。外部writeと高リスク操作はdefault disabledまたはapproval requiredであり、Boardはread-onlyを維持します。
 
@@ -24,26 +24,29 @@ Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Age
 - local-sandbox deploy providerとproduction providerのdefault deny
 - Discord Gateway / HTTP Interactions、approval reply、idempotency、decision audit、correlation追跡
 - approval queue CLI
-- runtime loop、Windows Task Scheduler daemon、24時間certification、runtime recovery
+- runtime loop、Windows Task Scheduler daemon、24時間daemon certification、runtime recovery
 - runtime watchdog、deduplicated alert、cooldown付きDiscord通知
 - incident lifecycle、correlated timeline、approval-gated assisted recovery
 - daily report、agent handoff、retention、cleanup proposal / apply / archive
 - state integrity、snapshot / restore、event compaction、deterministic backup / rehearsal
 - read-only Board projection、loopback / remote-readonly server、short-lived access token
 - 固定HTTPS host、identity-aware proxy、Discord / Board URL driftを統合するstable remote operations profile
-- production workflow、checkpoint、resource lock、pause / resume / cancel / recover
-- local lexical RAG、incremental refresh、integrity / stats / rebuild / context連携
+- production workflow、branch / join / compensation、durable checkpoint store、resource lock、pause / resume / cancel / recover
+- Agent session context budget、bounded compaction、hard-limit rotation
+- capability / connector trust policy、default deny、approval連携
+- local lexical / vector / hybrid RAG、incremental embedding cache、RAG integrity / rebuild、quality gate、context連携
+- user-local multi-project registry、read-only supervisor、resource conflict診断
 - provider quota / suspend policy、operation test profile / summary支援
 - checksummed private local package、install / update / rollback / uninstall
 - reproducible `0.2.0` artifact、approval-gated GitHub Release、verified manual update channel
 - allowlist収集、secret scan、hash manifest付きのsanitized support bundle
-- evidence manifestとBeta readiness gate
+- evidence manifest、Beta互換gate、Release Candidate readiness 14 gate
 
-Local Beta後の主な開発範囲:
+T175 Release Candidate後の次のrelease作業:
 
-- workflow branch / join / compensationとdurable checkpoint store
-- session context budget、capability / MCP trust policy、hybrid local RAG
-- Release Candidate readiness gate
+- `Unreleased`変更のversion確定とpackage / CLI / lockfile同期
+- current source commitからのrelease artifact再生成とremote再検証
+- release notes、installation guide、配布channelの確定
 
 ## 前提
 
@@ -599,8 +602,8 @@ README更新が必要な代表条件:
 詳細は [docs/pr-release-checklist-v0.md](docs/pr-release-checklist-v0.md) を参照してください。
 
 release判断では [docs/release-checklist-v0.md](docs/release-checklist-v0.md) を使い、`npm run build`、`npm test`、対象operation test、secret / generated artifact確認、README更新要否、version同期を確認します。
-`kairon readiness manifest`で証跡のSHA-256・source commit・有効期限を固定し、`kairon readiness check`または`kairon readiness report`でBeta gateを判定できます。必須gateがすべて`PASS`の場合だけexit code 0となり、外部未設定は`SETUP_REQUIRED`、期限切れ・別commit・改変済み証跡は`UNKNOWN`として扱います。
-release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在のLocal Beta versionは `0.2.0` で、versionを変更する場合は `package.json`、`package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。`kairon release validate` でversion形式・同期、release checklist marker、`Unreleased` marker、現在version entryを一括確認できます。
+`kairon readiness manifest`でBeta互換証跡を、`kairon readiness rc manifest`でRC証跡のSHA-256・source commit・有効期限を固定します。RCは`kairon readiness rc check`で14 gateとglobal blockerを判定し、全gateが`PASS`かつblocker 0件の場合だけ`rc_ready=true`となります。外部未設定は`SETUP_REQUIRED`、期限切れ・別commit・改変済み証跡は`UNKNOWN`として扱います。
+release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在の配布済みLocal Beta versionは `0.2.0`、現行source baselineはT175 Release Candidateです。versionを変更する場合は `package.json`、`package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。`kairon release validate` でversion形式・同期、release checklist marker、`Unreleased` marker、現在version entryを一括確認できます。
 
 local betaはpublic npm registryへpublishせず、`npm run release:pack`でchecksummed tarballを生成します。Windowsでのinstall、update/rollback、uninstall手順は [docs/installation.md](docs/installation.md) を参照してください。uninstallはprojectの`.kairon/`を削除しません。
 
@@ -652,18 +655,18 @@ T67-T75では、local runtimeだけでなくGitHub / Discordを含む外部接�
 | T74 | RAG query / context連携 | refresh、query、metadata filter、secret/protected除外、context builder連携を確認済み |
 | T75 | Git transaction連携 | review承認後のtransaction queue、metadata、rollback/recovery接続を確認済み |
 
-### T159 Local Beta baseline
+### T175 Release Candidate baseline
 
-T76-T159では初期経路を拡張し、T159 readinessで全11 gate（必須10、任意1）、secret finding 0、未PASS系status 0を確認しました。local operation resultはgenerated evidenceのためrepositoryへcommitせず、再検証時は現在commitに対して生成し直します。
+T160-T175ではLocal Betaを配布可能なRelease Candidateへ拡張し、T175 readinessで全14 gate、global blocker 0件、secret finding 0、未PASS系status 0を確認しました。local operation resultはgenerated evidenceのためrepositoryへcommitせず、再検証時は現在commitに対して生成し直します。
 
-| 分類 | T159時点の検証範囲 |
+| 分類 | T175時点の検証範囲 |
 | --- | --- |
-| Runtime | Windows Task Scheduler、24時間daemon certification、retention、recovery、backup rehearsal |
-| Controlled execution | guarded PR create / merge、local-sandbox deploy、production workflow、approval follow-up |
-| External operations | Discord Gateway / HTTP Interactions、remote-readonly Board、correlation / decision audit |
-| Data and policy | state integrity / compaction、RAG integrity / rebuild、provider quota / suspend policy |
-| Distribution | checksummed local package、install / update / rollback / uninstall |
-| Readiness | evidence hash / freshness / source commitと必須gateの機械判定 |
+| Distribution | reproducible `0.2.0` package、approval-gated GitHub Release、verified update / rollback、sanitized support bundle |
+| Runtime and recovery | Windows daemon certification、Watchdog alert routing、Incident lifecycle、approval-gated assisted recovery |
+| Controlled execution | workflow config、branch / join / compensation、durable checkpoint store、guarded Git / deploy |
+| Agent and data | session context budget、capability trust policy、hybrid local RAG、quality gate |
+| External operations | multi-project supervisor、Discord HTTP Interactions、remote-readonly Board、stable remote profile |
+| Readiness | 14 gateのhash / freshness / source commit、external requirement、incident / secret blockerの機械判定 |
 
 ## 推奨する次の進め方
 
@@ -673,7 +676,7 @@ T76-T159では初期経路を拡張し、T159 readinessで全11 gate（必須10�
 4. `kairon start --daemon`またはWindows Task Schedulerを使い、`kairon status`とdaemon reportを監視する。
 5. GitHub、deploy、Discord HTTP、remote Boardはdry-run / loopbackから開始し、外部writeを段階的に有効化する。
 6. `kairon maintenance run`、backup、cleanup proposal、RAG verifyを定期実行する。
-7. 配布前はpackage verifyとreadiness gateを現在commitのevidenceで再生成する。
+7. 配布前はpackage verifyとRC readiness 14 gateを現在commitのevidenceで再生成する。
 
 ## 関連ドキュメント
 

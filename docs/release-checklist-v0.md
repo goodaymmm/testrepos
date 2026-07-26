@@ -75,6 +75,9 @@ Beta配布の機械判定では、すべての必須gateが`PASS`の場合だけ
 T160-T174の証跡をRC gateへ登録し、現在commitに対する配布・更新・復旧・
 workflow・Agent・RAG・複数project・stable remoteの成立を確認します。
 
+<!-- kairon:t175-rc-validation-baseline -->
+T175 operation testでは、current source commitへbindした14 gateがすべて`PASS`し、global blocker 0件、secret finding 0件、`rc_ready=true`を確認しました。この結果は現行sourceのRelease Candidate baselineであり、次のversion artifactを公開する際はrelease commitに対してmanifestと全external evidenceを再生成します。
+
 ```powershell
 kairon readiness rc manifest `
   --evidence BASELINE_DOCS=.\operation-test-results\t160.json `
@@ -118,7 +121,7 @@ git diff --cached --stat
 ## Versioning方針
 
 <!-- kairon:versioning-policy -->
-現在のKaironはT159までのoperation test結果を収録した`0.2.0` Local Betaです。packageは `private: true` のため、
+現在の配布済みartifactはT159までのoperation test結果を収録した`0.2.0` Local Betaで、現行sourceはT175 Release Candidate baselineです。T160以降の変更は次のversion確定まで`Unreleased`です。packageは `private: true` のため、
 npm publishを前提にしたversion bumpではなく、運用上のrelease tag / release noteの
 判断材料としてversionを扱います。
 

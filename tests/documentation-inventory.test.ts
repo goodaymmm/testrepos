@@ -4,12 +4,15 @@ import { describe, expect, it } from "vitest";
 import { createProgram } from "../src/cli/main.js";
 import { createDefaultConfigs } from "../src/core/config/defaults.js";
 
-describe("T159 documentation inventory", () => {
-  it("identifies the current Local Beta baseline without the stale T67 backlog", async () => {
+describe("T176 documentation inventory", () => {
+  it("identifies the T175 Release Candidate baseline and current distribution boundary", async () => {
     const readme = await readUtf8("README.md");
 
-    expect(readme).toContain("<!-- kairon:t159-beta-baseline -->");
-    expect(readme).toContain("T159 Local Beta baseline");
+    expect(readme).toContain("<!-- kairon:t175-rc-baseline -->");
+    expect(readme).toContain("T175 Release Candidate baseline");
+    expect(readme).toContain("RC readiness 14 gate");
+    expect(readme).toContain("global blocker 0件");
+    expect(readme).toContain("現在の配布済みLocal Beta versionは `0.2.0`");
     expect(readme).toContain("24時間daemon");
     expect(readme).toContain("production workflow");
     expect(readme).toContain("HTTP Interactions");
@@ -18,6 +21,47 @@ describe("T159 documentation inventory", () => {
     expect(readme).not.toContain("T67-T75完了後も残る主な後続作業の範囲");
     expect(readme).not.toContain("LangGraph workflow runtime の本格導入");
     expect(readme).not.toContain("cloud / public HTTP endpoint でのDiscord Interactions運用");
+    expect(readme).not.toContain("<!-- kairon:t159-beta-baseline -->");
+  });
+
+  it("keeps the RC baseline synchronized across operator documents", async () => {
+    const baselines = [
+      {
+        path: "docs/architecture-v0.md",
+        marker: "<!-- kairon:t175-architecture-baseline -->"
+      },
+      {
+        path: "docs/release-checklist-v0.md",
+        marker: "<!-- kairon:t175-rc-validation-baseline -->"
+      },
+      {
+        path: "docs/installation.md",
+        marker: "<!-- kairon:t175-distribution-baseline -->"
+      },
+      {
+        path: "docs/windows-daemon-ops-v0.md",
+        marker: "<!-- kairon:t175-daemon-baseline -->"
+      },
+      {
+        path: "docs/stable-remote-operations-v0.md",
+        marker: "<!-- kairon:t175-stable-remote-baseline -->"
+      }
+    ];
+
+    for (const baseline of baselines) {
+      const document = await readUtf8(baseline.path);
+      expect(document, `missing RC baseline in ${baseline.path}`).toContain(
+        baseline.marker
+      );
+      expect(document, `missing T175 baseline wording in ${baseline.path}`).toContain(
+        "T175"
+      );
+    }
+
+    const architecture = await readUtf8("docs/architecture-v0.md");
+    const daemon = await readUtf8("docs/windows-daemon-ops-v0.md");
+    expect(architecture).not.toContain("<!-- kairon:t159-architecture-baseline -->");
+    expect(daemon).not.toContain("<!-- kairon:t159-daemon-baseline -->");
   });
 
   it("documents every registered top-level CLI command", async () => {
