@@ -263,7 +263,11 @@ kairon update apply UPD-0001 --confirm UPD-0001
 - download後にpackage SHA-256、checksum manifest、release manifest、inventory、tag source SHAが一致する。
 - cacheはproject source外のuser-local directoryにあり、partial downloadが確定artifactとして残らない。
 - apply / rollback前にcache済みartifactを再検証し、exact confirmなしではPowerShell lifecycleを開始しない。
+- runtime停止、state integrity、disk容量のtransaction preflightを通過している。
+- user-local staging prefixでversion、package/release manifest、state integrityを確認し、成功前にactive packageを変更していない。
+- `.kairon/update/transactions/UTX-*.json`のtimelineとupdate registry historyのtransaction IDが一致する。
 - lifecycle失敗時はregistryのinstalled / previous / last successfulを成功扱いにしない。
+- post-check失敗時は事前検証済みrollback packageを1回だけ適用し、失敗時はcritical incidentとrecovery markerを残して自動再試行しない。
 - rollback targetは事前にverified cacheへ取得し、`kairon update rollback --to <version> --confirm <version>`で明示する。
 - background auto-update、silent update、schedulerは存在しない。
 

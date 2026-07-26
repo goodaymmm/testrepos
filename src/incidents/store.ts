@@ -21,7 +21,8 @@ export type IncidentResourceKind =
   | "approval"
   | "support_bundle"
   | "recovery_plan"
-  | "recovery_result";
+  | "recovery_result"
+  | "update_transaction";
 
 export type IncidentResourceReference = {
   kind: IncidentResourceKind;

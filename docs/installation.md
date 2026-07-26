@@ -100,7 +100,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\install-local-beta.ps1 `
   -Package .\kairon-0.3.0.tgz
 ```
 
-scriptはdependency、filename binding、size、SHA-256を確認してから`npm install --global`を実行し、install後に`kairon release verify`と`kairon --version`を確認します。既にKaironが存在する場合はinstallを拒否するため、update scriptを使います。
+scriptはdependency、filename binding、size、SHA-256を確認し、user-local staging prefixで`kairon release verify`と`kairon --version`を通してから`npm install --global`を実行します。既にKaironが存在する場合はinstallを拒否するため、update scriptを使います。
 
 ## Update And Rollback
 
@@ -136,7 +136,7 @@ kairon update rollback --to 0.2.0 --confirm 0.2.0 --dry-run
 kairon update rollback --to 0.2.0 --confirm 0.2.0
 ```
 
-`apply`と`rollback`はcache済みartifactを毎回再検証し、次の既存PowerShell lifecycleを呼び出します。成功後だけ`.kairon/update/registry.json`を更新し、失敗時はinstalled / previous / last successful versionを成功扱いにしません。channelを設定してもbackground auto-update、silent update、schedulerは開始しません。
+`apply`と`rollback`はcache済みartifactを毎回再検証し、transactional PowerShell lifecycleを呼び出します。`.kairon/update/transactions/UTX-*.json`にはpreflight、staging、switch、post-check、rollbackのstatusとdigestだけを記録し、raw command outputやtokenは保存しません。成功後だけ`.kairon/update/registry.json`を同じtransaction IDで更新し、失敗時はinstalled / previous / last successful versionを成功扱いにしません。channelを設定してもbackground auto-update、silent update、schedulerは開始しません。
 
 local package pathを手動指定する従来経路も維持しています。
 
@@ -158,21 +158,25 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\update-local-beta.ps1 `
 
 update順序は次の通りです。
 
-1. dependencyとchecksumを検証する
-2. 現在のglobal Kairon packageをrollback tarballとして保存する
+1. runtime停止、Node/npm、disk空き容量、state integrity、verified downloadをpreflightする
+2. 現在のglobal Kairon packageをrollback tarballとして保存し、SHA-256と現在versionを固定する
 3. 初期化済みprojectでは`kairon state backup create`を実行する
-4. 新packageをglobal installする
-5. runtimeを停止し、`kairon migrate plan`でschema driftを検査する
-6. migrationが必要な場合は`-ApproveSchemaMigration`指定時だけexact confirm付きapplyを実行する
-7. package verify、`kairon doctor`、version確認を実行する
-8. 失敗時は旧packageをinstallし直し、state backupをrestoreする
-9. rollback結果とsanitized errorをdiagnostic bundleへ保存する
+4. `%LOCALAPPDATA%\Kairon\update-staging`配下へ新packageをinstallする
+5. staged CLIでversion、package/release manifest、state integrityを確認する
+6. staging healthが成功した場合だけ新packageをglobal installしてactive packageを切り替える
+7. runtimeを停止し、`kairon migrate plan`でschema driftを検査する
+8. migrationが必要な場合は`-ApproveSchemaMigration`指定時だけexact confirm付きapplyを実行する
+9. package verify、`kairon doctor`、version、state integrityをpost-checkする
+10. 失敗時は事前検証済み旧packageとstate backupへ1回だけrollbackする
+11. rollback結果とsanitized error codeをtransaction artifactとdiagnostic bundleへ保存する
 
 schema migrationが必要なのに`-ApproveSchemaMigration`がない場合、updateはconfigを書き換えず
 失敗し、既存rollback処理へ移る。migration apply自身もfresh state backupを作成し、
 post-check失敗時は`.kairon/migrations/in-progress.json`へ復旧手順を残す。
 
 `kairon doctor`がagent CLI未導入や未loginを含むerrorを返した場合も、updateは不完全と判定してrollbackします。update前に`kairon doctor`を実行し、`doctor.ok=true`を確認してください。
+
+処理中断またはrollback失敗時は`.kairon/update/in-progress.json`を残し、`kairon recovery list`へhigh severity targetを表示します。rollback失敗はcritical incidentも作成し、active packageとstateを手動確認するまで次のapply / rollbackを拒否します。自動再試行はしません。
 
 rollback artifactとstate backupは自動削除しません。検証が終わるまで保持してください。
 

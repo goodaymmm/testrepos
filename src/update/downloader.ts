@@ -39,6 +39,13 @@ import {
   type UpdateRegistry,
   type VerifiedUpdateDownload
 } from "./registry.js";
+import {
+  beginUpdateTransaction,
+  finalizeUpdateTransaction,
+  type UpdateTransactionArtifact,
+  type UpdateTransactionDependencies,
+  type UpdateTransactionPhase
+} from "./transaction.js";
 
 export type UpdateDependencies = {
   releaseClient?: GitHubReleaseClient;
@@ -49,6 +56,7 @@ export type UpdateDependencies = {
   updateScriptPath?: string;
   powershellCommand?: string;
   now?: () => Date;
+  transaction?: UpdateTransactionDependencies;
 };
 
 export type UpdateNetworkOptions = {
@@ -93,6 +101,7 @@ export type UpdateApplyResult = {
   downgrade: boolean;
   major_change: boolean;
   registry: UpdateRegistry;
+  transaction: UpdateTransactionArtifact | null;
 };
 
 type RemoteUpdateCandidate = {
@@ -395,6 +404,10 @@ export function formatUpdateApply(result: UpdateApplyResult): string {
     `confirm=${result.confirmation}`,
     `downgrade=${result.downgrade}`,
     `major_change=${result.major_change}`,
+    `transaction_id=${result.transaction?.transaction_id ?? "not_created"}`,
+    `transaction_status=${result.transaction?.status ?? "not_created"}`,
+    `transaction_phase=${result.transaction?.phase ?? "not_created"}`,
+    `transaction_artifact=${result.transaction?.artifact_path ?? "not_created"}`,
     `registry.installed=${result.registry.installed.version}`,
     `registry.previous=${result.registry.previous?.version ?? "none"}`,
     `registry.last_successful=${result.registry.last_successful_version}`
@@ -435,51 +448,140 @@ async function applyVerifiedDownload(
     return {
       ...common,
       status: "would_apply",
-      registry: initialRegistry
+      registry: initialRegistry,
+      transaction: null
     };
   }
 
-  const runner = deps.commandRunner ?? spawnCommandRunner;
-  const result = await runner({
-    command: deps.powershellCommand ?? "powershell.exe",
-    args: [
-      "-NoProfile",
-      "-NonInteractive",
-      "-ExecutionPolicy",
-      "Bypass",
-      "-File",
-      deps.updateScriptPath ?? defaultUpdateScriptPath(),
-      "-Package",
-      download.package_path,
-      "-Manifest",
-      download.checksum_manifest_path,
-      "-ReleaseManifest",
-      download.release_manifest_path,
-      "-ProjectRoot",
-      path.resolve(projectRoot)
-    ],
-    cwd: path.resolve(projectRoot),
-    timeoutMs: options.timeoutMs ?? 15 * 60_000
+  const transaction = await beginUpdateTransaction(projectRoot, {
+    action,
+    currentVersion,
+    targetVersion: download.version,
+    downloadId: download.download_id,
+    packageSha256: download.package_sha256,
+    packageSizeBytes: download.package_size_bytes
+  }, {
+    ...deps.transaction,
+    now: deps.now ?? deps.transaction?.now
   });
-  if (result.exitCode !== 0 || result.timedOut) {
+  const runner = deps.commandRunner ?? spawnCommandRunner;
+  let result;
+  try {
+    result = await runner({
+      command: deps.powershellCommand ?? "powershell.exe",
+      args: [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        deps.updateScriptPath ?? defaultUpdateScriptPath(),
+        "-Package",
+        download.package_path,
+        "-Manifest",
+        download.checksum_manifest_path,
+        "-ReleaseManifest",
+        download.release_manifest_path,
+        "-ProjectRoot",
+        path.resolve(projectRoot),
+        "-TransactionId",
+        transaction.transaction_id,
+        "-StagingRoot",
+        transaction.staging_path,
+        "-ExpectedCurrentVersion",
+        currentVersion
+      ],
+      cwd: path.resolve(projectRoot),
+      timeoutMs: options.timeoutMs ?? 15 * 60_000
+    });
+  } catch {
+    await finalizeUpdateTransaction(projectRoot, transaction.transaction_id, {
+      status: "recovery_required",
+      phase: "switch",
+      errorCode: "lifecycle_launch_failed"
+    }, { now: deps.now });
     throw new Error(
-      `Kairon ${action} lifecycle failed before registry update: exit_code=${result.exitCode ?? "none"} timed_out=${result.timedOut}`
+      `Kairon ${action} lifecycle could not be launched; transaction ${transaction.transaction_id} requires recovery.`
+    );
+  }
+  if (result.exitCode !== 0 || result.timedOut) {
+    const rollbackStatus = readOutputValue(result.stdout, "rollback.status");
+    const failurePhase = readTransactionPhase(
+      readOutputValue(result.stdout, "transaction.failed_phase")
+    );
+    const errorCode =
+      readOutputValue(result.stdout, "transaction.error_code") ??
+      (result.timedOut ? "lifecycle_timed_out" : "lifecycle_failed");
+    const safeRollback =
+      rollbackStatus === "completed" || rollbackStatus === "not_required";
+    const failedTransaction = await finalizeUpdateTransaction(
+      projectRoot,
+      transaction.transaction_id,
+      {
+        status: safeRollback ? "rolled_back" : "recovery_required",
+        phase: "rollback",
+        failedPhase: failurePhase,
+        stateBackupId: readOutputValue(result.stdout, "state_backup_id"),
+        rollbackPackageSha256: readOutputValue(
+          result.stdout,
+          "rollback_package_sha256"
+        ),
+        errorCode
+      },
+      { now: deps.now }
+    );
+    throw new Error(
+      `Kairon ${action} lifecycle failed: transaction=${failedTransaction.transaction_id} status=${failedTransaction.status} error_code=${errorCode}`
     );
   }
   const installedVersion = readOutputValue(result.stdout, "installed_version");
   if (readOutputValue(result.stdout, "update.status") !== "completed" ||
-      installedVersion !== download.version) {
+      installedVersion !== download.version ||
+      readOutputValue(result.stdout, "transaction.staging_health") !== "passed" ||
+      readOutputValue(result.stdout, "transaction.switch") !== "completed" ||
+      readOutputValue(result.stdout, "transaction.post_check") !== "passed") {
+    await finalizeUpdateTransaction(projectRoot, transaction.transaction_id, {
+      status: "recovery_required",
+      phase: "rollback",
+      failedPhase: "post_check",
+      stateBackupId: readOutputValue(result.stdout, "state_backup_id"),
+      rollbackPackageSha256: readOutputValue(
+        result.stdout,
+        "rollback_package_sha256"
+      ),
+      errorCode: "lifecycle_confirmation_missing"
+    }, { now: deps.now });
     throw new Error(
-      `Kairon ${action} lifecycle did not confirm target version ${download.version}.`
+      `Kairon ${action} lifecycle did not confirm target version ${download.version}; transaction ${transaction.transaction_id} requires recovery.`
     );
   }
   const registry = await recordSuccessfulUpdate(projectRoot, {
     action,
     currentVersion,
     download,
+    transactionId: transaction.transaction_id,
     now: deps.now
   });
-  return { ...common, status: "completed", registry };
+  const completedTransaction = await finalizeUpdateTransaction(
+    projectRoot,
+    transaction.transaction_id,
+    {
+      status: "completed",
+      phase: "completed",
+      stateBackupId: readOutputValue(result.stdout, "state_backup_id"),
+      rollbackPackageSha256: readOutputValue(
+        result.stdout,
+        "rollback_package_sha256"
+      )
+    },
+    { now: deps.now }
+  );
+  return {
+    ...common,
+    status: "completed",
+    registry,
+    transaction: completedTransaction
+  };
 }
 
 async function selectRemoteCandidate(
@@ -679,6 +781,20 @@ function readOutputValue(stdout: string, key: string): string | undefined {
   const escaped = key.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
   const match = new RegExp(`^${escaped}=(.*)$`, "mu").exec(stdout);
   return match?.[1]?.trim();
+}
+
+function readTransactionPhase(value: string | undefined): UpdateTransactionPhase {
+  if (
+    value === "preflight" ||
+    value === "staging" ||
+    value === "switch" ||
+    value === "post_check" ||
+    value === "rollback" ||
+    value === "completed"
+  ) {
+    return value;
+  }
+  return "switch";
 }
 
 function sha256(value: Uint8Array): string {

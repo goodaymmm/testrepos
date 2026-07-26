@@ -32,6 +32,7 @@ describe("update registry", () => {
       action: "apply",
       currentVersion: "0.2.0",
       download,
+      transactionId: "UTX-0001",
       now: () => new Date("2026-07-23T00:01:00.000Z")
     });
 
@@ -40,6 +41,7 @@ describe("update registry", () => {
       previous: { version: "0.2.0", source: "current_runtime" },
       last_successful_version: "0.3.0",
       history: [{
+        transaction_id: "UTX-0001",
         action: "apply",
         from_version: "0.2.0",
         to_version: "0.3.0",

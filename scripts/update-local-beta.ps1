@@ -3,6 +3,9 @@ param(
   [string]$Manifest = "",
   [string]$ReleaseManifest = "",
   [string]$ProjectRoot = (Get-Location).Path,
+  [string]$TransactionId = "",
+  [string]$StagingRoot = "",
+  [string]$ExpectedCurrentVersion = "",
   [string]$TransactionRoot = (Join-Path $env:TEMP "kairon-beta-updates"),
   [string]$DiagnosticRoot = (Join-Path $env:TEMP "kairon-beta-diagnostics"),
   [switch]$ApproveSchemaMigration,
@@ -20,6 +23,10 @@ $stateBackupPackage = $null
 $installStarted = $false
 $rollbackPackageRestored = $false
 $rollbackStateRestored = $false
+$switchStarted = $false
+$projectInitialized = $false
+$resolvedProject = $null
+$resolvedStagingRoot = $null
 
 try {
   $packageInfo = Assert-KaironLocalBetaPackage -PackagePath $Package -ManifestPath $Manifest
@@ -33,7 +40,29 @@ try {
   if ($null -eq $currentKairon) {
     throw "Kairon is not installed. Use install-local-beta.ps1 for the first install."
   }
+  $currentVersionOutput = Invoke-KaironLocalBetaCommand `
+    -Command $currentKairon.Source `
+    -Arguments @("--version")
+  $currentVersion = (($currentVersionOutput -join "").Trim())
+  if (-not [string]::IsNullOrWhiteSpace($ExpectedCurrentVersion) -and
+      $currentVersion -ne $ExpectedCurrentVersion) {
+    throw "Installed Kairon version does not match the expected current version."
+  }
   $projectInitialized = Test-Path -LiteralPath (Join-Path $resolvedProject ".kairon\config")
+  if ([string]::IsNullOrWhiteSpace($TransactionId)) {
+    $TransactionId = "local-$(Get-Date -Format 'yyyyMMdd-HHmmss-fff')"
+  } elseif ($TransactionId -notmatch '^UTX-\d{4,}$') {
+    throw "TransactionId must use the UTX-nnnn format."
+  }
+  if ([string]::IsNullOrWhiteSpace($StagingRoot)) {
+    $userLocalRoot = if ([string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+      $env:TEMP
+    } else {
+      $env:LOCALAPPDATA
+    }
+    $StagingRoot = Join-Path $userLocalRoot "Kairon\update-staging\$TransactionId"
+  }
+  $resolvedStagingRoot = [System.IO.Path]::GetFullPath($StagingRoot)
 
   Write-Host "Kairon local beta update."
   Write-Host "dry_run=$($DryRun.IsPresent.ToString().ToLowerInvariant())"
@@ -41,6 +70,8 @@ try {
   Write-Host "manifest=$($packageInfo.ManifestPath)"
   Write-Host "release_manifest=$(if ($null -eq $resolvedReleaseManifest) { 'none' } else { $resolvedReleaseManifest })"
   Write-Host "target_version=$($packageInfo.PackageVersion)"
+  Write-Host "current_version=$currentVersion"
+  Write-Host "transaction_id=$TransactionId"
   Write-Host "project_root=$resolvedProject"
   Write-Host "project_initialized=$projectInitialized"
   Write-Host "rollback.package=required"
@@ -48,7 +79,7 @@ try {
   Write-Host "schema_migration_approved=$($ApproveSchemaMigration.IsPresent.ToString().ToLowerInvariant())"
 
   if ($DryRun) {
-    Write-Host "update.action=would_backup_install_migrate_doctor"
+    Write-Host "update.action=would_backup_stage_switch_migrate_post_check"
     Write-Host "rollback.action=would_restore_package_and_state_on_failure"
     return
   }
@@ -75,7 +106,16 @@ try {
   if ([string]::IsNullOrWhiteSpace($rollbackPackage)) {
     throw "Failed to create the rollback package."
   }
+  $rollbackPackageSha256 = (
+    Get-FileHash -LiteralPath $rollbackPackage -Algorithm SHA256
+  ).Hash.ToLowerInvariant()
+  $rollbackPackageInfo = Get-Item -LiteralPath $rollbackPackage
+  if ([string]::IsNullOrWhiteSpace($rollbackPackageSha256) -or
+      $rollbackPackageInfo.Length -le 0) {
+    throw "Failed to verify the rollback package."
+  }
   Write-Host "rollback_package=$rollbackPackage"
+  Write-Host "rollback_package_sha256=$rollbackPackageSha256"
 
   if ($projectInitialized) {
     $stage = "state_backup"
@@ -95,6 +135,22 @@ try {
     Write-Host "state_backup_package=$stateBackupPackage"
   }
 
+  $stage = "staging_health"
+  $stagedReleaseManifest = if ($null -eq $resolvedReleaseManifest) {
+    ""
+  } else {
+    $resolvedReleaseManifest
+  }
+  $null = Test-KaironStagedPackage `
+    -PackageInfo $packageInfo `
+    -Prerequisites $prerequisites `
+    -StagingRoot $resolvedStagingRoot `
+    -ReleaseManifest $stagedReleaseManifest `
+    -ProjectRoot $resolvedProject
+  Write-Host "transaction.staging_health=passed"
+
+  $stage = "switch"
+  $switchStarted = $true
   $stage = "npm_install"
   $installStarted = $true
   $installOutput = Invoke-KaironLocalBetaCommand `
@@ -102,8 +158,9 @@ try {
     -Arguments @("install", "--global", $packageInfo.PackagePath)
   $installOutput | ForEach-Object { Write-Host $_ }
   $updatedKairon = Get-KaironRequiredCommand -Name "kairon"
+  Write-Host "transaction.switch=completed"
 
-  $stage = "verify_package"
+  $stage = "post_check"
   $verifyArguments = @(
     "release", "verify", $packageInfo.PackagePath,
     "--manifest", $packageInfo.ManifestPath
@@ -165,24 +222,49 @@ try {
     if ($doctorText -notmatch '(?m)^doctor\.ok=true\s*$') {
       throw "Kairon doctor did not report doctor.ok=true after update."
     }
+
+    $stage = "state_integrity"
+    $stateCheckOutput = Invoke-KaironLocalBetaCommand `
+      -Command $updatedKairon.Source `
+      -Arguments @("state", "check", "--format", "json") `
+      -WorkingDirectory $resolvedProject
+    $stateCheck = ($stateCheckOutput -join [Environment]::NewLine) |
+      ConvertFrom-Json
+    if ([int]$stateCheck.summary.errors -gt 0) {
+      throw "Kairon state integrity check failed after update."
+    }
   }
 
   $stage = "verify_cli"
   $versionOutput = Invoke-KaironLocalBetaCommand `
     -Command $updatedKairon.Source `
     -Arguments @("--version")
-  Write-Host "installed_version=$(($versionOutput -join '').Trim())"
+  $installedVersion = (($versionOutput -join "").Trim())
+  if ($installedVersion -ne $packageInfo.PackageVersion) {
+    throw "Installed Kairon version does not match the update target."
+  }
+  Write-Host "installed_version=$installedVersion"
+  Write-Host "transaction.post_check=passed"
   Write-Host "update.status=completed"
   Write-Host "transaction_root=$transaction"
+  Remove-Item -LiteralPath $resolvedStagingRoot -Recurse -Force -ErrorAction SilentlyContinue
 } catch {
   $originalMessage = $_.Exception.Message
-  if ($installStarted -and -not [string]::IsNullOrWhiteSpace($rollbackPackage)) {
+  Write-Host "transaction.failed_phase=$(Get-KaironUpdatePhase -Stage $stage)"
+  Write-Host "transaction.error_code=update_$($stage)_failed"
+  if ($switchStarted -and -not [string]::IsNullOrWhiteSpace($rollbackPackage)) {
     try {
       $prerequisites = Assert-KaironLocalBetaPrerequisites
       $null = Invoke-KaironLocalBetaCommand `
         -Command $prerequisites.NpmCommand `
         -Arguments @("install", "--global", $rollbackPackage)
-      $rollbackPackageRestored = $true
+      $rollbackKairon = Get-KaironRequiredCommand -Name "kairon"
+      $rollbackVersionOutput = Invoke-KaironLocalBetaCommand `
+        -Command $rollbackKairon.Source `
+        -Arguments @("--version")
+      $rollbackPackageRestored = (
+        (($rollbackVersionOutput -join "").Trim()) -eq $currentVersion
+      )
     } catch {
       $rollbackPackageRestored = $false
     }
@@ -226,6 +308,19 @@ try {
     }
   Write-Host "rollback.package_restored=$rollbackPackageRestored"
   Write-Host "rollback.state_restored=$rollbackStateRestored"
+  $rollbackCompleted = if (-not $switchStarted) {
+    "not_required"
+  } elseif ($rollbackPackageRestored -and
+      (-not $projectInitialized -or $rollbackStateRestored)) {
+    "completed"
+  } else {
+    "failed"
+  }
+  Write-Host "rollback.status=$rollbackCompleted"
+  if ($rollbackCompleted -ne "failed" -and
+      -not [string]::IsNullOrWhiteSpace($resolvedStagingRoot)) {
+    Remove-Item -LiteralPath $resolvedStagingRoot -Recurse -Force -ErrorAction SilentlyContinue
+  }
   Write-Host "diagnostic_bundle=$diagnostic"
   throw $originalMessage
 }

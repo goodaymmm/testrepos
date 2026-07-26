@@ -6,6 +6,10 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 ## Unreleased
 
 <!-- kairon:release-notes-unreleased -->
+- T181でverified downloadのapply / rollbackをtransaction化し、runtime・state integrity・
+  disk capacityのpreflightとuser-local staging health gateを追加。
+- active package switch後のversion・doctor・state post-check、digest付きrollback packageへの
+  1回限定rollback、interruption marker、critical incident、runtime recovery連携を追加。
 - T180でconfig schemaとcanonical state schemaのregistryを分離し、config `0.3.0`への
   explicit `from -> to` migration graphを追加。
 - `kairon migrate plan`とexact confirm付き`migrate apply`を追加し、runtime停止、
