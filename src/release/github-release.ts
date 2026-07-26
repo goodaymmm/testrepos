@@ -139,10 +139,14 @@ export type GitHubReleaseDependencies = {
   now?: () => Date;
 };
 
-type LocalReleaseBundle = {
+export type LocalReleaseBundle = {
   version: string;
   sourceCommit: string;
   assets: GitHubReleasePlannedAsset[];
+  attestations?: {
+    sbom: { name: string; sha256: string };
+    provenance: { name: string; sha256: string };
+  };
 };
 
 type SourceState = {
@@ -730,7 +734,7 @@ async function verifyRemoteState(
   return undefined;
 }
 
-async function collectVerifiedRemoteAssets(
+export async function collectVerifiedRemoteAssets(
   release: GitHubReleaseRecord,
   plannedAssets: GitHubReleasePlannedAsset[],
   repository: string,
@@ -806,9 +810,13 @@ function validateExistingRelease(
   return undefined;
 }
 
-async function loadLocalReleaseBundle(
+export async function loadLocalReleaseBundle(
   projectRoot: string,
-  input: { version: string; artifactDir?: string }
+  input: {
+    version: string;
+    artifactDir?: string;
+    requireAttestations?: boolean;
+  }
 ): Promise<LocalReleaseBundle> {
   const artifactRoot = resolveInside(
     projectRoot,
@@ -836,10 +844,31 @@ async function loadLocalReleaseBundle(
   if (releaseManifest.package_version !== input.version) {
     throw new Error("release_version_mismatch");
   }
+  if (input.requireAttestations === true && releaseManifest.attestations === undefined) {
+    throw new Error("release_attestations_required");
+  }
   const files = [
     { filePath: packagePath, contentType: "application/gzip" },
     { filePath: checksumPath, contentType: "application/json" },
-    { filePath: releaseManifestPath, contentType: "application/json" }
+    { filePath: releaseManifestPath, contentType: "application/json" },
+    ...(releaseManifest.attestations === undefined
+      ? []
+      : [
+          {
+            filePath: resolveInside(
+              artifactRoot,
+              releaseManifest.attestations.sbom.file
+            ),
+            contentType: "application/vnd.cyclonedx+json"
+          },
+          {
+            filePath: resolveInside(
+              artifactRoot,
+              releaseManifest.attestations.provenance.file
+            ),
+            contentType: "application/json"
+          }
+        ])
   ];
   const assets = await Promise.all(
     files.map(async ({ filePath, contentType }) => {
@@ -856,7 +885,21 @@ async function loadLocalReleaseBundle(
   return {
     version: input.version,
     sourceCommit: releaseManifest.source.commit_sha,
-    assets: assets.sort((left, right) => left.name.localeCompare(right.name))
+    assets: assets.sort((left, right) => left.name.localeCompare(right.name)),
+    ...(releaseManifest.attestations === undefined
+      ? {}
+      : {
+          attestations: {
+            sbom: {
+              name: releaseManifest.attestations.sbom.file,
+              sha256: releaseManifest.attestations.sbom.sha256
+            },
+            provenance: {
+              name: releaseManifest.attestations.provenance.file,
+              sha256: releaseManifest.attestations.provenance.sha256
+            }
+          }
+        })
   };
 }
 

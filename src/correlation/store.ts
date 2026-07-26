@@ -14,6 +14,8 @@ export type CorrelationMemberKind =
   | "workflow"
   | "release_plan"
   | "release_result"
+  | "stable_promotion_plan"
+  | "stable_promotion_result"
   | "incident"
   | "capability_decision";
 

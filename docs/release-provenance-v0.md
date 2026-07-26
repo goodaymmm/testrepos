@@ -99,6 +99,11 @@ token、password、authorization headerを保存しません。
 片方だけを指定したmanifest生成は拒否します。`attestations`がない旧schema `0.1`
 manifestは後方互換として従来の検証を継続します。
 
+attestation付きmanifestをGitHub Releaseへ公開する場合は、package、checksum manifest、
+release manifest、SBOM、provenanceの5 assetを同じreleaseへ配置します。Stable promotion planは
+この5 assetのremote asset ID、size、SHA-256とSBOM / provenance digestを固定し、昇格時に
+追加・欠落・差替えがあればGitHub write前に拒否します。
+
 ## Verifyで拒否する差異
 
 `kairon release verify --release-manifest`は次を拒否します。

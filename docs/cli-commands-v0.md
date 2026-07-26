@@ -88,6 +88,8 @@ kairon release manifest --package <package.tgz> --manifest <manifest.json> [--sb
 kairon release verify <package.tgz> [--manifest <manifest.json>] [--release-manifest <release-manifest.json>]
 kairon release notes --since <ref> [--write]
 kairon release bump --version <version> [--write]
+kairon release github promote plan --version <version> --repository <owner/repo> [--expires-in-minutes <minutes>]
+kairon release github promote apply <plan-id> --approval-id <id> --confirm <plan-id>
 kairon update channel show
 kairon update channel set stable|beta|pinned --repository <owner/repo> [--version <version>] [--write --confirm <value>]
 kairon update check [--token-env <envName>]
@@ -1061,6 +1063,9 @@ kairon release bump --type patch
 kairon release github plan --version 0.2.0 --repository owner/repo
 kairon release github publish REL-0001 --approval-id APR-0001 --confirm REL-0001
 kairon release github verify --version 0.2.0 --repository owner/repo
+kairon release github promote plan --version 0.3.0 --repository owner/repo --expires-in-minutes 30
+kairon release github promote apply REL-0002 --approval-id APR-0002 --confirm REL-0002
+kairon release github verify --version 0.3.0 --repository owner/repo --stable
 ```
 
 `release validate` は `package.json.version` と `KAIRON_VERSION` のcore SemVer形式と同期、
@@ -1078,9 +1083,16 @@ package/checksum/SBOM digestをlocal build provenanceへ保存する。`release 
 bindingを再検証する。旧manifestの`attestations`省略は後方互換として許可する。
 public npm registryへのpublishは行わない。詳細は`docs/release-provenance-v0.md`を参照する。
 
-`release github plan`は検証済みの`release-artifacts/<version>/`、cleanなlocal HEAD、remote base branch SHA、既存tag / release / assetを照合し、高risk approvalへbindした`.kairon/release/github/plans/<plan-id>.json`を作る。既定はprereleaseで、stable releaseは`--stable`を明示する。tokenは`--token-env`、`GH_TOKEN`、`GITHUB_TOKEN`、明示設定したWindows Credential Manager参照の順で解決し、値はartifactやCLI出力へ保存しない。
+`release github plan`は検証済みの`release-artifacts/<version>/`、cleanなlocal HEAD、remote base branch SHA、既存tag / release / assetを照合し、高risk approvalへbindした`.kairon/release/github/plans/<plan-id>.json`を作る。既定はprereleaseで、まだprereleaseとして公開していない新規Stable releaseだけ`--stable`を明示できる。既存prereleaseの昇格には専用の`release github promote`を使う。tokenは`--token-env`、`GH_TOKEN`、`GITHUB_TOKEN`、明示設定したWindows Credential Manager参照の順で解決し、値はartifactやCLI出力へ保存しない。
 
-`release github publish`はplanに一致するapproved approval、`--confirm`の完全一致、local / remote source SHA、asset hashを再検証してからtag、draft release、3つのasset、release公開を順に実行する。同じtag / release / assetが完全一致する再実行は成功し、途中までuploadされた場合は検証済みassetを再利用する。同名assetの内容不一致、重複、source driftはmutationを続行せずblockedにする。`release github verify`はremote assetを再downloadし、sizeとSHA-256をlocal release manifestへ照合する。
+`release github publish`はplanに一致するapproved approval、`--confirm`の完全一致、local / remote source SHA、asset hashを再検証してからtag、draft release、release公開を順に実行する。旧manifestは3 asset、attestation付きmanifestはSBOM / provenanceを含む5 assetを公開する。同じtag / release / assetが完全一致する再実行は成功し、途中までuploadされた場合は検証済みassetを再利用する。同名assetの内容不一致、重複、source driftはmutationを続行せずblockedにする。`release github verify`はremote assetを再downloadし、sizeとSHA-256をlocal release manifestへ照合する。
+
+`release github promote plan`は公開済みprereleaseをread-onlyで検査し、release ID、tag SHA、
+source commit、5 assetのID / digest、SBOM / provenance digest、expiryを高risk approvalへ
+bindする。`release github promote apply`はexact confirmとapproval bindingを検証し、lock取得後の
+fresh preflightが完全一致する場合だけ既存releaseの`prerelease`を`false`へ変更する。
+promotion時にasset upload、tag更新、release削除は行わない。既に同一Stableへ昇格済みの場合は
+`already_promoted`を返し、Stable pointerを`.kairon/update/stable-release.json`へ記録する。
 
 `release notes` は既定ではdry-runで、`--write` を付けた場合のみ
 `docs/release-notes-v0.md` の `<!-- kairon:release-notes-unreleased -->` 直下へappendする。

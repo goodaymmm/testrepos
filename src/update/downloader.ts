@@ -105,6 +105,8 @@ type RemoteUpdateCandidate = {
     package: GitHubReleaseAsset;
     checksumManifest: GitHubReleaseAsset;
     releaseManifest: GitHubReleaseAsset;
+    sbom?: GitHubReleaseAsset;
+    provenance?: GitHubReleaseAsset;
   };
   manifestBytes: Uint8Array;
 };
@@ -159,6 +161,12 @@ export async function downloadUpdate(
     candidate.manifest.artifact.checksum_manifest_file
   );
   const releaseManifestPath = path.join(finalDirectory, "release-manifest.json");
+  const sbomPath = candidate.manifest.attestations === undefined
+    ? undefined
+    : path.join(finalDirectory, candidate.manifest.attestations.sbom.file);
+  const provenancePath = candidate.manifest.attestations === undefined
+    ? undefined
+    : path.join(finalDirectory, candidate.manifest.attestations.provenance.file);
   const releaseClient = deps.releaseClient ?? defaultGitHubReleaseClient;
 
   await rm(stagingDirectory, { recursive: true, force: true });
@@ -174,8 +182,28 @@ export async function downloadUpdate(
       assetId: candidate.assets.checksumManifest.id,
       token
     });
+    const sbomBytes = candidate.assets.sbom === undefined
+      ? undefined
+      : await releaseClient.downloadAsset({
+          repository: config.repository,
+          assetId: candidate.assets.sbom.id,
+          token
+        });
+    const provenanceBytes = candidate.assets.provenance === undefined
+      ? undefined
+      : await releaseClient.downloadAsset({
+          repository: config.repository,
+          assetId: candidate.assets.provenance.id,
+          token
+        });
     verifyRemoteAssetBytes(candidate.assets.package, packageBytes);
     verifyRemoteAssetBytes(candidate.assets.checksumManifest, checksumBytes);
+    if (candidate.assets.sbom !== undefined && sbomBytes !== undefined) {
+      verifyRemoteAssetBytes(candidate.assets.sbom, sbomBytes);
+    }
+    if (candidate.assets.provenance !== undefined && provenanceBytes !== undefined) {
+      verifyRemoteAssetBytes(candidate.assets.provenance, provenanceBytes);
+    }
     await writeFile(
       path.join(stagingDirectory, candidate.manifest.artifact.package_file),
       packageBytes
@@ -188,6 +216,20 @@ export async function downloadUpdate(
       path.join(stagingDirectory, "release-manifest.json"),
       candidate.manifestBytes
     );
+    if (
+      candidate.manifest.attestations !== undefined &&
+      sbomBytes !== undefined &&
+      provenanceBytes !== undefined
+    ) {
+      await writeFile(
+        path.join(stagingDirectory, candidate.manifest.attestations.sbom.file),
+        sbomBytes
+      );
+      await writeFile(
+        path.join(stagingDirectory, candidate.manifest.attestations.provenance.file),
+        provenanceBytes
+      );
+    }
 
     const stagedVerification = await verifyReleaseManifest(
       path.join(stagingDirectory, "release-manifest.json"),
@@ -221,6 +263,8 @@ export async function downloadUpdate(
     package_path: packagePath,
     checksum_manifest_path: checksumManifestPath,
     release_manifest_path: releaseManifestPath,
+    ...(sbomPath === undefined ? {} : { sbom_path: sbomPath }),
+    ...(provenancePath === undefined ? {} : { provenance_path: provenancePath }),
     downloaded_at: (deps.now?.() ?? new Date()).toISOString()
   };
   await verifyDownloadedUpdate(download);
@@ -278,6 +322,12 @@ export async function verifyDownloadedUpdate(
   assertPathInside(download.cache_directory, download.package_path);
   assertPathInside(download.cache_directory, download.checksum_manifest_path);
   assertPathInside(download.cache_directory, download.release_manifest_path);
+  if (download.sbom_path !== undefined) {
+    assertPathInside(download.cache_directory, download.sbom_path);
+  }
+  if (download.provenance_path !== undefined) {
+    assertPathInside(download.cache_directory, download.provenance_path);
+  }
   const verification = await verifyReleaseManifest(
     download.release_manifest_path,
     download.package_path,
@@ -461,14 +511,15 @@ async function selectRemoteCandidate(
         : `Version ${requestedVersion} is not available on update channel ${config.channel}.`
     );
   }
-  const assets = selectRequiredAssets(selected.release, selected.version);
+  const releaseManifestAsset = selectReleaseManifestAsset(selected.release);
   const manifestBytes = await releaseClient.downloadAsset({
     repository: config.repository,
-    assetId: assets.releaseManifest.id,
+    assetId: releaseManifestAsset.id,
     token
   });
   const manifest = parseReleaseManifestContent(manifestBytes);
-  verifyRemoteAssetBytes(assets.releaseManifest, manifestBytes);
+  verifyRemoteAssetBytes(releaseManifestAsset, manifestBytes);
+  const assets = selectRequiredAssets(selected.release, selected.version, manifest);
   const inspection = await releaseClient.inspect({
     repository: config.repository,
     branch: config.base_branch,
@@ -501,12 +552,19 @@ async function selectRemoteCandidate(
 
 function selectRequiredAssets(
   release: GitHubReleaseRecord,
-  version: string
+  version: string,
+  manifest: ReleaseManifest
 ): RemoteUpdateCandidate["assets"] {
   const expectedNames = [
     `kairon-${version}.tgz`,
     `kairon-${version}.tgz.sha256.json`,
-    "release-manifest.json"
+    "release-manifest.json",
+    ...(manifest.attestations === undefined
+      ? []
+      : [
+          manifest.attestations.sbom.file,
+          manifest.attestations.provenance.file
+        ])
   ];
   if (release.assets.length !== expectedNames.length ||
       new Set(release.assets.map((asset) => asset.name)).size !== release.assets.length) {
@@ -521,8 +579,28 @@ function selectRequiredAssets(
   return {
     package: selected[0]!,
     checksumManifest: selected[1]!,
-    releaseManifest: selected[2]!
+    releaseManifest: selected[2]!,
+    ...(manifest.attestations === undefined
+      ? {}
+      : {
+          sbom: selected[3]!,
+          provenance: selected[4]!
+        })
   };
+}
+
+function selectReleaseManifestAsset(
+  release: GitHubReleaseRecord
+): GitHubReleaseAsset {
+  const matches = release.assets.filter(
+    (asset) => asset.name === "release-manifest.json" && asset.state === "uploaded"
+  );
+  if (matches.length !== 1) {
+    throw new Error(
+      `GitHub Release ${release.tag_name} is missing a unique release manifest asset.`
+    );
+  }
+  return matches[0];
 }
 
 async function requireGitHubToken(
