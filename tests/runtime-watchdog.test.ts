@@ -228,6 +228,45 @@ describe("runtime watchdog", () => {
     ]);
   });
 
+  it("queues one escalation during cooldown when severity increases", async () => {
+    const root = await createInitializedProject();
+    const input = baseInput("2026-07-23T01:30:00.000Z");
+    input.queue.ready = 20;
+    const initialPolicy = structuredClone(defaultWatchdogPolicy);
+    const created = await runWatchdogCheck(root, {
+      now: new Date(input.now),
+      input,
+      policy: initialPolicy
+    });
+    const alertId = created.alerts[0]!.alert_id;
+    await markWatchdogNotification(root, alertId, {
+      event: "open",
+      status: "sent",
+      now: new Date("2026-07-23T01:30:01.000Z")
+    });
+
+    const escalatedPolicy = structuredClone(defaultWatchdogPolicy);
+    escalatedPolicy.rules.queue_backlog.severity = "critical";
+    await runWatchdogCheck(root, {
+      now: new Date("2026-07-23T01:30:02.000Z"),
+      input: { ...input, now: "2026-07-23T01:30:02.000Z" },
+      policy: escalatedPolicy
+    });
+    await runWatchdogCheck(root, {
+      now: new Date("2026-07-23T01:30:03.000Z"),
+      input: { ...input, now: "2026-07-23T01:30:03.000Z" },
+      policy: escalatedPolicy
+    });
+
+    expect(await getWatchdogAlert(root, alertId)).toMatchObject({
+      severity: "critical",
+      pending_notification: {
+        event: "escalated",
+        attempts: 0
+      }
+    });
+  });
+
   it("sanitizes alert evidence and operator resolution reasons", async () => {
     const root = await createInitializedProject();
     const input = baseInput("2026-07-23T02:00:00.000Z");
@@ -286,16 +325,22 @@ describe("runtime watchdog", () => {
     expect(deduplicated).toMatchObject({ sent: 0, skipped: 1 });
     expect(payloads).toHaveLength(1);
     expect(JSON.stringify(payloads[0])).toContain(result.alerts[0]!.alert_id);
+    expect(payloads[0]).toMatchObject({
+      enforceNonce: true,
+      nonce: expect.any(String)
+    });
 
     const recovered = baseInput("2026-07-23T03:01:00.000Z");
     await runWatchdogCheck(root, {
       now: new Date(recovered.now),
       input: recovered
     });
+    const failedPayloads: unknown[] = [];
     const failed = await notifyPendingDiscordWatchdogAlerts(
       root,
       {
-        send: async () => {
+        send: async (payload) => {
+          failedPayloads.push(payload);
           throw new Error("token=SHOULD_NOT_LEAK delivery failed");
         }
       },
@@ -304,6 +349,22 @@ describe("runtime watchdog", () => {
     expect(failed.failures[0]?.reason).not.toContain("SHOULD_NOT_LEAK");
     expect(JSON.stringify(await getWatchdogAlert(root, result.alerts[0]!.alert_id)))
       .not.toContain("SHOULD_NOT_LEAK");
+    const retryPayloads: unknown[] = [];
+    const retried = await notifyPendingDiscordWatchdogAlerts(
+      root,
+      {
+        send: async (payload) => {
+          retryPayloads.push(payload);
+          return { id: "discord-message-retry" };
+        }
+      },
+      { now: () => new Date("2026-07-23T03:01:02.000Z") }
+    );
+    expect(retried).toMatchObject({ sent: 1, failed: 0 });
+    expect(retryPayloads[0]).toMatchObject({
+      nonce: (failedPayloads[0] as { nonce: string }).nonce,
+      enforceNonce: true
+    });
   });
 
   it("contains and sanitizes watchdog failures without failing the daemon", async () => {

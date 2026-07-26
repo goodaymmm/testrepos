@@ -66,6 +66,43 @@ export function resolveBaseMode(config: ScheduleConfig, now: Date): ScheduleMode
   return "standby_work";
 }
 
+export function isWithinTimeRanges(
+  ranges: TimeRange[],
+  now: Date,
+  timezone: string
+): boolean {
+  const minutes = localMinutes(now, timezone);
+  return ranges.some((range) => includesMinute(range, minutes));
+}
+
+export function nextTimeRangeExit(
+  ranges: TimeRange[],
+  now: Date,
+  timezone: string
+): Date | undefined {
+  if (!isWithinTimeRanges(ranges, now, timezone)) {
+    return undefined;
+  }
+  const cursor = new Date(now);
+  cursor.setUTCSeconds(0, 0);
+  for (let offset = 1; offset <= 2_880; offset += 1) {
+    cursor.setUTCMinutes(cursor.getUTCMinutes() + 1);
+    if (!isWithinTimeRanges(ranges, cursor, timezone)) {
+      return new Date(cursor);
+    }
+  }
+  return undefined;
+}
+
+export function isValidTimeZone(timezone: string): boolean {
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(new Date(0));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function isActiveWorkClosed(
   projectRoot: string,
   now = new Date(),
@@ -155,5 +192,10 @@ function parseTime(value: string): number {
     throw new Error(`Invalid time range value: ${value}`);
   }
 
-  return Number(match[1]) * 60 + Number(match[2]);
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) {
+    throw new Error(`Invalid time range value: ${value}`);
+  }
+  return hour * 60 + minute;
 }

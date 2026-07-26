@@ -88,6 +88,32 @@ export async function recordNotificationResult(
   });
 }
 
+export async function recordAlertPolicyDecision(
+  projectRoot: string,
+  input: {
+    decision: "send" | "defer" | "suppress" | "aggregate";
+    reason:
+      | "none"
+      | "quiet_hours"
+      | "maintenance_window"
+      | "reminder_interval"
+      | "daily_budget"
+      | "below_minimum_severity"
+      | "local_audit_only";
+    recordedAt?: Date;
+  }
+): Promise<void> {
+  await appendRuntimeMetric(projectRoot, {
+    metric: "notification_policy_decision_total",
+    value: 1,
+    labels: {
+      result: input.decision,
+      reason: input.reason
+    },
+    recordedAt: input.recordedAt
+  });
+}
+
 export async function recordRemoteReadiness(
   projectRoot: string,
   input: {

@@ -76,6 +76,7 @@ export type IncidentTimelineEvent = {
     | "incident.resolved"
     | "resource.attached"
     | "resource.updated"
+    | "notification.policy"
     | "bundle.created"
     | "recovery.planned"
     | "recovery.started"
@@ -111,6 +112,7 @@ export type AttachIncidentResourceInput = {
     IncidentTimelineEvent["event"],
     | "resource.attached"
     | "resource.updated"
+    | "notification.policy"
     | "bundle.created"
     | "recovery.planned"
     | "recovery.started"

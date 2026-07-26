@@ -61,6 +61,60 @@ describe("runDoctor", () => {
     );
   });
 
+  it("warns for invalid alert policy diagnostics without losing watchdog state", async () => {
+    const root = await createInitializedGitProject();
+    const notificationsPath = path.join(
+      root,
+      ".kairon",
+      "config",
+      "notifications.json"
+    );
+    const notifications = await readJsonFile<Record<string, unknown>>(
+      notificationsPath
+    );
+    await writeJsonFileAtomic(notificationsPath, {
+      ...notifications,
+      alert_policy: {
+        enabled: true,
+        timezone: "Invalid/Timezone",
+        routes: [
+          {
+            id: "duplicate",
+            provider: "discord",
+            minimum_severity: "warning"
+          },
+          {
+            id: "duplicate",
+            provider: "discord",
+            minimum_severity: "warning"
+          }
+        ],
+        quiet_hours: [],
+        maintenance_windows: [
+          { start: "23:00", end: "02:00" },
+          { start: "01:00", end: "03:00" }
+        ],
+        reminder_interval_seconds: 3600,
+        daily_budget: 0
+      }
+    });
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+    const check = result.checks.find((candidate) => candidate.id === "watchdog.alerts");
+    expect(check).toMatchObject({ status: "warning" });
+    expect(check?.details).toEqual(
+      expect.arrayContaining([
+        "policy_timezone=UTC",
+        "policy_daily_budget=0",
+        "policy_issues=invalid_timezone,duplicate_route,daily_budget_zero,maintenance_window_conflict"
+      ])
+    );
+  });
+
   it("warns when a provider is suspended without exposing sensitive values", async () => {
     const root = await createInitializedGitProject();
     await suspendProvider(root, {

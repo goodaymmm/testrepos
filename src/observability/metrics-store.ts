@@ -12,6 +12,7 @@ export const runtimeMetricNames = [
   "run_latency_ms",
   "workflow_transition_total",
   "notification_result",
+  "notification_policy_decision_total",
   "remote_readiness"
 ] as const;
 
@@ -77,6 +78,7 @@ const metricUnits: Record<RuntimeMetricName, RuntimeMetricSample["unit"]> = {
   run_latency_ms: "milliseconds",
   workflow_transition_total: "count",
   notification_result: "ratio",
+  notification_policy_decision_total: "count",
   remote_readiness: "ratio"
 };
 
@@ -104,9 +106,22 @@ const allowedLabelValues: Record<string, readonly string[]> = {
     "setup_required",
     "unreachable",
     "ready",
-    "unknown"
+    "unknown",
+    "send",
+    "defer",
+    "suppress",
+    "aggregate"
   ],
   provider: ["discord", "board", "github", "runtime", "other"],
+  reason: [
+    "none",
+    "quiet_hours",
+    "maintenance_window",
+    "reminder_interval",
+    "daily_budget",
+    "below_minimum_severity",
+    "local_audit_only"
+  ],
   transition: [
     "queued_to_claimed",
     "claimed_to_completed",

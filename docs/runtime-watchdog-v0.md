@@ -6,6 +6,8 @@
 
 Runtime Watchdogは、Kaironの継続運用中に発生する異常を同じ基準で検知し、operatorが追跡可能なalertへ変換する。Watchdogは観測・記録・通知だけを担当し、自動再起動、queue item変更、provider切替、Task Scheduler変更は行わない。
 
+Discord deliveryはlocal alert policyで判定し、defer / aggregateされたtransitionもcanonical alertとIncidentへ保持する。詳細は`docs/alert-policy-v0.md`を参照する。
+
 ## CLI
 
 ```powershell

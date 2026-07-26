@@ -5,6 +5,8 @@
 Discord Approval は、個人運用で外出中でも approval queue を確認し、approve / reject / request changes を返せるようにする。
 MVP では Slack 対応や常時公開 Board UI を必須にしない。
 
+Watchdog / IncidentのDiscord通知は`notifications.alert_policy`で制御する。quiet hours、maintenance defer、reminder間隔、severity route、daily aggregationは`docs/alert-policy-v0.md`を参照する。Approval interaction自体はalert delivery policyから独立している。
+
 運用は 2 つに分ける。
 
 - 外出時: Discord 上で簡易情報を見て承認 / 差し戻しする。

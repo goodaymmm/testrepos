@@ -16,6 +16,11 @@ import { attachIncidentResource } from "../incidents/store.js";
 import { readRuntimeLockStatus } from "./runtime-lock.js";
 import { getStoredStableRemoteStatus } from "../remote/status.js";
 import { readLatestSloSummary } from "../observability/slo.js";
+import { recordAlertPolicyDecision } from "../observability/runtime-metrics.js";
+import type {
+  AlertPolicyDecisionKind,
+  AlertPolicyReason
+} from "../notifications/alert-policy.js";
 import {
   compareWatchdogSeverity,
   defaultWatchdogPolicy,
@@ -36,6 +41,21 @@ export type WatchdogPendingNotification = {
   queued_at: string;
   attempts: number;
   last_error?: string;
+  idempotency_key?: string;
+  policy_decision?: AlertPolicyDecisionKind;
+  suppression_reason?: AlertPolicyReason;
+  route_id?: string;
+  defer_until?: string;
+};
+
+export type WatchdogNotificationPolicyRecord = {
+  event: WatchdogNotificationEvent;
+  decision: AlertPolicyDecisionKind;
+  reason: AlertPolicyReason;
+  evaluated_at: string;
+  idempotency_key: string;
+  route_id?: string;
+  defer_until?: string;
 };
 
 export type WatchdogAlert = {
@@ -59,6 +79,7 @@ export type WatchdogAlert = {
   last_notified_at?: string;
   cooldown_until?: string;
   pending_notification?: WatchdogPendingNotification;
+  last_notification_policy?: WatchdogNotificationPolicyRecord;
   acknowledged_at?: string;
   resolved_at?: string;
   resolution_reason?: string;
@@ -219,7 +240,7 @@ export async function resolveWatchdogAlert(
       updated_at: now.toISOString(),
       resolved_at: now.toISOString(),
       resolution_reason: normalizedReason,
-      pending_notification: queueNotification("resolved", now)
+      pending_notification: queueNotification("resolved", now, alertId)
     };
     await writeJsonFileAtomic(watchdogAlertPath(projectRoot, alertId), updated);
     await syncWatchdogIncident(projectRoot, updated, now);
@@ -236,12 +257,92 @@ export async function resolveWatchdogAlert(
   });
 }
 
+export async function recordWatchdogNotificationPolicy(
+  projectRoot: string,
+  alertId: string,
+  input: {
+    event: WatchdogNotificationEvent;
+    decision: AlertPolicyDecisionKind;
+    reason: AlertPolicyReason;
+    idempotencyKey: string;
+    routeId?: string;
+    deferUntil?: string;
+    now?: Date;
+  }
+): Promise<WatchdogAlert> {
+  assertAlertId(alertId);
+  const now = input.now ?? new Date();
+  return withWatchdogLock(projectRoot, now, async () => {
+    const alert = await getWatchdogAlert(projectRoot, alertId);
+    const pending = alert.pending_notification;
+    if (pending === undefined || pending.event !== input.event) {
+      return alert;
+    }
+    const record: WatchdogNotificationPolicyRecord = {
+      event: input.event,
+      decision: input.decision,
+      reason: input.reason,
+      evaluated_at: now.toISOString(),
+      idempotency_key: input.idempotencyKey,
+      ...(input.routeId === undefined ? {} : { route_id: input.routeId }),
+      ...(input.deferUntil === undefined
+        ? {}
+        : { defer_until: input.deferUntil })
+    };
+    const unchanged =
+      pending.policy_decision === input.decision &&
+      pending.suppression_reason === input.reason &&
+      pending.route_id === input.routeId &&
+      pending.defer_until === input.deferUntil &&
+      pending.idempotency_key === input.idempotencyKey;
+    if (unchanged) {
+      return alert;
+    }
+    const updated: WatchdogAlert = {
+      ...alert,
+      updated_at: now.toISOString(),
+      pending_notification: {
+        ...pending,
+        idempotency_key: input.idempotencyKey,
+        policy_decision: input.decision,
+        suppression_reason: input.reason,
+        route_id: input.routeId,
+        defer_until: input.deferUntil
+      },
+      last_notification_policy: record
+    };
+    await writeJsonFileAtomic(watchdogAlertPath(projectRoot, alertId), updated);
+    await syncWatchdogIncident(projectRoot, updated, now, "notification.policy");
+    await appendWatchdogAudit(projectRoot, {
+      event: "notification.policy",
+      alert_id: alertId,
+      notification_event: input.event,
+      decision: input.decision,
+      reason: input.reason,
+      idempotency_key: input.idempotencyKey,
+      route_id: input.routeId,
+      defer_until: input.deferUntil,
+      created_at: now.toISOString()
+    });
+    try {
+      await recordAlertPolicyDecision(projectRoot, {
+        decision: input.decision,
+        reason: input.reason,
+        recordedAt: now
+      });
+    } catch {
+      // Metrics are derived diagnostics and must not block canonical alert state.
+    }
+    return updated;
+  });
+}
+
 export async function markWatchdogNotification(
   projectRoot: string,
   alertId: string,
   input: {
     event: WatchdogNotificationEvent;
-    status: "sent" | "failed";
+    status: "sent" | "failed" | "suppressed";
     messageId?: string;
     reason?: string;
     now?: Date;
@@ -267,7 +368,13 @@ export async function markWatchdogNotification(
             ).toISOString(),
             pending_notification: undefined
           }
-        : {
+        : input.status === "suppressed"
+          ? {
+              ...alert,
+              updated_at: now.toISOString(),
+              pending_notification: undefined
+            }
+          : {
             ...alert,
             updated_at: now.toISOString(),
             pending_notification: {
@@ -292,6 +399,21 @@ export async function markWatchdogNotification(
     });
     return updated;
   });
+}
+
+export async function readWatchdogAuditRecords(
+  projectRoot: string
+): Promise<Record<string, unknown>[]> {
+  try {
+    return await readJsonLines<Record<string, unknown>>(
+      watchdogAuditPath(projectRoot)
+    );
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return [];
+    }
+    throw error;
+  }
 }
 
 export async function readWatchdogAlertSummary(
@@ -518,11 +640,11 @@ async function applyWatchdogFindings(
         resolved_at: wasResolved ? undefined : existing.resolved_at,
         resolution_reason: wasResolved ? undefined : existing.resolution_reason,
         pending_notification: wasResolved
-          ? queueNotification("open", now)
+          ? queueNotification("open", now, existing.alert_id)
           : severityEscalated
-            ? queueNotification("escalated", now)
+            ? queueNotification("escalated", now, existing.alert_id)
             : reminderDue
-              ? queueNotification("reminder", now)
+              ? queueNotification("reminder", now, existing.alert_id)
               : existing.pending_notification
       };
       await writeJsonFileAtomic(watchdogAlertPath(projectRoot, existing.alert_id), updated);
@@ -546,7 +668,7 @@ async function applyWatchdogFindings(
         resolved_at: now.toISOString(),
         resolution_reason: "condition_recovered",
         updated_at: now.toISOString(),
-        pending_notification: queueNotification("resolved", now)
+        pending_notification: queueNotification("resolved", now, alertId)
       };
       await writeJsonFileAtomic(watchdogAlertPath(projectRoot, alertId), resolved);
       await syncWatchdogIncident(projectRoot, resolved, now);
@@ -605,14 +727,15 @@ function createAlert(
     first_detected_at: now.toISOString(),
     last_detected_at: now.toISOString(),
     updated_at: now.toISOString(),
-    pending_notification: queueNotification("open", now)
+    pending_notification: queueNotification("open", now, alertId)
   };
 }
 
 async function syncWatchdogIncident(
   projectRoot: string,
   alert: WatchdogAlert,
-  now: Date
+  now: Date,
+  event?: "notification.policy"
 ): Promise<void> {
   await attachIncidentResource(projectRoot, {
     fingerprint: alert.fingerprint,
@@ -628,9 +751,18 @@ async function syncWatchdogIncident(
       severity: alert.severity,
       details: {
         rule: alert.rule,
-        resource: alert.resource
+        resource: alert.resource,
+        ...(alert.last_notification_policy === undefined
+          ? {}
+          : {
+              notification_event: alert.last_notification_policy.event,
+              notification_decision: alert.last_notification_policy.decision,
+              notification_reason: alert.last_notification_policy.reason,
+              defer_until: alert.last_notification_policy.defer_until
+            })
       }
     },
+    event,
     now
   });
 }
@@ -647,12 +779,15 @@ function sanitizeEvidence(
 
 function queueNotification(
   event: WatchdogNotificationEvent,
-  now: Date
+  now: Date,
+  alertId: string
 ): WatchdogPendingNotification {
+  const queuedAt = now.toISOString();
   return {
     event,
-    queued_at: now.toISOString(),
-    attempts: 0
+    queued_at: queuedAt,
+    attempts: 0,
+    idempotency_key: `watchdog:${alertId}:${event}:${queuedAt}`
   };
 }
 
