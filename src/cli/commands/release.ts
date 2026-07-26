@@ -20,6 +20,16 @@ import {
   type CreateReleaseManifestOptions
 } from "../../release/release-manifest.js";
 import {
+  createReleaseProvenance,
+  formatReleaseProvenance,
+  type CreateReleaseProvenanceOptions
+} from "../../release/provenance.js";
+import {
+  createReleaseSbom,
+  formatReleaseSbom,
+  type CreateReleaseSbomOptions
+} from "../../release/sbom.js";
+import {
   formatGitHubReleaseResult,
   planGitHubRelease,
   publishGitHubRelease,
@@ -117,11 +127,22 @@ export type ReleaseBumpCommandOptions = {
 export type ReleaseVerifyCommandOptions = {
   manifest?: string;
   releaseManifest?: string;
+  commandRunner?: CommandRunner;
 };
 
 export type ReleaseManifestCommandOptions = CreateReleaseManifestOptions & {
   package?: string;
   manifest?: string;
+};
+
+export type ReleaseSbomCommandOptions = CreateReleaseSbomOptions & {
+  manifest?: string;
+};
+
+export type ReleaseProvenanceCommandOptions = CreateReleaseProvenanceOptions & {
+  package?: string;
+  manifest?: string;
+  sbom?: string;
 };
 
 export type ReleaseGitHubPlanCommandOptions = GitHubReleasePlanRequest;
@@ -178,7 +199,8 @@ export async function releasePackCommand(
 
 export async function releaseVerifyCommand(
   packageFile: string,
-  options: ReleaseVerifyCommandOptions = {}
+  options: ReleaseVerifyCommandOptions = {},
+  projectRoot?: string
 ): Promise<{ text: string; ok: boolean }> {
   const result = await verifyLocalBetaPackage(packageFile, options.manifest);
   if (options.releaseManifest === undefined) {
@@ -188,7 +210,11 @@ export async function releaseVerifyCommand(
   const releaseManifest = await verifyReleaseManifest(
     options.releaseManifest,
     packageFile,
-    options.manifest
+    options.manifest,
+    {
+      projectRoot,
+      commandRunner: options.commandRunner
+    }
   );
   return {
     text: [
@@ -198,6 +224,42 @@ export async function releaseVerifyCommand(
     ].join("\n"),
     ok: result.ok && releaseManifest.ok
   };
+}
+
+export async function releaseSbomCommand(
+  projectRoot: string,
+  options: ReleaseSbomCommandOptions = {}
+): Promise<string> {
+  if (options.manifest === undefined || options.manifest.trim().length === 0) {
+    throw new Error("Specify --manifest <checksum-manifest.json>.");
+  }
+  return formatReleaseSbom(await createReleaseSbom(
+    projectRoot,
+    options.manifest,
+    options
+  ));
+}
+
+export async function releaseProvenanceCommand(
+  projectRoot: string,
+  options: ReleaseProvenanceCommandOptions = {}
+): Promise<string> {
+  if (options.package === undefined || options.package.trim().length === 0) {
+    throw new Error("Specify --package <package.tgz>.");
+  }
+  if (options.manifest === undefined || options.manifest.trim().length === 0) {
+    throw new Error("Specify --manifest <checksum-manifest.json>.");
+  }
+  if (options.sbom === undefined || options.sbom.trim().length === 0) {
+    throw new Error("Specify --sbom <sbom.cdx.json>.");
+  }
+  return formatReleaseProvenance(await createReleaseProvenance(
+    projectRoot,
+    options.package,
+    options.manifest,
+    options.sbom,
+    options
+  ));
 }
 
 export async function releaseManifestCommand(

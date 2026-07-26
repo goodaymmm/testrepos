@@ -151,19 +151,36 @@ kairon release bump --version <next-version> --write
 
 ## Reproducible Local RC Artifact
 
-version bumpをcommitしたclean tracked worktreeでpackageを生成し、そのpackageとchecksum manifestをsource commitへbindします。
+version bumpをcommitしたclean tracked worktreeでpackageを生成し、そのpackage、checksum
+manifest、CycloneDX SBOM、local build provenanceをsource commitへbindします。
 
 ```powershell
 npm run release:pack
+kairon release sbom `
+  --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json `
+  --output .\release-artifacts\0.3.0\sbom.cdx.json
+kairon release provenance `
+  --package .\release-artifacts\0.3.0\kairon-0.3.0.tgz `
+  --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json `
+  --sbom .\release-artifacts\0.3.0\sbom.cdx.json `
+  --output .\release-artifacts\0.3.0\provenance.json
 kairon release manifest `
   --package .\release-artifacts\0.3.0\kairon-0.3.0.tgz `
-  --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json
+  --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json `
+  --sbom .\release-artifacts\0.3.0\sbom.cdx.json `
+  --provenance .\release-artifacts\0.3.0\provenance.json
 kairon release verify .\release-artifacts\0.3.0\kairon-0.3.0.tgz `
   --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json `
   --release-manifest .\release-artifacts\0.3.0\release-manifest.json
 ```
 
-`release-manifest.json`はsource commit、`dirty=false`、Windows runtime support、artifact SHA-256、checksum manifest SHA-256、sorted package inventoryとそのSHA-256を保持します。tracked変更が残る場合は生成を拒否します。npm tar metadataの時刻差によるbyte-for-byte一致は要件にせず、同じsourceから同じinventoryと検証可能metadataが得られることを確認します。
+`release-manifest.json`はsource commit、`dirty=false`、Windows runtime support、artifact
+SHA-256、checksum manifest SHA-256、sorted package inventory、SBOM/provenanceのsizeと
+SHA-256を保持します。tracked変更が残る場合、SBOM/provenanceの片方だけを指定した場合、
+lockfile・inventory・sourceのbindingが一致しない場合は生成を拒否します。npm tar metadataの
+時刻差によるbyte-for-byte一致は要件にせず、同じsourceから同じinventoryと検証可能metadataが
+得られることを確認します。schemaとprivacy境界は
+`docs/release-provenance-v0.md`を参照します。
 
 ## Approval-gated GitHub Release
 
@@ -246,4 +263,6 @@ kairon release notes --since <ref> --write
 - README / docs更新要否を判断済み。
 - `package.json` と `src/index.ts` のversionが一致している。
 - generated artifact、secret、local stateをcommitしていない。
+- SBOM、provenance、release manifestを同じpackageとsource commitから生成し、
+  `release verify`で相互bindingが通っている。
 - GitHub配布を行う場合は`release github verify`が`status=verified`を返している。

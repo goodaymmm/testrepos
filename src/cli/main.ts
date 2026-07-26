@@ -132,6 +132,8 @@ import {
   releaseManifestCommand,
   releaseNotesCommand,
   releasePackCommand,
+  releaseProvenanceCommand,
+  releaseSbomCommand,
   releaseVerifyCommand,
   validateRelease
 } from "./commands/release.js";
@@ -1914,7 +1916,7 @@ export function createProgram(): Command {
       manifest?: string;
       releaseManifest?: string;
     }) => {
-      const result = await releaseVerifyCommand(packageFile, options);
+      const result = await releaseVerifyCommand(packageFile, options, process.cwd());
       console.log(result.text);
       if (!result.ok) {
         process.exitCode = 1;
@@ -1922,14 +1924,46 @@ export function createProgram(): Command {
     });
 
   release
+    .command("sbom")
+    .description("Create a deterministic CycloneDX SBOM bound to a release package inventory.")
+    .requiredOption("--manifest <path>", "Path to the package checksum manifest.")
+    .option("--output <path>", "Output path. Defaults to sbom.cdx.json beside the checksum manifest.")
+    .action(async (options: {
+      manifest?: string;
+      output?: string;
+    }) => {
+      console.log(await releaseSbomCommand(process.cwd(), options));
+    });
+
+  release
+    .command("provenance")
+    .description("Create local build provenance bound to source, package, checksum, and SBOM.")
+    .requiredOption("--package <path>", "Path to the verified local release .tgz package.")
+    .requiredOption("--manifest <path>", "Path to the package checksum manifest.")
+    .requiredOption("--sbom <path>", "Path to the verified CycloneDX SBOM.")
+    .option("--output <path>", "Output path. Defaults to provenance.json beside the package.")
+    .action(async (options: {
+      package?: string;
+      manifest?: string;
+      sbom?: string;
+      output?: string;
+    }) => {
+      console.log(await releaseProvenanceCommand(process.cwd(), options));
+    });
+
+  release
     .command("manifest")
     .description("Create a release manifest bound to clean source and a verified package.")
     .requiredOption("--package <path>", "Path to the verified local release .tgz package.")
     .requiredOption("--manifest <path>", "Path to the package checksum manifest.")
+    .option("--sbom <path>", "Path to the verified CycloneDX SBOM.")
+    .option("--provenance <path>", "Path to verified local build provenance.")
     .option("--output <path>", "Output path. Defaults to release-manifest.json beside the package.")
     .action(async (options: {
       package?: string;
       manifest?: string;
+      sbom?: string;
+      provenance?: string;
       output?: string;
     }) => {
       console.log(await releaseManifestCommand(process.cwd(), options));

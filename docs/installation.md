@@ -34,6 +34,8 @@ npm run release:pack
 ```text
 kairon-<version>.tgz
 kairon-<version>.tgz.sha256.json
+sbom.cdx.json
+provenance.json
 release-manifest.json
 ```
 
@@ -42,18 +44,36 @@ packageには`dist/`、local package lifecycle scripts、本文書、README、pa
 配布前に再検証できます。
 
 ```powershell
+kairon release sbom `
+  --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json `
+  --output .\release-artifacts\0.3.0\sbom.cdx.json
+
+kairon release provenance `
+  --package .\release-artifacts\0.3.0\kairon-0.3.0.tgz `
+  --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json `
+  --sbom .\release-artifacts\0.3.0\sbom.cdx.json `
+  --output .\release-artifacts\0.3.0\provenance.json
+
 kairon release manifest `
   --package .\release-artifacts\0.3.0\kairon-0.3.0.tgz `
-  --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json
+  --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json `
+  --sbom .\release-artifacts\0.3.0\sbom.cdx.json `
+  --provenance .\release-artifacts\0.3.0\provenance.json
 
 kairon release verify .\release-artifacts\0.3.0\kairon-0.3.0.tgz `
   --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json `
   --release-manifest .\release-artifacts\0.3.0\release-manifest.json
 ```
 
-release manifestはtracked worktreeがcleanな場合だけ生成でき、Git commit SHA、runtime support、tarballとchecksum manifestのhash、sorted package inventoryを記録します。npm tar metadataの時刻差は許容し、同じsource commitから同じinventoryと検証可能metadataを得られることを再現性の基準とします。
+release manifestはtracked worktreeがcleanな場合だけ生成でき、Git commit SHA、runtime
+support、tarballとchecksum manifestのhash、sorted package inventory、CycloneDX SBOMと
+local build provenanceのhashを記録します。npm tar metadataの時刻差は許容し、同じsource
+commitから同じinventoryと検証可能metadataを得られることを再現性の基準とします。
+詳細は`docs/release-provenance-v0.md`を参照します。
 
-GitHub Releaseから取得する場合も、`.tgz`、`.sha256.json`、`release-manifest.json`の3ファイルを同じdirectoryへdownloadします。配布担当者は承認済みの`kairon release github publish`だけを使い、利用前にremote artifactを再検証します。
+現行のGitHub Release publication contractはT179でSBOM/provenance assetへ拡張します。
+T178時点のlocal verificationでは5ファイルを同じdirectoryへ配置します。配布担当者は
+承認済みの`kairon release github publish`だけを使い、利用前にremote artifactを再検証します。
 
 ```powershell
 kairon release github verify --version 0.3.0 --repository owner/repo
