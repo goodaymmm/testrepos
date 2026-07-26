@@ -210,7 +210,7 @@ describe("workflow runtime configuration", () => {
     expect(validation.ok).toBe(false);
     expect(unsafePath.ok).toBe(false);
     expect(validation.errors).toContain(
-      "runtime.json: runtime workflow or watchdog settings are invalid"
+      "runtime.json: runtime workflow, watchdog, or self-healing settings are invalid"
     );
   });
 });

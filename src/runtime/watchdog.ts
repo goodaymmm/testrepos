@@ -41,6 +41,8 @@ export type WatchdogPendingNotification = {
   queued_at: string;
   attempts: number;
   last_error?: string;
+  retry_authorized_at?: string;
+  retry_authorization_id?: string;
   idempotency_key?: string;
   policy_decision?: AlertPolicyDecisionKind;
   suppression_reason?: AlertPolicyReason;
@@ -380,6 +382,8 @@ export async function markWatchdogNotification(
             pending_notification: {
               ...pending,
               attempts: pending.attempts + 1,
+              retry_authorized_at: undefined,
+              retry_authorization_id: undefined,
               last_error: sanitizeSupportText(input.reason ?? "notification_failed", {
                 projectRoot
               })
@@ -395,6 +399,58 @@ export async function markWatchdogNotification(
         input.reason === undefined
           ? undefined
           : sanitizeSupportText(input.reason, { projectRoot }),
+      created_at: now.toISOString()
+    });
+    return updated;
+  });
+}
+
+export async function authorizeWatchdogNotificationRetry(
+  projectRoot: string,
+  alertId: string,
+  input: {
+    authorizationId: string;
+    now?: Date;
+  }
+): Promise<WatchdogAlert> {
+  assertAlertId(alertId);
+  const now = input.now ?? new Date();
+  return withWatchdogLock(projectRoot, now, async () => {
+    const alert = await getWatchdogAlert(projectRoot, alertId);
+    const pending = alert.pending_notification;
+    if (
+      pending === undefined ||
+      pending.attempts !== 1 ||
+      pending.last_error === undefined
+    ) {
+      throw new Error(
+        `Watchdog notification is not eligible for one bounded retry: ${alertId}`
+      );
+    }
+    const authorizationId = sanitizeSupportText(input.authorizationId, {
+      projectRoot
+    });
+    if (
+      pending.retry_authorization_id === authorizationId &&
+      pending.retry_authorized_at !== undefined
+    ) {
+      return alert;
+    }
+    const updated: WatchdogAlert = {
+      ...alert,
+      updated_at: now.toISOString(),
+      pending_notification: {
+        ...pending,
+        retry_authorized_at: now.toISOString(),
+        retry_authorization_id: authorizationId
+      }
+    };
+    await writeJsonFileAtomic(watchdogAlertPath(projectRoot, alertId), updated);
+    await appendWatchdogAudit(projectRoot, {
+      event: "notification.retry_authorized",
+      alert_id: alertId,
+      notification_event: pending.event,
+      authorization_id: authorizationId,
       created_at: now.toISOString()
     });
     return updated;

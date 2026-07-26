@@ -1,5 +1,8 @@
 # Runtime Watchdog v0
 
+失敗したDiscord watchdog通知は、bounded self-healing authorization後だけ1回再送する。
+詳細は`docs/self-healing-v0.md`を参照する。
+
 <!-- kairon:runtime-watchdog -->
 
 ## 目的

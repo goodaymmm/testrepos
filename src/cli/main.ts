@@ -132,6 +132,13 @@ import {
   showRecoveryTarget
 } from "./commands/recovery.js";
 import {
+  executeSelfHealingCommand,
+  inspectSelfHealingCommand,
+  listSelfHealingCommand,
+  planSelfHealingCommand,
+  tickSelfHealingCommand
+} from "./commands/self-healing.js";
+import {
   formatReleaseValidation,
   releaseBumpCommand,
   releaseCheckCommand,
@@ -1841,6 +1848,61 @@ export function createProgram(): Command {
       heartbeatStaleMs?: string;
     }) => {
       console.log(await runRecovery(process.cwd(), options));
+    });
+
+  const selfHealing = recovery
+    .command("self-healing")
+    .description("Inspect and run allowlisted bounded self-healing runbooks.");
+
+  selfHealing
+    .command("list")
+    .description("List local self-healing runbook artifacts.")
+    .action(async () => {
+      console.log(await listSelfHealingCommand(process.cwd()));
+    });
+
+  selfHealing
+    .command("inspect")
+    .description("Inspect one typed runbook without changing state.")
+    .argument("<runbookId>", "Allowlisted self-healing runbook id.")
+    .option("--target <target>", "Exact local target id.")
+    .action(async (runbookId: string, options: { target?: string }) => {
+      console.log(
+        await inspectSelfHealingCommand(process.cwd(), runbookId, options)
+      );
+    });
+
+  selfHealing
+    .command("plan")
+    .description("Create a dry-run self-healing plan.")
+    .argument("<runbookId>", "Allowlisted self-healing runbook id.")
+    .option("--target <target>", "Exact local target id.")
+    .action(async (runbookId: string, options: { target?: string }) => {
+      console.log(await planSelfHealingCommand(process.cwd(), runbookId, options));
+    });
+
+  selfHealing
+    .command("run")
+    .description("Execute one planned runbook with exact confirmation.")
+    .argument("<runId>", "Self-healing run id.")
+    .requiredOption("--confirm <run-id>", "Exact self-healing run id.")
+    .option("--approval-id <approval-id>", "Approved escalation id.")
+    .action(
+      async (
+        runId: string,
+        options: { confirm?: string; approvalId?: string }
+      ) => {
+        console.log(
+          await executeSelfHealingCommand(process.cwd(), runId, options)
+        );
+      }
+    );
+
+  selfHealing
+    .command("tick")
+    .description("Run at most one bounded_auto self-healing action.")
+    .action(async () => {
+      console.log(await tickSelfHealingCommand(process.cwd()));
     });
 
   const update = program

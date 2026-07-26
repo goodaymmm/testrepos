@@ -517,6 +517,7 @@ describe("createProgram", () => {
       "list",
       "resolve",
       "run",
+      "self-healing",
       "show"
     ]);
     expect(
@@ -524,6 +525,17 @@ describe("createProgram", () => {
         .find((command) => command.name() === "resolve")
         ?.options.map((option) => option.long)
     ).toContain("--reason");
+    const selfHealing = recovery?.commands.find(
+      (command) => command.name() === "self-healing"
+    );
+    expect(
+      selfHealing?.commands.map((command) => command.name()).sort()
+    ).toEqual(["inspect", "list", "plan", "run", "tick"]);
+    expect(
+      selfHealing?.commands
+        .find((command) => command.name() === "run")
+        ?.options.map((option) => option.long)
+    ).toContain("--confirm");
   });
 
   it("registers incident lifecycle and guarded recovery commands", () => {

@@ -22,6 +22,7 @@ export type IncidentResourceKind =
   | "support_bundle"
   | "recovery_plan"
   | "recovery_result"
+  | "self_healing_runbook"
   | "update_transaction";
 
 export type IncidentResourceReference = {
@@ -82,7 +83,12 @@ export type IncidentTimelineEvent = {
     | "recovery.started"
     | "recovery.completed"
     | "recovery.partial"
-    | "recovery.failed";
+    | "recovery.failed"
+    | "self_healing.planned"
+    | "self_healing.running"
+    | "self_healing.completed"
+    | "self_healing.suspended"
+    | "self_healing.failed";
   status: IncidentStatus;
   severity: IncidentSeverity;
   resource?: Pick<
@@ -119,6 +125,11 @@ export type AttachIncidentResourceInput = {
     | "recovery.completed"
     | "recovery.partial"
     | "recovery.failed"
+    | "self_healing.planned"
+    | "self_healing.running"
+    | "self_healing.completed"
+    | "self_healing.suspended"
+    | "self_healing.failed"
   >;
   now?: Date;
 };

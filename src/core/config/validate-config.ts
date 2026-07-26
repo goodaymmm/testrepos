@@ -64,6 +64,13 @@ const sloThresholdSchema = z
     { message: "SLO warning and critical thresholds must differ" }
   );
 
+const selfHealingActionSchema = z.object({
+  enabled: z.boolean(),
+  max_attempts: z.number().int().min(1).max(10),
+  cooldown_seconds: z.number().int().min(0).max(604_800),
+  time_budget_seconds: z.number().int().min(1).max(3_600)
+});
+
 const runtimeConfigSchema = schemaVersion
   .extend({
     workflow: z
@@ -151,6 +158,22 @@ const runtimeConfigSchema = schemaVersion
           slo_breach: watchdogRuleSchema.optional()
         })
       })
+      .optional(),
+    self_healing: z
+      .object({
+        mode: z.enum(["notify_only", "bounded_auto"]),
+        approval_threshold: z.enum(["low", "medium", "high", "critical"]),
+        actions: z
+          .object({
+            workflow_checkpoint_index_rebuild: selfHealingActionSchema,
+            rag_index_verified_rebuild: selfHealingActionSchema,
+            discord_notification_retry: selfHealingActionSchema,
+            stale_runtime_lock_recovery_plan: selfHealingActionSchema,
+            read_only_helper_health_plan: selfHealingActionSchema
+          })
+          .strict()
+      })
+      .strict()
       .optional()
   })
   .passthrough();
@@ -634,7 +657,9 @@ export function validateConfigFile(fileName: string, value: unknown): Validation
   if (fileName === "runtime.json") {
     const result = runtimeConfigSchema.safeParse(value);
     if (!result.success) {
-      errors.push(`${fileName}: runtime workflow or watchdog settings are invalid`);
+      errors.push(
+        `${fileName}: runtime workflow, watchdog, or self-healing settings are invalid`
+      );
     } else if (result.data.workflow?.enabled_env !== undefined) {
       warnings.push(
         `${fileName}: workflow.enabled_env is legacy; use workflow.enabled`

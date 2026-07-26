@@ -14,6 +14,7 @@ import {
   type WatchdogRuleInput
 } from "../src/runtime/watchdog-rules.js";
 import {
+  authorizeWatchdogNotificationRetry,
   getWatchdogAlert,
   listWatchdogAlerts,
   markWatchdogNotification,
@@ -349,6 +350,10 @@ describe("runtime watchdog", () => {
     expect(failed.failures[0]?.reason).not.toContain("SHOULD_NOT_LEAK");
     expect(JSON.stringify(await getWatchdogAlert(root, result.alerts[0]!.alert_id)))
       .not.toContain("SHOULD_NOT_LEAK");
+    await authorizeWatchdogNotificationRetry(root, result.alerts[0]!.alert_id, {
+      authorizationId: "SHR-watchdog-retry-test",
+      now: new Date("2026-07-23T03:01:01.500Z")
+    });
     const retryPayloads: unknown[] = [];
     const retried = await notifyPendingDiscordWatchdogAlerts(
       root,
