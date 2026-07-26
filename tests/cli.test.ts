@@ -34,6 +34,7 @@ describe("createProgram", () => {
       "merge",
       "metrics",
       "migrate",
+      "performance",
       "projects",
       "rag",
       "readiness",

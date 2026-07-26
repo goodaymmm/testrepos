@@ -29,6 +29,7 @@ export type RcReadinessGateId =
   | "RAG_QUALITY"
   | "MULTI_PROJECT_ISOLATION"
   | "STABLE_REMOTE"
+  | "PERFORMANCE_REGRESSION"
   | "BUILD_UNIT_INTEGRATION"
   | "SECURITY_INTEGRITY";
 
@@ -208,6 +209,10 @@ export const rcReadinessGateDefinitions: readonly RcReadinessGateDefinition[] = 
   rcGate("STABLE_REMOTE", "Stable remote operations", "external_required", 168, "T174 Discord, smartphone, and identity verification", [
     "stable_remote_status",
     "stable_remote_verification"
+  ]),
+  rcGate("PERFORMANCE_REGRESSION", "Capacity and performance regression", "required", 168, "T187 representative performance benchmark and same-environment comparison", [
+    "performance_benchmark_result",
+    "performance_comparison_result"
   ]),
   rcGate("BUILD_UNIT_INTEGRATION", "Current commit build and full test", "required", 24, "Current commit build and full test result", [
     "build_test_result"

@@ -92,6 +92,11 @@ import {
   metricsSnapshotCommand
 } from "./commands/metrics.js";
 import {
+  performanceCompareCommand,
+  performanceReportCommand,
+  performanceRunCommand
+} from "./commands/performance.js";
+import {
   buildRagVectorCommand,
   compactRagIndexCommand,
   evaluateRagCommand,
@@ -1088,6 +1093,64 @@ export function createProgram(): Command {
     .description("Evaluate and persist the latest SLO summary.")
     .action(async () => {
       console.log(await metricsSloCheckCommand(process.cwd()));
+    });
+
+  const performance = program
+    .command("performance")
+    .description(
+      "Run deterministic capacity benchmarks and compare performance budgets."
+    );
+
+  performance
+    .command("run")
+    .description("Run the dedicated local performance suite.")
+    .option(
+      "--profile <profile>",
+      "Scenario profile: representative or full.",
+      "representative"
+    )
+    .option(
+      "--scenario <id>",
+      "Run a specific scenario. Repeat for multiple scenarios.",
+      collectOption,
+      []
+    )
+    .option("--warmup-iterations <count>", "Override warmup iterations.")
+    .option("--iterations <count>", "Override measured iterations (minimum 5).")
+    .option("--output <path>", "Benchmark JSON output path.")
+    .action(async (options) => {
+      const result = await performanceRunCommand(process.cwd(), options);
+      console.log(result.text);
+      if (!result.passed) {
+        process.exitCode = 1;
+      }
+    });
+
+  performance
+    .command("compare <current>")
+    .description("Compare a benchmark artifact with a bound baseline.")
+    .requiredOption("--baseline <path>", "Baseline benchmark JSON path.")
+    .option("--output <path>", "Comparison JSON output path.")
+    .action(async (current: string, options) => {
+      const result = await performanceCompareCommand(
+        process.cwd(),
+        current,
+        options
+      );
+      console.log(result.text);
+      if (!result.passed) {
+        process.exitCode = 1;
+      }
+    });
+
+  performance
+    .command("report <artifact>")
+    .description("Render a benchmark or comparison artifact as Markdown.")
+    .option("--output <path>", "Markdown report output path.")
+    .action(async (artifact: string, options) => {
+      console.log(
+        await performanceReportCommand(process.cwd(), artifact, options)
+      );
     });
 
   const watchdog = program
