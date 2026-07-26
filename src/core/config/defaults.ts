@@ -439,6 +439,21 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           max_backoff_seconds: 60
         }
       },
+      alert_policy: {
+        enabled: true,
+        timezone: "Asia/Tokyo",
+        routes: [
+          {
+            id: "watchdog-discord",
+            provider: "discord",
+            minimum_severity: "warning"
+          }
+        ],
+        quiet_hours: [],
+        maintenance_windows: [],
+        reminder_interval_seconds: 3600,
+        daily_budget: 50
+      },
       http: {
         profile: "loopback",
         external_base_url: null,

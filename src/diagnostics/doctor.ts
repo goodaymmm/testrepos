@@ -53,6 +53,10 @@ import {
   inspectConfigSchemaVersion
 } from "../migration/schema-registry.js";
 import { readLatestSloSummary } from "../observability/slo.js";
+import {
+  prepareAlertPolicy,
+  type AlertPolicyConfig
+} from "../notifications/alert-policy.js";
 
 export type DoctorStatus = "pass" | "warning" | "error";
 
@@ -91,6 +95,7 @@ type AgentsConfig = {
 
 type NotificationsConfig = {
   primary_provider?: string;
+  alert_policy?: AlertPolicyConfig;
   http?: {
     profile?: "loopback" | "reverse-proxy";
     external_base_url?: string | null;
@@ -1383,15 +1388,31 @@ async function checkDaemonHealth(projectRoot: string): Promise<DoctorCheck> {
 
 async function checkWatchdogAlerts(projectRoot: string): Promise<DoctorCheck> {
   try {
-    const watchdog = (await getRuntimeStatus(projectRoot)).watchdog;
+    const [watchdog, notifications] = await Promise.all([
+      getRuntimeStatus(projectRoot).then((status) => status.watchdog),
+      loadConfigFile<NotificationsConfig>(projectRoot, "notifications.json")
+    ]);
+    const alertPolicy = prepareAlertPolicy(notifications.alert_policy);
     const details = [
       `open=${watchdog.open}`,
       `acknowledged=${watchdog.acknowledged}`,
       `resolved=${watchdog.resolved}`,
       `highest_severity=${watchdog.highest_severity}`,
       `notifications_pending=${watchdog.notifications_pending}`,
-      `last_checked_at=${watchdog.last_checked_at ?? "never"}`
+      `last_checked_at=${watchdog.last_checked_at ?? "never"}`,
+      `policy_timezone=${alertPolicy.policy.timezone}`,
+      `policy_routes=${alertPolicy.policy.routes.length}`,
+      `policy_daily_budget=${alertPolicy.policy.daily_budget}`,
+      `policy_issues=${alertPolicy.issues.length === 0 ? "none" : alertPolicy.issues.join(",")}`
     ];
+    if (alertPolicy.issues.length > 0) {
+      return warning(
+        "watchdog.alerts",
+        "Runtime watchdog alerts",
+        details,
+        "Fix notifications.alert_policy timezone, duplicate routes, zero budget, or overlapping maintenance windows."
+      );
+    }
     if (watchdog.open === 0 && watchdog.acknowledged === 0) {
       return pass("watchdog.alerts", "Runtime watchdog alerts", details);
     }

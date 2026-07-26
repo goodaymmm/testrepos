@@ -29,6 +29,13 @@ const schemaVersion = z.object({
 });
 
 const watchdogSeveritySchema = z.enum(["info", "warning", "high", "critical"]);
+const timeValueSchema = z
+  .string()
+  .regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/u);
+const alertTimeRangeSchema = z.object({
+  start: timeValueSchema,
+  end: timeValueSchema
+});
 const watchdogRuleSchema = z
   .object({
     enabled: z.boolean(),
@@ -495,6 +502,23 @@ const notificationsConfigSchema = schemaVersion.extend({
           message: "remote-readonly Board requires allowed_origins"
         });
       }
+    })
+    .optional(),
+  alert_policy: z
+    .object({
+      enabled: z.boolean(),
+      timezone: z.string().trim().min(1).max(100),
+      routes: z.array(
+        z.object({
+          id: z.string().regex(/^[a-z0-9][a-z0-9._-]{0,63}$/u),
+          provider: z.enum(["discord", "local_audit"]),
+          minimum_severity: watchdogSeveritySchema
+        })
+      ).min(1).max(20),
+      quiet_hours: z.array(alertTimeRangeSchema).max(20),
+      maintenance_windows: z.array(alertTimeRangeSchema).max(20),
+      reminder_interval_seconds: z.number().int().min(60).max(604_800),
+      daily_budget: z.number().int().min(0).max(10_000)
     })
     .optional()
 });

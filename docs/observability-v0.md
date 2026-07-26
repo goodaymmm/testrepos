@@ -12,6 +12,8 @@ external telemetry service and does not require a collector.
 
 Raw samples use fixed metric names and bounded labels. Task bodies, prompts,
 diffs, usernames, tokens, raw errors, and project/task/run IDs are rejected.
+Alert policy decisions use the bounded `notification_policy_decision_total`
+metric and never store route IDs or alert payloads as labels.
 
 ## Commands
 
