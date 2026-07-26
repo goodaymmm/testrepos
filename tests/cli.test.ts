@@ -95,14 +95,39 @@ describe("createProgram", () => {
 
     expect(projects?.commands.map((command) => command.name()).sort()).toEqual([
       "doctor",
+      "health",
       "list",
       "register",
       "show",
       "unregister"
     ]);
-    for (const command of projects?.commands ?? []) {
+    for (const command of (projects?.commands ?? []).filter(
+      (command) => command.name() !== "health"
+    )) {
       expect(command.options.map((option) => option.long)).toContain("--format");
     }
+    const health = projects?.commands.find(
+      (command) => command.name() === "health"
+    );
+    const schedule = health?.commands.find(
+      (command) => command.name() === "schedule"
+    );
+    expect(health?.commands.map((command) => command.name()).sort()).toEqual([
+      "report",
+      "scan",
+      "schedule"
+    ]);
+    expect(schedule?.commands.map((command) => command.name()).sort()).toEqual([
+      "plan",
+      "register",
+      "unregister",
+      "verify"
+    ]);
+    expect(
+      schedule?.commands
+        .find((command) => command.name() === "register")
+        ?.options.map((option) => option.long)
+    ).toContain("--confirm");
   });
 
   it("registers capability evaluate and explain commands", () => {

@@ -11,7 +11,11 @@ import {
 import { agentIds } from "../agents/types.js";
 import { loadConfigFile, validateAllConfigs } from "../core/config/load-config.js";
 import { readJsonFile } from "../core/fs/json-file.js";
-import { getKaironPaths, resolveInside } from "../core/fs/paths.js";
+import {
+  getKaironPaths,
+  getProjectsRegistryPath,
+  resolveInside
+} from "../core/fs/paths.js";
 import {
   resolveSecret,
   type ResolvedSecret,
@@ -42,6 +46,8 @@ import { resolveWorkflowRuntimeConfig } from "../workflow/config.js";
 import { inspectWorkflowCheckpointStore } from "../workflow/checkpoint-manager.js";
 import { inspectCapabilityPolicyConfig } from "../policy/trust-policy.js";
 import { inspectRegisteredProject } from "../projects/registry.js";
+import { readLatestScheduledHealth } from "../projects/scheduled-health.js";
+import { readScheduledHealthTaskStatus } from "../projects/scheduled-health-task.js";
 import {
   resolveBoardProfileConfig,
   resolveDiscordHttpProfileConfig,
@@ -222,6 +228,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkGitignore(options.projectRoot));
   checks.push(await checkConfigValidation(options.projectRoot));
   checks.push(await checkProjectsRegistry(options.projectRoot, env));
+  checks.push(await checkScheduledProjectsHealth(env));
   checks.push(await checkWorkflowRuntimeConfig(options.projectRoot, env));
   checks.push(await checkAgentConfig(options.projectRoot));
   checks.push(await checkCapabilityTrustPolicy(options.projectRoot));
@@ -472,6 +479,49 @@ async function checkProjectsRegistry(
     details,
     `Run kairon projects register "${projectRoot}" to add this project.`
   );
+}
+
+async function checkScheduledProjectsHealth(
+  env: NodeJS.ProcessEnv
+): Promise<DoctorCheck> {
+  const registryPath = getProjectsRegistryPath(env);
+  const [latest, task] = await Promise.all([
+    readLatestScheduledHealth(registryPath),
+    readScheduledHealthTaskStatus(registryPath)
+  ]);
+  if (latest === undefined) {
+    return pass("projects.scheduled_health", "Scheduled multi-project health", [
+      "status=not_run",
+      `task_status=${task?.status ?? "not_configured"}`
+    ]);
+  }
+
+  const ageMinutes = Math.max(
+    0,
+    Math.floor((Date.now() - Date.parse(latest.generated_at)) / 60_000)
+  );
+  const details = [
+    `status=${latest.status}`,
+    `snapshot_id=${latest.snapshot_id}`,
+    `age_minutes=${ageMinutes}`,
+    `projects_error=${latest.summary.error}`,
+    `projects_warning=${latest.summary.warning}`,
+    `task_status=${task?.status ?? "not_configured"}`
+  ];
+  if (
+    latest.status === "failed" ||
+    ageMinutes > 120 ||
+    task?.status === "error" ||
+    task?.status === "disabled"
+  ) {
+    return warning(
+      "projects.scheduled_health",
+      "Scheduled multi-project health",
+      details,
+      "Run kairon projects health scan, then verify the scheduled task with kairon projects health schedule verify."
+    );
+  }
+  return pass("projects.scheduled_health", "Scheduled multi-project health", details);
 }
 
 async function checkWorkflowRuntimeConfig(

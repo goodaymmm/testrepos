@@ -120,7 +120,11 @@ import {
 import {
   doctorProjectsCommand,
   listProjectsCommand,
+  planProjectsHealthScheduleCommand,
   registerProjectCommand,
+  reportProjectsHealthCommand,
+  runProjectsHealthScheduleCommand,
+  scanProjectsHealthCommand,
   showProjectCommand,
   unregisterProjectCommand
 } from "./commands/projects.js";
@@ -376,8 +380,92 @@ export function createProgram(): Command {
     .command("doctor")
     .description("Diagnose registered projects without mutating project state.")
     .option("--format <format>", "Output format: text or json.", "text")
+    .option("--registry-path <path>", "Override the user-local projects registry.")
     .action(async (options: { format?: string }) => {
       console.log(await doctorProjectsCommand(options));
+    });
+
+  const projectsHealth = projects
+    .command("health")
+    .description("Run and inspect scheduled read-only multi-project health.");
+
+  projectsHealth
+    .command("scan")
+    .description("Create a user-local multi-project health snapshot.")
+    .option("--registry-path <path>", "Override the user-local projects registry.")
+    .option("--project-timeout-ms <ms>", "Timeout for one project inspection.", "5000")
+    .option("--concurrency <count>", "Maximum concurrent project inspections.", "4")
+    .option("--retention-days <days>", "Snapshot retention in days.", "30")
+    .option("--alert-threshold <status>", "Alert threshold: warning or error.", "warning")
+    .option("--provider-pressure-threshold <count>", "Aggregate provider concurrency warning threshold.", "8")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options) => {
+      console.log(await scanProjectsHealthCommand(options));
+    });
+
+  projectsHealth
+    .command("report")
+    .description("Show the latest user-local scheduled health snapshot.")
+    .option("--registry-path <path>", "Override the user-local projects registry.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options) => {
+      console.log(await reportProjectsHealthCommand(options));
+    });
+
+  const projectsHealthSchedule = projectsHealth
+    .command("schedule")
+    .description("Manage the Windows scheduled multi-project health task.");
+
+  projectsHealthSchedule
+    .command("plan")
+    .description("Create a registration plan without changing Task Scheduler.")
+    .option("--registry-path <path>", "Override the user-local projects registry.")
+    .option("--task-name <name>", "Windows Task Scheduler task name.")
+    .option("--kairon-command <path>", "Kairon executable used by the task.")
+    .option("--interval-minutes <minutes>", "Scan interval in minutes.", "60")
+    .option("--project-timeout-ms <ms>", "Timeout for one project inspection.", "5000")
+    .option("--concurrency <count>", "Maximum concurrent project inspections.", "4")
+    .option("--retention-days <days>", "Snapshot retention in days.", "30")
+    .option("--alert-threshold <status>", "Alert threshold: warning or error.", "warning")
+    .option("--provider-pressure-threshold <count>", "Aggregate provider concurrency warning threshold.", "8")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options) => {
+      console.log(await planProjectsHealthScheduleCommand(options));
+    });
+
+  projectsHealthSchedule
+    .command("register")
+    .description("Register the planned Windows task after exact confirmation.")
+    .argument("<planId>", "Scheduled health task plan id.")
+    .requiredOption("--confirm <planId>", "Must exactly match the plan id.")
+    .option("--registry-path <path>", "Override the user-local projects registry.")
+    .action(async (planId: string, options) => {
+      console.log(
+        await runProjectsHealthScheduleCommand("register", planId, options)
+      );
+    });
+
+  projectsHealthSchedule
+    .command("verify")
+    .description("Verify the Windows scheduled health task registration.")
+    .option("--registry-path <path>", "Override the user-local projects registry.")
+    .option("--task-name <name>", "Windows Task Scheduler task name.")
+    .action(async (options) => {
+      console.log(
+        await runProjectsHealthScheduleCommand("verify", undefined, options)
+      );
+    });
+
+  projectsHealthSchedule
+    .command("unregister")
+    .description("Unregister the planned Windows task after exact confirmation.")
+    .argument("<planId>", "Scheduled health task plan id.")
+    .requiredOption("--confirm <planId>", "Must exactly match the plan id.")
+    .option("--registry-path <path>", "Override the user-local projects registry.")
+    .action(async (planId: string, options) => {
+      console.log(
+        await runProjectsHealthScheduleCommand("unregister", planId, options)
+      );
     });
 
   const capability = program
