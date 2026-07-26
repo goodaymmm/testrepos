@@ -1,6 +1,11 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
+import {
+  currentConfigSchemaVersion,
+  inspectConfigSchemaVersion,
+  inspectStateSchemaVersion
+} from "../migration/schema-registry.js";
 
 export type StateIntegritySeverity = "error" | "warning";
 
@@ -10,6 +15,8 @@ export type StateIntegrityIssue = {
     | "json_parse_error"
     | "jsonl_parse_error"
     | "missing_schema_version"
+    | "schema_migration_required"
+    | "unsupported_schema_version"
     | "missing_reference"
     | "id_mismatch"
     | "orphan_artifact";
@@ -218,8 +225,39 @@ function collectSchemaIssues(
         path: file.kind === "jsonl" ? `${file.path}:${index + 1}` : file.path,
         message: "State record does not declare schema_version."
       });
+      continue;
+    }
+    const configFile = configFileName(file.path);
+    const compatibility =
+      configFile === undefined
+        ? inspectStateSchemaVersion(record.schema_version)
+        : inspectConfigSchemaVersion(configFile, record.schema_version);
+    const issuePath =
+      file.kind === "jsonl" ? `${file.path}:${index + 1}` : file.path;
+    if (compatibility === "migration_required" && configFile !== undefined) {
+      issues.push({
+        severity: "warning",
+        code: "schema_migration_required",
+        path: issuePath,
+        message: `Config schema ${String(record.schema_version)} requires migration to ${currentConfigSchemaVersion}.`
+      });
+    } else if (
+      compatibility === "unsupported_newer" ||
+      compatibility === "unsupported_older" ||
+      compatibility === "invalid"
+    ) {
+      issues.push({
+        severity: "error",
+        code: "unsupported_schema_version",
+        path: issuePath,
+        message: `Unsupported ${configFile === undefined ? "state" : "config"} schema_version: ${String(record.schema_version)}.`
+      });
     }
   }
+}
+
+function configFileName(filePath: string): string | undefined {
+  return /^\.kairon\/config\/([^/]+\.json)$/u.exec(filePath)?.[1];
 }
 
 function collectReferenceIssues(files: ParsedStateFile[], issues: StateIntegrityIssue[]): void {

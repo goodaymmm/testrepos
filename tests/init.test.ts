@@ -17,7 +17,7 @@ describe("initializeProject", () => {
     expect(result.gitignoreSuggestionNeeded).toBe(true);
 
     const configs = await loadAllConfigs(root);
-    expect(configs["project.json"]).toMatchObject({ schema_version: "0.1" });
+    expect(configs["project.json"]).toMatchObject({ schema_version: "0.3.0" });
     expect(configs["agents.json"]).toMatchObject({
       session_budget: {
         enabled: true,

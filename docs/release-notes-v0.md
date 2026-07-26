@@ -6,6 +6,12 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 ## Unreleased
 
 <!-- kairon:release-notes-unreleased -->
+- T180でconfig schemaとcanonical state schemaのregistryを分離し、config `0.3.0`への
+  explicit `from -> to` migration graphを追加。
+- `kairon migrate plan`とexact confirm付き`migrate apply`を追加し、runtime停止、
+  全config digest、fresh state backup、atomic write、config / state / doctor post-checkを必須化。
+- unknown newer schemaのdefault deny、idempotent再実行、失敗時のrecovery markerを追加し、
+  append-only event / auditはrewriteせずreader compatibilityを維持。
 - T178でpackage-lock v3から決定的なCycloneDX 1.6 SBOMを生成し、local build
   provenanceとともにpackage、checksum manifest、source commitへbindするrelease contractを追加。
 - `kairon release sbom`、`kairon release provenance`を追加し、`release manifest`と

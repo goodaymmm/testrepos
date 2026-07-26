@@ -99,6 +99,7 @@ describe("T177 documentation inventory", () => {
       installation: await readUtf8("docs/installation.md"),
       release: await readUtf8("docs/release-checklist-v0.md"),
       provenance: await readUtf8("docs/release-provenance-v0.md"),
+      schema: await readUtf8("docs/schema-evolution-v0.md"),
       workflow: await readUtf8("docs/workflow-v0.md"),
       watchdog: await readUtf8("docs/runtime-watchdog-v0.md"),
       incident: await readUtf8("docs/incident-lifecycle-v0.md"),
@@ -135,6 +136,16 @@ describe("T177 documentation inventory", () => {
         source: "src/state/event-compaction.ts",
         document: documents.cli,
         marker: "kairon state events compact"
+      },
+      {
+        source: "src/migration/schema-registry.ts",
+        document: documents.schema,
+        marker: "## Schema Registry"
+      },
+      {
+        source: "src/migration/migration-plan.ts",
+        document: documents.schema,
+        marker: "## Apply"
       },
       {
         source: "src/workflow/runtime.ts",

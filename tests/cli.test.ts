@@ -72,6 +72,21 @@ describe("createProgram", () => {
     ]);
   });
 
+  it("registers guarded schema migration plan and apply commands", () => {
+    const migrate = createProgram().commands.find(
+      (command) => command.name() === "migrate"
+    );
+    const apply = migrate?.commands.find(
+      (command) => command.name() === "apply"
+    );
+
+    expect(migrate?.commands.map((command) => command.name()).sort()).toEqual([
+      "apply",
+      "plan"
+    ]);
+    expect(apply?.options.map((option) => option.long)).toContain("--confirm");
+  });
+
   it("registers multi-project registry commands", () => {
     const projects = createProgram().commands.find(
       (command) => command.name() === "projects"

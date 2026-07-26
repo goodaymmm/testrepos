@@ -12,6 +12,11 @@ import {
   prepareStableRemoteProfile,
   stableRemoteProfileName
 } from "../../remote/profile.js";
+import {
+  currentConfigSchemaVersion,
+  formatSchemaCompatibilityError,
+  inspectConfigSchemaVersion
+} from "../../migration/schema-registry.js";
 
 export type ValidationResult = {
   ok: boolean;
@@ -536,6 +541,24 @@ export function validateConfigFile(fileName: string, value: unknown): Validation
   const baseResult = schemaVersion.safeParse(value);
   if (!baseResult.success) {
     errors.push(`${fileName}: schema_version is required`);
+  } else {
+    const compatibility = inspectConfigSchemaVersion(
+      fileName,
+      baseResult.data.schema_version
+    );
+    if (compatibility === "migration_required") {
+      warnings.push(
+        `${fileName}: schema_version ${baseResult.data.schema_version} requires migration to ${currentConfigSchemaVersion}`
+      );
+    } else if (compatibility !== "current") {
+      errors.push(
+        formatSchemaCompatibilityError(
+          fileName,
+          baseResult.data.schema_version,
+          compatibility
+        )
+      );
+    }
   }
 
   if (fileName === "agents.json") {

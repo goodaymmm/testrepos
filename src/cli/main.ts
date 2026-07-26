@@ -81,7 +81,11 @@ import {
 } from "./commands/incident.js";
 import { closeActiveWork } from "./commands/leave.js";
 import { runMaintenance } from "./commands/maintenance.js";
-import { runMigrations } from "./commands/migrate.js";
+import {
+  applySchemaMigrationCommand,
+  planSchemaMigrationCommand,
+  runMigrations
+} from "./commands/migrate.js";
 import {
   buildRagVectorCommand,
   compactRagIndexCommand,
@@ -240,12 +244,33 @@ export function createProgram(): Command {
       }
     });
 
-  program
+  const migrateCommand = program
     .command("migrate")
     .description("Migrate existing .kairon configuration to the current schema.")
     .option("--dry-run", "Show planned migrations without writing files")
     .action(async (options: { dryRun?: boolean }) => {
       console.log(await runMigrations(process.cwd(), { dryRun: options.dryRun }));
+    });
+
+  migrateCommand
+    .command("plan")
+    .description("Create a digest-bound config schema migration plan.")
+    .action(async () => {
+      console.log(await planSchemaMigrationCommand(process.cwd()));
+    });
+
+  migrateCommand
+    .command("apply")
+    .description("Apply a confirmed schema migration plan after a fresh backup.")
+    .argument("<plan-id>", "Schema migration plan id.")
+    .requiredOption(
+      "--confirm <plan-id>",
+      "Require the exact schema migration plan id."
+    )
+    .action(async (planId: string, options: { confirm?: string }) => {
+      console.log(
+        await applySchemaMigrationCommand(process.cwd(), planId, options)
+      );
     });
 
   program

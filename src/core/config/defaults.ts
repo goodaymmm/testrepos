@@ -10,7 +10,7 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
 
   return {
     "project.json": {
-      schema_version: "0.1",
+      schema_version: "0.3.0",
       project_id: projectId || "kairon-project",
       root: toPosixPath(root),
       primary_language: "unknown",
@@ -28,7 +28,7 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
       }
     },
     "runtime.json": {
-      schema_version: "0.1",
+      schema_version: "0.3.0",
       default_mode: "persistent_terminal_session",
       visible_terminal_required: false,
       official_cli_only: true,
@@ -120,7 +120,7 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
       }
     },
     "schedule.json": {
-      schema_version: "0.1",
+      schema_version: "0.3.0",
       timezone: "Asia/Tokyo",
       active_work_time: [{ start: "07:00", end: "18:00" }],
       standby_work_time: [{ start: "18:00", end: "01:00" }],
@@ -132,7 +132,7 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
       ]
     },
     "agents.json": {
-      schema_version: "0.1",
+      schema_version: "0.3.0",
       session_budget: {
         enabled: true,
         soft_limit: {
@@ -237,7 +237,7 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
       }
     },
     "dispatch.json": {
-      schema_version: "0.1",
+      schema_version: "0.3.0",
       strategy: "persona_capability_score",
       default_agent: "codex",
       personas: {
@@ -249,7 +249,7 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
       }
     },
     "policies.json": {
-      schema_version: "0.1",
+      schema_version: "0.3.0",
       git: {
         default_base_branch: "main",
         remote: "origin",
@@ -345,7 +345,7 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
       }
     },
     "notifications.json": {
-      schema_version: "0.1",
+      schema_version: "0.3.0",
       primary_provider: "discord",
       providers: {
         discord: {
@@ -425,7 +425,7 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
       }
     },
     "rag.json": {
-      schema_version: "0.1",
+      schema_version: "0.3.0",
       enabled: false,
       storage: {
         base_dir: ".kairon/rag",
@@ -511,6 +511,9 @@ export const kaironDirectories = [
   "recovery",
   "recovery/resolutions",
   "state",
+  "migrations",
+  "migrations/plans",
+  "migrations/results",
   "rag",
   "rag/integrity",
   "rag/rebuilds",

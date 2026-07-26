@@ -5,6 +5,7 @@ param(
   [string]$ProjectRoot = (Get-Location).Path,
   [string]$TransactionRoot = (Join-Path $env:TEMP "kairon-beta-updates"),
   [string]$DiagnosticRoot = (Join-Path $env:TEMP "kairon-beta-diagnostics"),
+  [switch]$ApproveSchemaMigration,
   [switch]$DryRun
 )
 
@@ -44,6 +45,7 @@ try {
   Write-Host "project_initialized=$projectInitialized"
   Write-Host "rollback.package=required"
   Write-Host "rollback.state_backup=$projectInitialized"
+  Write-Host "schema_migration_approved=$($ApproveSchemaMigration.IsPresent.ToString().ToLowerInvariant())"
 
   if ($DryRun) {
     Write-Host "update.action=would_backup_install_migrate_doctor"
@@ -115,12 +117,43 @@ try {
   $verifyOutput | ForEach-Object { Write-Host $_ }
 
   if ($projectInitialized) {
-    $stage = "migrate"
-    $migrateOutput = Invoke-KaironLocalBetaCommand `
+    $stage = "runtime_stop"
+    $stopOutput = Invoke-KaironLocalBetaCommand `
       -Command $updatedKairon.Source `
-      -Arguments @("migrate") `
+      -Arguments @("stop") `
       -WorkingDirectory $resolvedProject
-    $migrateOutput | ForEach-Object { Write-Host $_ }
+    $stopOutput | ForEach-Object { Write-Host $_ }
+
+    $stage = "migration_plan"
+    $migrationPlanOutput = Invoke-KaironLocalBetaCommand `
+      -Command $updatedKairon.Source `
+      -Arguments @("migrate", "plan") `
+      -WorkingDirectory $resolvedProject
+    $migrationPlanOutput | ForEach-Object { Write-Host $_ }
+    $migrationPlanText = $migrationPlanOutput -join [Environment]::NewLine
+    $migrationPlanMatch = [regex]::Match(
+      $migrationPlanText,
+      '(?m)^plan_id=(MIG-\d+)\s*$'
+    )
+    if ($migrationPlanMatch.Success) {
+      $migrationPlanId = $migrationPlanMatch.Groups[1].Value
+      if (-not $ApproveSchemaMigration.IsPresent) {
+        throw "Schema migration plan $migrationPlanId requires -ApproveSchemaMigration."
+      }
+      $stage = "migration_apply"
+      $migrationApplyOutput = Invoke-KaironLocalBetaCommand `
+        -Command $updatedKairon.Source `
+        -Arguments @(
+          "migrate", "apply", $migrationPlanId,
+          "--confirm", $migrationPlanId
+        ) `
+        -WorkingDirectory $resolvedProject
+      $migrationApplyOutput | ForEach-Object { Write-Host $_ }
+      $migrationApplyText = $migrationApplyOutput -join [Environment]::NewLine
+      if ($migrationApplyText -notmatch '(?m)^status=(applied|already_applied)\s*$') {
+        throw "Kairon schema migration did not complete successfully."
+      }
+    }
 
     $stage = "doctor"
     $doctorOutput = Invoke-KaironLocalBetaCommand `

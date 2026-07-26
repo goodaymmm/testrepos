@@ -191,6 +191,9 @@ describe("local release package", () => {
     expect(update).toContain("rollback_package_restored");
     expect(update).toContain("state\", \"backup\", \"restore");
     expect(update).toContain("doctor.ok=true");
+    expect(update).toContain("ApproveSchemaMigration");
+    expect(update).toContain('@("migrate", "plan")');
+    expect(update).toContain('"migrate", "apply", $migrationPlanId');
     expect(uninstall).toContain("npm_uninstall");
     expect(uninstall).not.toMatch(/Remove-Item[^\n]+\.kairon/iu);
     expect(installation).toContain("public npm registryへpublishせず");
