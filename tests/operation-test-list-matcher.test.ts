@@ -10,9 +10,28 @@ import {
   parseOperationTestListAliases,
   parseOperationTestListMarkdown
 } from "../src/operation-test/test-list-matcher.js";
+import { buildStableAcceptanceBundle } from "../src/operation-test/stable-acceptance.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("operation test list matcher", () => {
+  it("resolves every Stable acceptance summary alias to a listed test id", () => {
+    const bundle = buildStableAcceptanceBundle("C:\\repo", {
+      resultRoot: "operation-test-results\\stable-run",
+      sourceCommit: "a".repeat(40),
+      generatedAt: new Date("2026-07-27T00:00:00.000Z")
+    });
+    const markdown =
+      bundle.files.find((file) => file.kind === "test_list")?.content ?? "";
+    const cases = parseOperationTestListMarkdown(markdown);
+    const aliases = parseOperationTestListAliases(markdown);
+    const caseIds = new Set(cases.map((testCase) => testCase.id));
+
+    expect(cases).toHaveLength(18);
+    expect(aliases).toHaveLength(19);
+    expect(aliases.every((alias) => caseIds.has(alias.target_id))).toBe(true);
+    expect(new Set(aliases.map((alias) => alias.source_id)).size).toBe(19);
+  });
+
   it("parses operation test Markdown rows and current result statuses", () => {
     const cases = parseOperationTestListMarkdown(
       [

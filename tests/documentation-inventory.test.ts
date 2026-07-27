@@ -108,7 +108,8 @@ describe("T177 documentation inventory", () => {
       disasterRecovery: await readUtf8("docs/disaster-recovery-v0.md"),
       performance: await readUtf8("docs/performance-budget-v0.md"),
       security: await readUtf8("docs/security-baseline-v0.md"),
-      threatModel: await readUtf8("docs/threat-model-v0.md")
+      threatModel: await readUtf8("docs/threat-model-v0.md"),
+      stableAcceptance: await readUtf8("docs/stable-acceptance-v0.md")
     };
     const inventory = [
       {
@@ -275,6 +276,11 @@ describe("T177 documentation inventory", () => {
         source: "src/security/path-policy.ts",
         document: documents.threatModel,
         marker: "<!-- kairon:stable-security-baseline -->"
+      },
+      {
+        source: "src/operation-test/stable-acceptance.ts",
+        document: documents.stableAcceptance,
+        marker: "<!-- kairon:stable-acceptance -->"
       }
     ];
 

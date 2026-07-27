@@ -1079,11 +1079,13 @@ operation testのPowerShell command、test list / command document、result summ
 kairon test commands --range T145-T159
 kairon test commands --profile branch-protection-public-sandbox --format powershell
 kairon test docs --range T145-T159 --dry-run
+kairon test docs --range T176-T189 --template stable-acceptance --result-root operation-test-results\stable-acceptance-<timestamp>
+kairon test docs --range T176-T189 --template stable-acceptance --result-root <new-root> --previous-result-root <previous-root>
 kairon test summarize <log-file>
 kairon test summarize --result-root <directory> --test-list <test-list.md> --suggest --patch-preview
 ```
 
-`commands`と`docs`はcredential値を埋め込まず、必要なenvironment variable名とsetup条件だけを出力する。`summarize`は既定でMarkdownを変更せず候補を表示し、`--apply-pass`を明示した場合もPASS候補だけをbackup付きで反映する。`FAIL`、`SETUP_REQUIRED`、`OPTIONAL`を自動的にPASSへ変更しない。
+`commands`と`docs`はcredential値を埋め込まず、必要なenvironment variable名とsetup条件だけを出力する。`stable-acceptance` templateはtest list、PowerShell command group、source commitへbindしたevidence manifest、exact-ID cleanup planを同時生成する。`--previous-result-root`指定時は既存PASSを変更せず、新しいresult rootの再実行対象から除外する。`summarize`は既定でMarkdownを変更せず候補を表示し、`--apply-pass`を明示した場合もPASS候補だけをbackup付きで反映する。`FAIL`、`SETUP_REQUIRED`、`OPTIONAL`を自動的にPASSへ変更しない。
 
 ## kairon release
 

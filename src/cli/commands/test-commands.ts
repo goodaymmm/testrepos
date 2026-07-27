@@ -6,6 +6,8 @@ import {
   formatOperationTestDocGenerationResult,
   writeOperationTestDocs
 } from "../../operation-test/test-doc-generator.js";
+import { summarizeOperationTestResults } from "../../operation-test/result-summary.js";
+import { spawnCommandRunner } from "../../agents/command-runner.js";
 
 export type GenerateOperationTestCommandsOptions = {
   profile?: string[];
@@ -17,6 +19,10 @@ export type GenerateOperationTestDocsOptions = {
   range?: string;
   outputDir?: string;
   namePrefix?: string;
+  template?: string;
+  resultRoot?: string;
+  sourceCommit?: string;
+  previousResultRoot?: string;
   overwrite?: boolean;
   dryRun?: boolean;
 };
@@ -42,10 +48,36 @@ export async function generateOperationTestDocsCommand(
     throw new Error("Specify --range, for example --range T130-T143.");
   }
 
+  const template = normalizeTemplate(options.template);
+  const sourceCommit =
+    template === "stable-acceptance"
+      ? options.sourceCommit ?? (await resolveSourceCommit(projectRoot))
+      : options.sourceCommit;
+  const previousSummary =
+    template === "stable-acceptance" && options.previousResultRoot !== undefined
+      ? await summarizeOperationTestResults({
+          projectRoot,
+          resultRoot: options.previousResultRoot
+        })
+      : undefined;
+
   const result = await writeOperationTestDocs(projectRoot, {
     range: options.range,
     outputDir: options.outputDir,
     namePrefix: options.namePrefix,
+    template,
+    resultRoot: options.resultRoot,
+    sourceCommit,
+    previousResultRoot: options.previousResultRoot,
+    previousPassIds:
+      previousSummary === undefined
+        ? undefined
+        : previousSummary.pass_ids.filter(
+            (id) =>
+              !previousSummary.fail_ids.includes(id) &&
+              !previousSummary.setup_required_ids.includes(id) &&
+              !previousSummary.optional_ids.includes(id)
+          ),
     overwrite: options.overwrite,
     dryRun: options.dryRun
   });
@@ -64,4 +96,53 @@ function normalizeFormat(value: string | undefined): "powershell" | "json" {
   }
 
   throw new Error(`Invalid --format: ${value}. Expected powershell or json.`);
+}
+
+function normalizeTemplate(
+  value: string | undefined
+): "generic" | "stable-acceptance" {
+  if (value === undefined || value.trim().length === 0) {
+    return "generic";
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "generic" || normalized === "stable-acceptance") {
+    return normalized;
+  }
+  throw new Error(
+    `Invalid --template: ${value}. Expected generic or stable-acceptance.`
+  );
+}
+
+async function resolveSourceCommit(projectRoot: string): Promise<string> {
+  const status = await spawnCommandRunner({
+    command: "git",
+    args: ["status", "--porcelain", "--untracked-files=no"],
+    cwd: projectRoot
+  });
+  if (status.exitCode !== 0 || status.timedOut) {
+    throw new Error(
+      "Stable acceptance generation could not inspect the tracked source state."
+    );
+  }
+  if (status.stdout.trim().length > 0) {
+    throw new Error(
+      "Stable acceptance generation requires a clean tracked source checkout."
+    );
+  }
+
+  const result = await spawnCommandRunner({
+    command: "git",
+    args: ["rev-parse", "HEAD"],
+    cwd: projectRoot
+  });
+  const commit = result.stdout.trim().toLowerCase();
+  if (
+    result.exitCode !== 0 ||
+    result.timedOut ||
+    !/^[a-f0-9]{40,64}$/u.test(commit)
+  ) {
+    throw new Error("Stable acceptance generation requires a valid Git HEAD commit.");
+  }
+  return commit;
 }

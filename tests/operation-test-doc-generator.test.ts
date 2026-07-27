@@ -91,6 +91,117 @@ describe("operation test document generator", () => {
     ).rejects.toThrow();
   });
 
+  it("builds a source-bound Stable acceptance bundle and carries only prior PASS", () => {
+    const sourceCommit = "a".repeat(40);
+    const result = buildOperationTestDocs("/repo", {
+      range: "T176-T189",
+      template: "stable-acceptance",
+      resultRoot: "operation-test-results/stable-run",
+      sourceCommit,
+      generatedAt: new Date("2026-07-27T00:00:00.000Z"),
+      previousResultRoot: "operation-test-results/previous-run",
+      previousPassIds: ["OT-T176-01-01", "OT-T177-01-01", "UNKNOWN_CASE"]
+    });
+
+    expect(result.template).toBe("stable-acceptance");
+    expect(result.range).toBe("T176-T189");
+    expect(result.run_id).toBe("STABLE-20260727000000");
+    expect(result.source_commit).toBe(sourceCommit);
+    expect(result.files.map((file) => file.kind)).toEqual([
+      "test_list",
+      "command_list",
+      "evidence_manifest",
+      "cleanup_plan"
+    ]);
+    expect(result.carried_pass_ids).toEqual([
+      "OT-T176-01-01",
+      "OT-T177-01-01"
+    ]);
+    expect(result.selected_test_ids).not.toContain("OT-T176-01-01");
+    expect(result.selected_test_ids).toContain("OT-T189-01-04");
+
+    const testList =
+      result.files.find((file) => file.kind === "test_list")?.content ?? "";
+    const commands =
+      result.files.find((file) => file.kind === "command_list")?.content ?? "";
+    const manifest = JSON.parse(
+      result.files.find((file) => file.kind === "evidence_manifest")?.content ?? "{}"
+    ) as {
+      kind: string;
+      source_commit: string;
+      documents: Array<{ sha256: string }>;
+      scenarios: Array<{
+        test_id: string;
+        status: string;
+        carried_from_previous: boolean;
+      }>;
+    };
+    const cleanup = JSON.parse(
+      result.files.find((file) => file.kind === "cleanup_plan")?.content ?? "{}"
+    ) as {
+      safety: { exact_ids_only: boolean; created_by_harness_only: boolean };
+      resources: Array<{ exact_id: unknown; cleanup_status: string }>;
+    };
+
+    expect(testList).toContain(
+      "<!-- kairon:alias STABLE_PROMOTION_LIVE=OT-T179-01-01 -->"
+    );
+    expect(testList).toContain(
+      "<!-- kairon:alias STABLE_ACCEPTANCE_MANIFEST=OT-T189-01-04 -->"
+    );
+    expect(testList).toContain("external_required");
+    expect(commands).toContain("<!-- command-group: WINDOWS_SANDBOX -->");
+    expect(commands).toContain("<!-- command-group: WINDOWS_REBOOT_BEFORE -->");
+    expect(commands).toContain("<!-- command-group: WINDOWS_REBOOT_AFTER -->");
+    expect(commands).toContain("<!-- command-group: CLEANUP -->");
+    expect(commands).not.toContain("Bearer ");
+    expect(commands).not.toContain("Remove-Item *");
+    expect(manifest.kind).toBe("stable_acceptance_evidence_manifest");
+    expect(manifest.source_commit).toBe(sourceCommit);
+    expect(manifest.documents.every((document) => /^[a-f0-9]{64}$/.test(document.sha256)))
+      .toBe(true);
+    expect(manifest.scenarios).toHaveLength(18);
+    expect(
+      manifest.scenarios.find((scenario) => scenario.test_id === "OT-T176-01-01")
+    ).toMatchObject({
+      status: "PASS",
+      carried_from_previous: true
+    });
+    expect(cleanup.safety).toEqual({
+      exact_ids_only: true,
+      created_by_harness_only: true,
+      missing_id_action: "skip"
+    });
+    expect(
+      cleanup.resources.every(
+        (resource) =>
+          resource.exact_id === null && resource.cleanup_status === "not_created"
+      )
+    ).toBe(true);
+  });
+
+  it("writes Stable acceptance docs and result artifacts to separate roots", async () => {
+    const root = await makeTemporaryProject();
+    const result = await writeOperationTestDocs(root, {
+      range: "T176-T189",
+      template: "stable-acceptance",
+      resultRoot: "operation-test-results/stable-run",
+      sourceCommit: "b".repeat(40),
+      generatedAt: new Date("2026-07-27T01:02:03.000Z")
+    });
+
+    expect(result.files.every((file) => file.written)).toBe(true);
+    await expect(
+      readFile(
+        path.join(root, "operation-test-results", "stable-run", "evidence-manifest.json"),
+        "utf8"
+      )
+    ).resolves.toContain('"kind": "stable_acceptance_evidence_manifest"');
+    await expect(
+      readFile(path.join(root, "operation-test-results", "stable-run", "cleanup-plan.json"), "utf8")
+    ).resolves.toContain('"exact_ids_only": true');
+  });
+
   it("rejects unsafe paths and invalid prefixes", async () => {
     expect(() =>
       buildOperationTestDocs("/repo", {
@@ -105,6 +216,34 @@ describe("operation test document generator", () => {
         outputDir: "../outside"
       })
     ).toThrow("Path must stay inside the project root");
+
+    expect(() =>
+      buildOperationTestDocs("/repo", {
+        range: "T176-T189",
+        template: "stable-acceptance",
+        resultRoot: "../outside",
+        sourceCommit: "a".repeat(40)
+      })
+    ).toThrow("Path must stay inside the project root");
+
+    expect(() =>
+      buildOperationTestDocs("/repo", {
+        range: "T176-T188",
+        template: "stable-acceptance",
+        resultRoot: "operation-test-results/stable-run",
+        sourceCommit: "a".repeat(40)
+      })
+    ).toThrow("requires the complete T176-T189 range");
+
+    expect(() =>
+      buildOperationTestDocs("/repo", {
+        range: "T176-T189",
+        template: "stable-acceptance",
+        resultRoot: "operation-test-results/stable-run",
+        previousResultRoot: "operation-test-results/stable-run",
+        sourceCommit: "a".repeat(40)
+      })
+    ).toThrow("must use a new result root");
   });
 });
 

@@ -200,6 +200,58 @@ describe("operation test result summary", () => {
     expect(output).not.toContain("pasted-log.txt");
   });
 
+  it("reads carried PASS from a Stable acceptance evidence manifest", async () => {
+    const root = await createTempProject();
+    const resultRoot = path.join(root, "operation-test-results", "stable-run");
+    await mkdir(resultRoot, { recursive: true });
+    await writeFile(
+      path.join(resultRoot, "evidence-manifest.json"),
+      JSON.stringify(
+        {
+          schema_version: "0.1",
+          kind: "stable_acceptance_evidence_manifest",
+          source_commit: "a".repeat(40),
+          scenarios: [
+            {
+              test_id: "OT-T176-01-01",
+              title: "RC baseline documentation",
+              classification: "required",
+              checkpoint: "automated",
+              status: "PASS",
+              carried_from_previous: true,
+              evidence: "token=SHOULD_NOT_LEAK"
+            },
+            {
+              test_id: "OT-T179-01-01",
+              title: "GitHub Stable promotion",
+              classification: "external_required",
+              checkpoint: "separate_terminal",
+              status: "NOT_RUN",
+              carried_from_previous: false
+            }
+          ]
+        },
+        null,
+        2
+      ),
+      "utf8"
+    );
+
+    const summary = await summarizeOperationTestResults({
+      projectRoot: root,
+      resultRoot
+    });
+    const output = formatOperationTestSummary(summary);
+
+    expect(summary.pass_ids).toEqual(["OT-T176-01-01"]);
+    expect(summary.summary.total).toBe(1);
+    expect(summary.sources).toEqual([
+      "operation-test-results/stable-run/evidence-manifest.json"
+    ]);
+    expect(output).toContain("required, automated, carried_from_previous");
+    expect(output).not.toContain("SHOULD_NOT_LEAK");
+  });
+
   it("requires either a log file or a result root", async () => {
     const root = await createTempProject();
 

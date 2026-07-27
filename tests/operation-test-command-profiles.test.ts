@@ -63,6 +63,21 @@ describe("operation test command profiles", () => {
     );
   });
 
+  it("generates the Stable acceptance bundle profile without credential values", () => {
+    const output = generateOperationTestCommandsCommand({
+      profile: ["stable-acceptance"]
+    });
+
+    expect(output).toContain("# Profile: stable-acceptance");
+    expect(output).toContain("--template");
+    expect(output).toContain("\"stable-acceptance\"");
+    expect(output).toContain("--result-root");
+    expect(output).toContain("KAIRON_STABLE_PREVIOUS_RESULT_ROOT");
+    expect(output).toContain("source_commit is bound to Git HEAD");
+    expect(output).not.toContain("Bearer ");
+    expect(output).not.toContain("github_pat_");
+  });
+
   it("rejects invalid output formats at the CLI command boundary", () => {
     expect(() =>
       generateOperationTestCommandsCommand({ format: "yaml" })
