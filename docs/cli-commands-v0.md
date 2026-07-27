@@ -1195,6 +1195,35 @@ baseline比を評価し、1.5倍を超えるregressionを`UNPASSED`とする。�
 credential、project source本文を保存しない。詳細は`docs/performance-budget-v0.md`を
 参照する。
 
+## kairon security
+
+Stable配布前のdependency、archive / path、credential、HTTP boundary、child process、
+generated artifact、canonical stateを一つのsecret-safe evidenceへ集約する。
+
+```powershell
+npm audit --omit=dev --json |
+  Out-File .kairon\security\npm-audit.json -Encoding utf8
+
+kairon security check `
+  --npm-audit .kairon\security\npm-audit.json `
+  --artifact .kairon\backups\catalog.json `
+  --output .kairon\security\security-baseline.json
+
+kairon security report .kairon\security\security-baseline.json `
+  --output .kairon\security\security-baseline.md
+```
+
+`check`はproduction dependencyのallowlist、lockfile integrity、license、npm advisory、
+portable path、archive上限、HTTP / child process境界、生成artifactのsecret scan、
+canonical state integrityを評価する。`--artifact`は複数指定でき、project外のpathは
+basenameだけを証跡へ保存する。
+
+offline checkが成功してもtimestamp付きnpm audit JSONがなければ`SETUP_REQUIRED`となる。
+high / critical finding、secret exposure、lock / state改変は`UNPASSED`であり、
+commandのexit codeは0にならない。`PASS` artifactだけを
+`SECURITY_INTEGRITY` RC gateへ登録する。詳細は
+`docs/security-baseline-v0.md`と`docs/threat-model-v0.md`を参照する。
+
 ## kairon readiness
 
 T145以降のoperation test、doctor、daemon certification、backup rehearsal、GitHub / Discordのlive確認、RAG verify、provider compliance、local beta lifecycleなどの証跡を集約し、Beta配布可否を機械判定する。
@@ -1226,7 +1255,7 @@ kairon readiness rc manifest `
   --evidence RELEASE_ARTIFACT=.\operation-test-results\t161-release-verify.json `
   --evidence PERFORMANCE_REGRESSION=.\.kairon\performance\runs\PERF-current.json `
   --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\full-test.json `
-  --evidence SECURITY_INTEGRITY=.\operation-test-results\secret-scan.json
+  --evidence SECURITY_INTEGRITY=.\.kairon\security\security-baseline.json
 
 kairon readiness rc check
 kairon readiness rc report --format markdown

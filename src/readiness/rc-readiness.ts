@@ -217,7 +217,8 @@ export const rcReadinessGateDefinitions: readonly RcReadinessGateDefinition[] = 
   rcGate("BUILD_UNIT_INTEGRATION", "Current commit build and full test", "required", 24, "Current commit build and full test result", [
     "build_test_result"
   ]),
-  rcGate("SECURITY_INTEGRITY", "Security and state integrity", "required", 24, "Secret scan, state integrity, and unresolved incident evidence", [
+  rcGate("SECURITY_INTEGRITY", "Stable security and state integrity", "external_required", 24, "T188 Stable security baseline with fresh npm audit evidence", [
+    "security_baseline_result",
     "secret_scan",
     "support_bundle",
     "rag_integrity",

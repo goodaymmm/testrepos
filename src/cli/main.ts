@@ -97,6 +97,10 @@ import {
   performanceRunCommand
 } from "./commands/performance.js";
 import {
+  securityCheckCommand,
+  securityReportCommand
+} from "./commands/security.js";
+import {
   buildRagVectorCommand,
   compactRagIndexCommand,
   evaluateRagCommand,
@@ -1150,6 +1154,44 @@ export function createProgram(): Command {
     .action(async (artifact: string, options) => {
       console.log(
         await performanceReportCommand(process.cwd(), artifact, options)
+      );
+    });
+
+  const security = program
+    .command("security")
+    .description(
+      "Evaluate the Stable dependency, archive, path, HTTP, process, and artifact security baseline."
+    );
+
+  security
+    .command("check")
+    .description("Generate secret-safe Stable security baseline evidence.")
+    .option(
+      "--npm-audit <path>",
+      "Timestamped JSON output from npm audit --omit=dev --json."
+    )
+    .option(
+      "--artifact <path>",
+      "Additional generated artifact or external DR catalog to scan.",
+      (value: string, previous: string[] = []) => [...previous, value],
+      []
+    )
+    .option("--output <path>", "Security baseline JSON output path.")
+    .action(async (options) => {
+      const result = await securityCheckCommand(process.cwd(), options);
+      console.log(result.text);
+      if (!result.passed) {
+        process.exitCode = 1;
+      }
+    });
+
+  security
+    .command("report <artifact>")
+    .description("Render a Stable security baseline artifact as Markdown.")
+    .option("--output <path>", "Markdown report output path.")
+    .action(async (artifact: string, options) => {
+      console.log(
+        await securityReportCommand(process.cwd(), artifact, options)
       );
     });
 

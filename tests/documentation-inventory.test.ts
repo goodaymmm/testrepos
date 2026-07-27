@@ -106,7 +106,9 @@ describe("T177 documentation inventory", () => {
       cli: await readUtf8("docs/cli-commands-v0.md"),
       remote: await readUtf8("docs/stable-remote-operations-v0.md"),
       disasterRecovery: await readUtf8("docs/disaster-recovery-v0.md"),
-      performance: await readUtf8("docs/performance-budget-v0.md")
+      performance: await readUtf8("docs/performance-budget-v0.md"),
+      security: await readUtf8("docs/security-baseline-v0.md"),
+      threatModel: await readUtf8("docs/threat-model-v0.md")
     };
     const inventory = [
       {
@@ -258,6 +260,21 @@ describe("T177 documentation inventory", () => {
         source: "src/performance/budget.ts",
         document: documents.cli,
         marker: "kairon performance compare"
+      },
+      {
+        source: "src/security/baseline.ts",
+        document: documents.security,
+        marker: "<!-- kairon:security-check-report -->"
+      },
+      {
+        source: "src/security/dependency-policy.ts",
+        document: documents.security,
+        marker: "## Dependency Policy"
+      },
+      {
+        source: "src/security/path-policy.ts",
+        document: documents.threatModel,
+        marker: "<!-- kairon:stable-security-baseline -->"
       }
     ];
 

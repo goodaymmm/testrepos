@@ -8,7 +8,7 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 
 <!-- kairon:t175-rc-baseline -->
 <!-- kairon:t177-local-rc-baseline -->
-このリポジトリの現行sourceは、T160-T187の実装を`0.3.0`へ固定した個人運用向けLocal RC baselineです。build、unit / integration test、state integrity、secret scanに加え、配布・更新・復旧・workflow・Agent・RAG・複数project・stable remote・performance regressionを対象とするRC readiness 15 gateを機械判定します。T175 operation testでは当時の14 gateがすべて`PASS`し、global blocker 0件を確認済みです。T187以降はcurrent source commitの性能証跡を追加して再検証します。`0.3.0` artifactはcurrent source commitから再生成・検証し、GitHub prereleaseへの公開は別の承認済みrelease作業として扱います。
+このリポジトリの現行sourceは、T160-T188の実装を`0.3.0`へ固定した個人運用向けLocal RC baselineです。build、unit / integration test、state integrity、Stable security baselineに加え、配布・更新・復旧・workflow・Agent・RAG・複数project・stable remote・performance regressionを対象とするRC readiness 15 gateを機械判定します。T175 operation testでは当時の14 gateがすべて`PASS`し、global blocker 0件を確認済みです。T187で性能証跡を追加し、T188で既存`SECURITY_INTEGRITY`をfreshなnpm auditを含むexternal-required gateへ強化しました。`0.3.0` artifactはcurrent source commitから再生成・検証し、GitHub prereleaseへの公開は別の承認済みrelease作業として扱います。
 
 Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Agent CLI、approval、Git / deploy guard、maintenanceをローカルで統合します。外部writeと高リスク操作はdefault disabledまたはapproval requiredであり、Boardはread-onlyを維持します。
 
@@ -625,7 +625,7 @@ README更新が必要な代表条件:
 
 release判断では [docs/release-checklist-v0.md](docs/release-checklist-v0.md) を使い、`npm run build`、`npm test`、対象operation test、secret / generated artifact確認、README更新要否、version同期を確認します。
 `kairon readiness manifest`でBeta互換証跡を、`kairon readiness rc manifest`でRC証跡のSHA-256・source commit・有効期限を固定します。RCは`kairon readiness rc check`で15 gateとglobal blockerを判定し、全gateが`PASS`かつblocker 0件の場合だけ`rc_ready=true`となります。外部未設定は`SETUP_REQUIRED`、期限切れ・別commit・改変済み証跡は`UNKNOWN`として扱います。
-release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在のLocal RC versionは `0.3.0`で、T160-T187をcurrent source commitへ固定します。versionを変更する場合は `package.json`、`package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。`kairon release validate` でversion形式・同期、release checklist marker、`Unreleased` marker、現在version entryを一括確認できます。
+release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在のLocal RC versionは `0.3.0`で、T160-T188をcurrent source commitへ固定します。versionを変更する場合は `package.json`、`package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。`kairon release validate` でversion形式・同期、release checklist marker、`Unreleased` marker、現在version entryを一括確認できます。
 
 local packageはpublic npm registryへpublishせず、`npm run release:pack`でchecksummed tarballを生成します。Windowsでのinstall、update/rollback、uninstall手順は [docs/installation.md](docs/installation.md) を参照してください。uninstallはprojectの`.kairon/`を削除しません。
 
@@ -703,7 +703,7 @@ T160-T176ではLocal Betaを配布可能なRelease Candidateへ拡張し、T175 
 4. `kairon start --daemon`またはWindows Task Schedulerを使い、`kairon status`とdaemon reportを監視する。
 5. GitHub、deploy、Discord HTTP、remote Boardはdry-run / loopbackから開始し、外部writeを段階的に有効化する。
 6. `kairon maintenance run`、backup、cleanup proposal、RAG verifyを定期実行する。
-7. 配布前はpackage verify、representative performance benchmark、RC readiness 15 gateを現在commitのevidenceで再生成する。
+7. 配布前はpackage verify、representative performance benchmark、fresh npm auditを含むSecurity Baseline、RC readiness 15 gateを現在commitのevidenceで再生成する。
 
 ## 関連ドキュメント
 
@@ -715,6 +715,8 @@ T160-T176ではLocal Betaを配布可能なRelease Candidateへ拡張し、T175 
 - [docs/release-checklist-v0.md](docs/release-checklist-v0.md)
 - [docs/release-provenance-v0.md](docs/release-provenance-v0.md)
 - [docs/performance-budget-v0.md](docs/performance-budget-v0.md)
+- [docs/threat-model-v0.md](docs/threat-model-v0.md)
+- [docs/security-baseline-v0.md](docs/security-baseline-v0.md)
 - [docs/windows-daemon-ops-v0.md](docs/windows-daemon-ops-v0.md)
 - [docs/disaster-recovery-v0.md](docs/disaster-recovery-v0.md)
 - [docs/observability-v0.md](docs/observability-v0.md)

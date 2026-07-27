@@ -42,6 +42,7 @@ describe("createProgram", () => {
       "release",
       "remote",
       "review",
+      "security",
       "start",
       "state",
       "status",

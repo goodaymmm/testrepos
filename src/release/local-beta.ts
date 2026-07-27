@@ -8,6 +8,11 @@ import {
 } from "../agents/command-runner.js";
 import { writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { toPosixPath } from "../core/fs/paths.js";
+import {
+  evaluateArchivePolicy,
+  stableArchivePolicyLimits,
+  validatePortableArchivePath
+} from "../security/path-policy.js";
 
 export type LocalBetaPackageManifest = {
   schema_version: "0.1";
@@ -32,7 +37,9 @@ export type LocalBetaVerificationCheck = {
     | "manifest_filename"
     | "package_size"
     | "package_sha256"
+    | "tar_limits_safe"
     | "tar_paths_safe"
+    | "tar_case_collisions_absent"
     | "tar_links_absent"
     | "required_files"
     | "forbidden_files_absent"
@@ -242,6 +249,11 @@ export async function verifyLocalBetaPackage(
       ? "Package SHA-256 matches the manifest."
       : "Package SHA-256 does not match the manifest."
   ));
+  checks.push(check(
+    "tar_limits_safe",
+    true,
+    `Archive limits passed: compressed=${inspection.sizeBytes} expanded=${inspection.expandedBytes} entries=${inspection.entries.length}.`
+  ));
 
   const unsafePaths = inspection.entries.filter((entry) => !isSafeTarPath(entry.path));
   checks.push(check(
@@ -250,6 +262,21 @@ export async function verifyLocalBetaPackage(
     unsafePaths.length === 0
       ? "All package paths are relative and traversal-free."
       : `Unsafe package paths: ${unsafePaths.map((entry) => entry.path).join(", ")}`
+  ));
+  const pathCounts = new Map<string, number>();
+  for (const entry of inspection.entries) {
+    const normalized = entry.path.toLowerCase();
+    pathCounts.set(normalized, (pathCounts.get(normalized) ?? 0) + 1);
+  }
+  const caseCollisions = [...pathCounts.entries()]
+    .filter(([, count]) => count > 1)
+    .map(([entryPath]) => entryPath);
+  checks.push(check(
+    "tar_case_collisions_absent",
+    caseCollisions.length === 0,
+    caseCollisions.length === 0
+      ? "Package contains no case-insensitive path collisions."
+      : `Case-insensitive package path collisions: ${caseCollisions.join(", ")}`
   ));
   const links = inspection.entries.filter((entry) => entry.type === "link");
   checks.push(check(
@@ -402,29 +429,62 @@ async function assertLocalBetaSource(projectRoot: string): Promise<void> {
 async function inspectPackage(packagePath: string): Promise<{
   sha256: string;
   sizeBytes: number;
+  expandedBytes: number;
   entries: TarEntry[];
 }> {
-  const [buffer, info] = await Promise.all([readFile(packagePath), stat(packagePath)]);
+  const info = await stat(packagePath);
+  if (info.size > stableArchivePolicyLimits.max_archive_bytes) {
+    throw new Error("Local release package exceeds the archive size limit.");
+  }
+  const buffer = await readFile(packagePath);
   let tar: Buffer;
   try {
-    tar = gunzipSync(buffer);
+    tar = gunzipSync(buffer, {
+      maxOutputLength: stableArchivePolicyLimits.max_expanded_bytes
+    });
   } catch {
-    throw new Error("Local release package is not a valid gzip archive.");
+    throw new Error(
+      "Local release package is not a valid or bounded gzip archive."
+    );
+  }
+  const entries = parseTar(tar);
+  const policy = evaluateArchivePolicy({
+    archive_bytes: info.size,
+    expanded_bytes: tar.length,
+    required_root: "package",
+    entries: entries
+      .filter((entry) => entry.type !== "other")
+      .map((entry) => ({
+        path: entry.path,
+        size_bytes: entry.size,
+        type: entry.type as "file" | "directory" | "link"
+      }))
+  });
+  if (!policy.ok) {
+    throw new Error(
+      `Local release package violates archive limits: ${policy.violations.join(", ")}.`
+    );
   }
   return {
     sha256: createHash("sha256").update(buffer).digest("hex"),
     sizeBytes: info.size,
-    entries: parseTar(tar)
+    expandedBytes: tar.length,
+    entries
   };
 }
 
 function parseTar(buffer: Buffer): TarEntry[] {
   const entries: TarEntry[] = [];
   let offset = 0;
+  let headerCount = 0;
   while (offset + 512 <= buffer.length) {
     const header = buffer.subarray(offset, offset + 512);
     if (header.every((byte) => byte === 0)) {
       break;
+    }
+    headerCount += 1;
+    if (headerCount > stableArchivePolicyLimits.max_entries) {
+      throw new Error("Local beta tarball exceeds the header count limit.");
     }
     const name = readTarString(header, 0, 100);
     const prefix = readTarString(header, 345, 155);
@@ -434,6 +494,11 @@ function parseTar(buffer: Buffer): TarEntry[] {
     if (!Number.isFinite(size) || size < 0) {
       throw new Error(`Invalid tar entry size for ${entryPath || "unknown"}.`);
     }
+    if (size > stableArchivePolicyLimits.max_entry_bytes) {
+      throw new Error(
+        `Tar entry exceeds the size limit: ${entryPath || "unknown"}.`
+      );
+    }
     const typeFlag = String.fromCharCode(header[156] ?? 0);
     const type = tarEntryType(typeFlag);
     const contentStart = offset + 512;
@@ -442,6 +507,9 @@ function parseTar(buffer: Buffer): TarEntry[] {
       throw new Error(`Truncated tar entry: ${entryPath}.`);
     }
     if (entryPath.length > 0 && type !== "other") {
+      if (entries.length >= stableArchivePolicyLimits.max_entries) {
+        throw new Error("Local beta tarball exceeds the entry count limit.");
+      }
       entries.push({
         path: entryPath.replace(/\/$/u, ""),
         size,
@@ -518,13 +586,9 @@ function isLocalBetaManifest(value: unknown): value is LocalBetaPackageManifest 
 }
 
 function isSafeTarPath(value: string): boolean {
-  if (value.length === 0 || value.includes("\\") || value.startsWith("/")) {
-    return false;
-  }
-  const segments = value.split("/");
-  return segments[0] === "package" && segments.every(
-    (segment) => segment.length > 0 && segment !== "." && segment !== ".."
-  );
+  return validatePortableArchivePath(value, {
+    requiredRoot: "package"
+  }).length === 0;
 }
 
 function hasExpectedBin(value: unknown): boolean {
