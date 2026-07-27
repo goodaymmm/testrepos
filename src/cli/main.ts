@@ -1945,12 +1945,27 @@ export function createProgram(): Command {
     .requiredOption("--range <range>", "Task range, for example T130-T143.")
     .option("--output-dir <dir>", "Output directory. Defaults to docs.")
     .option("--name-prefix <prefix>", "Output file prefix. Defaults to the normalized range.")
+    .option(
+      "--template <template>",
+      "Document template: generic or stable-acceptance. Defaults to generic."
+    )
+    .option(
+      "--result-root <dir>",
+      "Stable acceptance result root. Required for the stable-acceptance template."
+    )
+    .option(
+      "--previous-result-root <dir>",
+      "Previous result root whose PASS evidence should be carried without rerunning."
+    )
     .option("--overwrite", "Replace existing generated documents.")
     .option("--dry-run", "Show planned output paths without writing files.")
     .action(async (options: {
       range?: string;
       outputDir?: string;
       namePrefix?: string;
+      template?: string;
+      resultRoot?: string;
+      previousResultRoot?: string;
       overwrite?: boolean;
       dryRun?: boolean;
     }) => {

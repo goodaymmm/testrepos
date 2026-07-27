@@ -634,6 +634,9 @@ describe("createProgram", () => {
         "--range",
         "--output-dir",
         "--name-prefix",
+        "--template",
+        "--result-root",
+        "--previous-result-root",
         "--overwrite",
         "--dry-run"
       ])

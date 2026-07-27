@@ -22,7 +22,8 @@ param(
     "ApprovalNotificationAudit",
     "DiscordDecisionAuditLive",
     "RuntimeRecovery",
-    "BranchProtectionPublicSandbox"
+    "BranchProtectionPublicSandbox",
+    "StableAcceptanceManifest"
   )]
   [string[]]$Test = @("All"),
 
@@ -51,6 +52,8 @@ param(
   [string]$BranchProtectionExpectedStatusChecks = "",
 
   [switch]$BranchProtectionRequireToken,
+
+  [string]$StableAcceptanceManifestPath = "",
 
   [switch]$SkipRestore
 )
@@ -1716,6 +1719,143 @@ try {
         }
       }
 
+      return $true
+    }
+  }
+
+  if (Should-Run "StableAcceptanceManifest") {
+    Invoke-Step -Id "STABLE_ACCEPTANCE_MANIFEST" -Name "Stable acceptance evidence manifest" -Script {
+      if ([string]::IsNullOrWhiteSpace($StableAcceptanceManifestPath)) {
+        "setup_required.missing_manifest_path=true"
+      } else {
+        $manifestPath = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath(
+          $StableAcceptanceManifestPath
+        )
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+          "setup_required.manifest_not_found=true"
+        } else {
+          $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 |
+            ConvertFrom-Json
+          $cleanupPath = Join-Path $script:KaironRoot $manifest.cleanup_plan_path
+          $cleanup = if (Test-Path -LiteralPath $cleanupPath -PathType Leaf) {
+            Get-Content -LiteralPath $cleanupPath -Raw -Encoding UTF8 |
+              ConvertFrom-Json
+          } else {
+            $null
+          }
+          $scenarioIds = @($manifest.scenarios | ForEach-Object { $_.test_id })
+          $expectedScenarioIds = @(
+            "OT-T176-01-01",
+            "OT-T177-01-01",
+            "OT-T178-01-01",
+            "OT-T179-01-01",
+            "OT-T180-01-01",
+            "OT-T181-01-01",
+            "OT-T182-01-01",
+            "OT-T183-01-01",
+            "OT-T184-01-01",
+            "OT-T185-01-01",
+            "OT-T186-01-01",
+            "OT-T187-01-01",
+            "OT-T188-01-01",
+            "OT-T188-01-02",
+            "OT-T189-01-01",
+            "OT-T189-01-02",
+            "OT-T189-01-03",
+            "OT-T189-01-04"
+          )
+          $missingScenarioIds = @(
+            $expectedScenarioIds | Where-Object { $scenarioIds -notcontains $_ }
+          )
+          $unexpectedScenarioIds = @(
+            $scenarioIds | Where-Object { $expectedScenarioIds -notcontains $_ }
+          )
+          $invalidClassifications = @(
+            $manifest.scenarios |
+              Where-Object { $_.classification -notin @("required", "external_required") }
+          )
+          $unknownSelectedIds = @(
+            $manifest.selected_test_ids |
+              Where-Object { $scenarioIds -notcontains $_ }
+          )
+          $duplicateScenarioIds = @(
+            $scenarioIds |
+              Group-Object |
+              Where-Object { $_.Count -gt 1 } |
+              ForEach-Object { $_.Name }
+          )
+          $unsafeCleanup = if ($null -eq $cleanup) {
+            @("missing-cleanup-plan")
+          } else {
+            @(
+              $cleanup.resources |
+                Where-Object {
+                  $_.created_by_harness -ne $true -or
+                  $_.cleanup_status -notin @("not_created", "deleted", "verified_absent")
+                }
+            )
+          }
+          @(
+            "manifest.kind=$($manifest.kind)",
+            "manifest.source_commit=$($manifest.source_commit)",
+            "manifest.scenario_count=$($scenarioIds.Count)",
+            "manifest.missing_scenario_ids=$($missingScenarioIds -join ',')",
+            "manifest.unexpected_scenario_ids=$($unexpectedScenarioIds -join ',')",
+            "manifest.invalid_classification_count=$($invalidClassifications.Count)",
+            "manifest.unknown_selected_ids=$($unknownSelectedIds -join ',')",
+            "manifest.duplicate_scenario_ids=$($duplicateScenarioIds -join ',')",
+            "manifest.selected_count=$(@($manifest.selected_test_ids).Count)",
+            "manifest.cleanup_plan_present=$($null -ne $cleanup)",
+            "manifest.cleanup_exact_ids_only=$($cleanup.safety.exact_ids_only)",
+            "manifest.cleanup_created_by_harness_only=$($cleanup.safety.created_by_harness_only)",
+            "manifest.cleanup_unsafe_count=$(@($unsafeCleanup).Count)"
+          ) -join [Environment]::NewLine
+        }
+      }
+    } -Assert {
+      param($Evidence)
+      if ($Evidence -match "setup_required\.missing_manifest_path=true") {
+        return New-StepResult -Status "SETUP_REQUIRED" -Details "missing -StableAcceptanceManifestPath"
+      }
+      if ($Evidence -match "setup_required\.manifest_not_found=true") {
+        return New-StepResult -Status "SETUP_REQUIRED" -Details "stable acceptance manifest was not found"
+      }
+      if ($Evidence -notmatch "manifest\.kind=stable_acceptance_evidence_manifest") {
+        return "stable acceptance manifest kind is invalid"
+      }
+      if ($Evidence -notmatch "manifest\.source_commit=[a-f0-9]{40,64}") {
+        return "stable acceptance source commit is invalid"
+      }
+      if ($Evidence -notmatch "manifest\.scenario_count=1[89]") {
+        return "stable acceptance scenario matrix is incomplete"
+      }
+      if ($Evidence -notmatch "manifest\.missing_scenario_ids=\r?\n") {
+        return "stable acceptance manifest is missing required scenario ids"
+      }
+      if ($Evidence -notmatch "manifest\.unexpected_scenario_ids=\r?\n") {
+        return "stable acceptance manifest contains unexpected scenario ids"
+      }
+      if ($Evidence -notmatch "manifest\.invalid_classification_count=0") {
+        return "stable acceptance classification is invalid"
+      }
+      if ($Evidence -notmatch "manifest\.unknown_selected_ids=\r?\n") {
+        return "stable acceptance selected_test_ids contains an unknown id"
+      }
+      if ($Evidence -notmatch "manifest\.duplicate_scenario_ids=\r?\n") {
+        return "stable acceptance scenario ids are duplicated"
+      }
+      if ($Evidence -notmatch "manifest\.cleanup_plan_present=True") {
+        return "stable acceptance cleanup plan is missing"
+      }
+      if ($Evidence -notmatch "manifest\.cleanup_exact_ids_only=True") {
+        return "cleanup plan does not require exact ids"
+      }
+      if ($Evidence -notmatch "manifest\.cleanup_created_by_harness_only=True") {
+        return "cleanup plan is not limited to harness-created resources"
+      }
+      if ($Evidence -notmatch "manifest\.cleanup_unsafe_count=0") {
+        return "cleanup plan contains unsafe resources"
+      }
       return $true
     }
   }

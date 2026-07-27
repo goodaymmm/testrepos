@@ -2,6 +2,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+import { writeOperationTestDocs } from "../src/operation-test/test-doc-generator.js";
 import { createTempProject } from "./test-utils.js";
 
 const powershell = findPowerShell();
@@ -80,6 +81,81 @@ describe("kairon-operation-test.ps1", () => {
     expect(script).toContain("required_pull_request_reviews=present");
     expect(script).toContain("required_status_checks=present");
     expect(script).toContain("missing GH_TOKEN or GITHUB_TOKEN");
+  });
+
+  it("includes the Stable acceptance manifest validation profile", async () => {
+    const script = await readFile(
+      path.resolve("scripts", "kairon-operation-test.ps1"),
+      "utf8"
+    );
+
+    expect(script).toContain("StableAcceptanceManifest");
+    expect(script).toContain("StableAcceptanceManifestPath");
+    expect(script).toContain("STABLE_ACCEPTANCE_MANIFEST");
+    expect(script).toContain("stable_acceptance_evidence_manifest");
+    expect(script).toContain("cleanup_exact_ids_only=True");
+    expect(script).toContain("cleanup_created_by_harness_only=True");
+  });
+
+  runIfPowerShell("validates a generated Stable acceptance manifest", async () => {
+    const root = await createTempProject();
+    const targetRoot = path.join(root, "target");
+    const outputRoot = path.join(root, "harness-results");
+    await mkdir(targetRoot, { recursive: true });
+    await writeOperationTestDocs(root, {
+      range: "T176-T189",
+      template: "stable-acceptance",
+      resultRoot: "operation-test-results/stable-run",
+      sourceCommit: "a".repeat(40),
+      generatedAt: new Date("2026-07-27T00:00:00.000Z")
+    });
+
+    const manifestPath = path.join(
+      root,
+      "operation-test-results",
+      "stable-run",
+      "evidence-manifest.json"
+    );
+    const result = spawnSync(
+      powershell!,
+      [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        path.resolve("scripts", "kairon-operation-test.ps1"),
+        "-KaironRoot",
+        root,
+        "-TargetRoot",
+        targetRoot,
+        "-OutputRoot",
+        outputRoot,
+        "-Test",
+        "StableAcceptanceManifest",
+        "-StableAcceptanceManifestPath",
+        manifestPath,
+        "-SkipRestore"
+      ],
+      {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        timeout: 10_000
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("[STABLE_ACCEPTANCE_MANIFEST] PASS");
+    const summaryPath = result.stdout.match(/summary\.json=(.+)/)?.[1]?.trim();
+    expect(summaryPath).toBeTruthy();
+    const summary = JSON.parse(await readFile(summaryPath!, "utf8")) as {
+      results: Array<{ id: string; status: string; evidence: string }>;
+    };
+    expect(summary.results[0]).toMatchObject({
+      id: "STABLE_ACCEPTANCE_MANIFEST",
+      status: "PASS"
+    });
+    expect(summary.results[0]?.evidence).toContain("manifest.scenario_count=18");
+    expect(result.stderr).toBe("");
   });
 
   it("guards DiscordSetupError evidence from raw Discord errors and raw ids", async () => {

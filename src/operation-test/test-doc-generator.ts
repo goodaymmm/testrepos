@@ -1,17 +1,24 @@
 import { access, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { toPosixPath } from "../core/fs/paths.js";
+import { buildStableAcceptanceBundle } from "./stable-acceptance.js";
 
 export type OperationTestDocGeneratorOptions = {
   range: string;
   outputDir?: string;
   namePrefix?: string;
+  template?: "generic" | "stable-acceptance";
+  resultRoot?: string;
+  sourceCommit?: string;
+  generatedAt?: Date;
+  previousResultRoot?: string;
+  previousPassIds?: string[];
   overwrite?: boolean;
   dryRun?: boolean;
 };
 
 export type OperationTestDocFile = {
-  kind: "test_list" | "command_list";
+  kind: "test_list" | "command_list" | "evidence_manifest" | "cleanup_plan";
   path: string;
   content: string;
   written: boolean;
@@ -23,6 +30,12 @@ export type OperationTestDocGenerationResult = {
   range: string;
   output_dir: string;
   name_prefix: string;
+  template: "generic" | "stable-acceptance";
+  result_root?: string;
+  run_id?: string;
+  source_commit?: string;
+  selected_test_ids?: string[];
+  carried_pass_ids?: string[];
   dry_run: boolean;
   files: OperationTestDocFile[];
 };
@@ -138,6 +151,56 @@ export function buildOperationTestDocs(
   projectRoot: string,
   options: OperationTestDocGeneratorOptions
 ): OperationTestDocGenerationResult {
+  if (options.template === "stable-acceptance") {
+    const requestedTasks = resolveTasks(options.range).map((task) => task.id);
+    const expectedTasks = Array.from(
+      { length: 14 },
+      (_, index) => `T${176 + index}`
+    );
+    if (
+      requestedTasks.length !== expectedTasks.length ||
+      requestedTasks.some((task, index) => task !== expectedTasks[index])
+    ) {
+      throw new Error(
+        "Stable acceptance template requires the complete T176-T189 range."
+      );
+    }
+    if (options.resultRoot === undefined || options.resultRoot.trim().length === 0) {
+      throw new Error("Stable acceptance generation requires --result-root.");
+    }
+    if (options.sourceCommit === undefined || options.sourceCommit.trim().length === 0) {
+      throw new Error("Stable acceptance generation requires a source commit.");
+    }
+
+    const bundle = buildStableAcceptanceBundle(projectRoot, {
+      outputDir: options.outputDir,
+      resultRoot: options.resultRoot,
+      namePrefix: options.namePrefix,
+      sourceCommit: options.sourceCommit,
+      generatedAt: options.generatedAt,
+      previousResultRoot: options.previousResultRoot,
+      previousPassIds: options.previousPassIds
+    });
+    return {
+      schema_version: "0.1",
+      range: bundle.range,
+      output_dir: bundle.output_dir,
+      name_prefix: bundle.name_prefix,
+      template: "stable-acceptance",
+      result_root: bundle.result_root,
+      run_id: bundle.run_id,
+      source_commit: bundle.source_commit,
+      selected_test_ids: bundle.selected_test_ids,
+      carried_pass_ids: bundle.carried_pass_ids,
+      dry_run: options.dryRun === true,
+      files: bundle.files.map((file) => ({
+        ...file,
+        written: false,
+        overwritten: false
+      }))
+    };
+  }
+
   const tasks = resolveTasks(options.range);
   const rangeLabel = formatRangeLabel(tasks);
   const namePrefix = normalizeNamePrefix(options.namePrefix ?? defaultNamePrefix(tasks));
@@ -150,6 +213,7 @@ export function buildOperationTestDocs(
     range: rangeLabel,
     output_dir: toDisplayPath(projectRoot, outputDir),
     name_prefix: namePrefix,
+    template: "generic",
     dry_run: options.dryRun === true,
     files: [
       {
@@ -180,12 +244,10 @@ export async function writeOperationTestDocs(
   }
 
   const root = path.resolve(projectRoot);
-  const absoluteOutputDir = resolveOutputDir(root, options.outputDir ?? "docs");
-  await mkdir(absoluteOutputDir, { recursive: true });
-
   const files = await Promise.all(
     result.files.map(async (file) => {
       const absolutePath = resolveInsideRoot(root, file.path);
+      await mkdir(path.dirname(absolutePath), { recursive: true });
       const exists = await fileExists(absolutePath);
       if (exists && options.overwrite !== true) {
         throw new Error(
@@ -216,6 +278,18 @@ export function formatOperationTestDocGenerationResult(
     `range=${result.range}`,
     `output_dir=${result.output_dir}`,
     `name_prefix=${result.name_prefix}`,
+    `template=${result.template}`,
+    ...(result.result_root === undefined ? [] : [`result_root=${result.result_root}`]),
+    ...(result.run_id === undefined ? [] : [`run_id=${result.run_id}`]),
+    ...(result.source_commit === undefined
+      ? []
+      : [`source_commit=${result.source_commit}`]),
+    ...(result.selected_test_ids === undefined
+      ? []
+      : [`selected_test_ids=${formatList(result.selected_test_ids)}`]),
+    ...(result.carried_pass_ids === undefined
+      ? []
+      : [`carried_pass_ids=${formatList(result.carried_pass_ids)}`]),
     `dry_run=${result.dry_run}`,
     ...result.files.flatMap((file) => [
       `${file.kind}=${file.path}`,
@@ -560,4 +634,8 @@ function toDisplayPath(projectRoot: string, filePath: string): string {
 
 function escapeTableCell(value: string): string {
   return value.replaceAll("|", "\\|");
+}
+
+function formatList(values: string[]): string {
+  return values.length === 0 ? "(none)" : values.join(",");
 }

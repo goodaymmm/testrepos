@@ -39,6 +39,8 @@ export type OperationTestSummaryRequest = {
 
 type HarnessSummaryJson = {
   results?: unknown;
+  kind?: unknown;
+  scenarios?: unknown;
 };
 
 type CandidateFile = {
@@ -163,17 +165,20 @@ function parseHarnessSummaryJson(
     return [];
   }
 
-  if (!Array.isArray(parsed.results)) {
-    return [];
-  }
+  const resultValues = Array.isArray(parsed.results) ? parsed.results : [];
+  const scenarioValues =
+    parsed.kind === "stable_acceptance_evidence_manifest" &&
+    Array.isArray(parsed.scenarios)
+      ? parsed.scenarios
+      : [];
 
-  return parsed.results.flatMap((value) => {
+  return [...resultValues, ...scenarioValues].flatMap((value) => {
     if (typeof value !== "object" || value === null) {
       return [];
     }
 
     const record = value as Record<string, unknown>;
-    const id = asId(record.id);
+    const id = asId(record.id) ?? asId(record.test_id);
     const status = asStatus(record.status);
     if (id === undefined || status === undefined) {
       return [];
@@ -184,8 +189,12 @@ function parseHarnessSummaryJson(
         id,
         status,
         source: source.projectPath,
-        name: sanitizeText(asString(record.name)),
-        details: summarizeDetails(projectRoot, source, asString(record.details))
+        name: sanitizeText(asString(record.name) ?? asString(record.title)),
+        details: summarizeDetails(
+          projectRoot,
+          source,
+          asString(record.details) ?? formatStableScenarioDetails(record)
+        )
       }
     ];
   });
@@ -372,7 +381,25 @@ async function isReasonableTextFile(filePath: string): Promise<boolean> {
 
 function isResultRootSummarySource(filePath: string): boolean {
   const name = path.basename(filePath).toLowerCase();
-  return name === "summary.json" || name === "summary.md";
+  return (
+    name === "summary.json" ||
+    name === "summary.md" ||
+    name === "evidence-manifest.json"
+  );
+}
+
+function formatStableScenarioDetails(
+  record: Record<string, unknown>
+): string | undefined {
+  if (record.test_id === undefined) {
+    return undefined;
+  }
+  const values = [
+    asString(record.classification),
+    asString(record.checkpoint),
+    record.carried_from_previous === true ? "carried_from_previous" : undefined
+  ].filter((value): value is string => value !== undefined);
+  return values.length === 0 ? undefined : values.join(", ");
 }
 
 function toCandidateFile(projectRoot: string, filePath: string): CandidateFile {

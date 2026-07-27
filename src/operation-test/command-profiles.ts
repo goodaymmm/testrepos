@@ -177,6 +177,61 @@ const profiles: OperationTestCommandProfile[] = [
       "required_status_checks=present",
       "missing_expected_status_checks=none when KAIRON_GITHUB_EXPECTED_STATUS_CHECKS is set"
     ]
+  },
+  {
+    id: "stable-acceptance",
+    title: "T176-T189 Stable end-to-end acceptance harness",
+    task_ids: [
+      "T176",
+      "T177",
+      "T178",
+      "T179",
+      "T180",
+      "T181",
+      "T182",
+      "T183",
+      "T184",
+      "T185",
+      "T186",
+      "T187",
+      "T188",
+      "T189"
+    ],
+    description:
+      "Generate a source-bound Stable acceptance test list, PowerShell groups, evidence manifest, and exact-id cleanup plan.",
+    required_env: [],
+    setup: [
+      "Run from a clean Kairon source checkout.",
+      "Set KAIRON_STABLE_PREVIOUS_RESULT_ROOT only when carrying forward PASS evidence.",
+      "External checkpoints remain SETUP_REQUIRED until fresh live evidence is recorded."
+    ],
+    commands: [
+      {
+        kind: "powershell",
+        lines: [
+          "$STABLE_STAMP = Get-Date -Format yyyyMMddHHmmss",
+          "$STABLE_RESULT_ROOT = \"operation-test-results\\stable-acceptance-$STABLE_STAMP\"",
+          "$STABLE_ARGS = @(",
+          "  \"test\", \"docs\",",
+          "  \"--range\", \"T176-T189\",",
+          "  \"--template\", \"stable-acceptance\",",
+          "  \"--name-prefix\", \"t176-t189-stable-acceptance\",",
+          "  \"--result-root\", $STABLE_RESULT_ROOT",
+          ")",
+          "if (-not [string]::IsNullOrWhiteSpace($env:KAIRON_STABLE_PREVIOUS_RESULT_ROOT)) {",
+          "  $STABLE_ARGS += @(\"--previous-result-root\", $env:KAIRON_STABLE_PREVIOUS_RESULT_ROOT)",
+          "}",
+          "kairon @STABLE_ARGS"
+        ]
+      }
+    ],
+    expected_evidence: [
+      "template=stable-acceptance",
+      "source_commit is bound to Git HEAD",
+      "selected_test_ids excludes carried PASS evidence",
+      "evidence_manifest and cleanup_plan are generated before execution",
+      "credential values are absent"
+    ]
   }
 ];
 
