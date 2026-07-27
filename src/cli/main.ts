@@ -118,7 +118,10 @@ import {
   rcReadinessReportCommand,
   readinessCheckCommand,
   readinessManifestCommand,
-  readinessReportCommand
+  readinessReportCommand,
+  stableReadinessCheckCommand,
+  stableReadinessManifestCommand,
+  stableReadinessReportCommand
 } from "./commands/readiness.js";
 import {
   getRemoteStatusCommand,
@@ -2538,6 +2541,72 @@ export function createProgram(): Command {
     .description("Analyze this project and print a project config proposal.")
     .action(async () => {
       process.stdout.write(await analyzeDocking(process.cwd()));
+    });
+
+  const stableReadiness = readiness
+    .command("stable")
+    .description(
+      "Create evidence manifests and evaluate Stable Local Release readiness."
+    );
+
+  stableReadiness
+    .command("manifest")
+    .description("Create a checksummed Stable readiness evidence manifest.")
+    .requiredOption(
+      "--evidence <gate=path>",
+      "Evidence mapping in STABLE_GATE_ID=path form. Repeatable.",
+      collectOption,
+      []
+    )
+    .option("--output <path>", "Stable manifest output path.")
+    .action(async (options: { evidence?: string[]; output?: string }) => {
+      console.log(
+        await stableReadinessManifestCommand(process.cwd(), options)
+      );
+    });
+
+  stableReadiness
+    .command("check")
+    .description(
+      "Evaluate Stable gates and write the canonical JSON result without promotion."
+    )
+    .option("--manifest <path>", "Stable readiness evidence manifest path.")
+    .action(async (options: { manifest?: string }) => {
+      const result = await stableReadinessCheckCommand(
+        process.cwd(),
+        options
+      );
+      console.log(result.text);
+      if (!result.ready) {
+        process.exitCode = 1;
+      }
+    });
+
+  stableReadiness
+    .command("report")
+    .description(
+      "Evaluate Stable gates and write a JSON or Markdown operator report."
+    )
+    .option("--manifest <path>", "Stable readiness evidence manifest path.")
+    .option(
+      "--format <format>",
+      "Output format: json or markdown.",
+      "markdown"
+    )
+    .option("--output <path>", "Stable report output path.")
+    .action(async (options: {
+      manifest?: string;
+      format?: string;
+      output?: string;
+    }) => {
+      const result = await stableReadinessReportCommand(
+        process.cwd(),
+        options
+      );
+      console.log(result.text);
+      if (!result.ready) {
+        process.exitCode = 1;
+      }
     });
 
   program

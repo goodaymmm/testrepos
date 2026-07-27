@@ -158,6 +158,69 @@ describe("kairon-operation-test.ps1", () => {
     expect(result.stderr).toBe("");
   });
 
+  runIfPowerShell("parses every generated Stable PowerShell command group", async () => {
+    const root = await createTempProject();
+    const generated = await writeOperationTestDocs(root, {
+      range: "T176-T189",
+      template: "stable-acceptance",
+      resultRoot: "operation-test-results/stable-run",
+      sourceCommit: "a".repeat(40),
+      generatedAt: new Date("2026-07-27T00:00:00.000Z")
+    });
+    const commandPath = generated.files.find(
+      (file) => file.kind === "command_list"
+    )?.path;
+    expect(commandPath).toBeTruthy();
+    const markdown = await readFile(path.join(root, commandPath!), "utf8");
+    const blocks = [...markdown.matchAll(
+      /```powershell[ \t]*\r?\n([\s\S]*?)^```[ \t]*$/gmu
+    )].map((match) => match[1] ?? "");
+    expect(blocks.length).toBeGreaterThan(8);
+
+    const parserPath = path.join(root, "parse-powershell.ps1");
+    await writeFile(
+      parserPath,
+      [
+        "$tokens = $null",
+        "$errors = $null",
+        "[System.Management.Automation.Language.Parser]::ParseFile(",
+        "  $args[0],",
+        "  [ref]$tokens,",
+        "  [ref]$errors",
+        ") | Out-Null",
+        "if ($errors.Count -gt 0) {",
+        "  $errors | ForEach-Object { Write-Error $_.Message }",
+        "  exit 1",
+        "}"
+      ].join("\n"),
+      "utf8"
+    );
+    for (const [index, block] of blocks.entries()) {
+      const blockPath = path.join(root, `command-${index}.ps1`);
+      await writeFile(blockPath, block, "utf8");
+      const parsed = spawnSync(
+        powershell!,
+        [
+          "-NoProfile",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-File",
+          parserPath,
+          blockPath
+        ],
+        {
+          cwd: root,
+          encoding: "utf8",
+          timeout: 10_000
+        }
+      );
+      expect(
+        parsed.status,
+        `block=${index}\nstdout=${parsed.stdout}\nstderr=${parsed.stderr}`
+      ).toBe(0);
+    }
+  });
+
   it("guards DiscordSetupError evidence from raw Discord errors and raw ids", async () => {
     const script = await readFile(
       path.resolve("scripts", "kairon-operation-test.ps1"),

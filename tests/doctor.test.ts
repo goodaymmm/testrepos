@@ -1065,6 +1065,36 @@ describe("runDoctor", () => {
     );
   });
 
+  it("reports an existing invalid Stable readiness manifest as a warning", async () => {
+    const root = await createInitializedGitProject();
+    const readinessDir = path.join(root, ".kairon", "readiness");
+    await mkdir(readinessDir, { recursive: true });
+    await writeFile(
+      path.join(readinessDir, "stable-evidence-manifest.json"),
+      "{ invalid",
+      "utf8"
+    );
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+
+    expect(statusById(result, "readiness.stable")).toBe("warning");
+    expect(checkById(result, "readiness.stable")?.details).toEqual(
+      expect.arrayContaining([
+        "status=UNPASSED",
+        "stable_ready=false",
+        "manifest_status=invalid",
+        "cleanup_status=missing"
+      ])
+    );
+    expect(checkById(result, "readiness.stable")?.next_action).toContain(
+      "kairon readiness stable check"
+    );
+  });
+
   it("reports remote Board readiness without exposing access tokens", async () => {
     const root = await createInitializedGitProject();
     const notificationsPath = path.join(
