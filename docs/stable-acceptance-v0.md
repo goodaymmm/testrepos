@@ -88,3 +88,8 @@ test list aliasへ解決する。test listにないIDを新規PASSとして追�
 
 cleanupが未完了、requiredがFAIL / SETUP_REQUIRED、external_requiredがSETUP_REQUIREDの
 いずれかであれば、T190 Stable readinessへ完了証跡として渡さない。
+
+`FINAL_SUMMARY`は各scenarioの最終statusとevidence path、`SUMMARY`と更新後
+`CLEANUP_PLAN`のSHA-256、`completed_at`をevidence manifestへ固定する。18 scenarioが
+すべて`PASS`でcleanupも`completed`の場合だけmanifestを`completed`とし、それ以外は
+`incomplete`とする。T190はこのfinalized manifestだけを受理する。

@@ -107,6 +107,9 @@ kairon readiness report [--format json|markdown] [--output <path>]
 kairon readiness rc manifest --evidence <RC_GATE_ID=path>
 kairon readiness rc check [--manifest <path>]
 kairon readiness rc report [--format json|markdown] [--output <path>]
+kairon readiness stable manifest --evidence <STABLE_GATE_ID=path>
+kairon readiness stable check [--manifest <path>]
+kairon readiness stable report [--format json|markdown] [--output <path>]
 kairon workflow config show
 kairon workflow config propose --enable|--disable
 kairon workflow validate <definition-file>
@@ -1269,6 +1272,32 @@ RC manifestは`.kairon/readiness/rc-evidence-manifest.json`、canonical result�
 `external_required`、`optional`へ分類され、必須gate全件が`PASS`かつglobal blockerが
 0件の場合だけ`rc_ready=true`となる。外部環境未準備、stale / tampered / wrong commit
 evidence、未解決のhigh / critical incident、secret findingは自動overrideしない。
+
+Stable Local Release判定は`readiness stable`配下で実行する。
+
+```powershell
+kairon readiness stable manifest `
+  --evidence STABLE_BASELINE_DOCS=.\operation-test-results\t176.json `
+  --evidence RELEASE_ARTIFACT=.\release-artifacts\0.3.0\release-manifest.json `
+  --evidence RELEASE_PROVENANCE_SBOM=.\release-artifacts\0.3.0\provenance.json `
+  --evidence STABLE_ACCEPTANCE=.\operation-test-results\stable-acceptance\evidence-manifest.json `
+  --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\full-test.json `
+  --evidence STATE_SECRET_INTEGRITY=.\.kairon\security\security-baseline.json
+
+kairon readiness stable check
+kairon readiness stable report --format markdown
+```
+
+Stable manifestは`.kairon/readiness/stable-evidence-manifest.json`、canonical resultは
+`.kairon/readiness/stable-result.json`、operator viewは
+`.kairon/readiness/stable-report.md`へ保存する。16 gateすべてがcurrent commitへbindされた
+freshな`PASS`であり、high / critical incident、security finding、secret exposure、
+T189 cleanup失敗が0件の場合だけ`stable_ready=true`となる。
+
+`STABLE_ACCEPTANCE`はT189の18 scenario、test list / command list / summary / cleanup planの
+SHA-256、exact-ID cleanup完了を再検証する。`check`と`report`はStable promotionを実行しない。
+昇格は別途approvalとexact confirmを伴う
+`kairon release github promote apply`を明示実行する。
 
 ## kairon workflow
 

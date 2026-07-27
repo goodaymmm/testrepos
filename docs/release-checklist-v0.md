@@ -102,6 +102,38 @@ kairon readiness rc report --format markdown
 - 未解決の`high` / `critical` incident、secret finding、source SHA mismatchが
   1件でもあればRC判定をblockする。手動overrideは行わない。
 
+## Stable Local Release Readiness Gate
+
+<!-- kairon:t190-stable-readiness -->
+
+T176-T189のfresh evidenceを16 gateへ登録し、Stable Local Releaseとして公開可能かを
+機械判定する。
+
+```powershell
+kairon readiness stable manifest `
+  --evidence STABLE_BASELINE_DOCS=.\operation-test-results\t176.json `
+  --evidence RELEASE_ARTIFACT=.\release-artifacts\0.3.0\release-manifest.json `
+  --evidence RELEASE_PROVENANCE_SBOM=.\release-artifacts\0.3.0\provenance.json `
+  --evidence STABLE_ACCEPTANCE=.\operation-test-results\stable-acceptance\evidence-manifest.json `
+  --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\full-test.json `
+  --evidence STATE_SECRET_INTEGRITY=.\.kairon\security\security-baseline.json
+
+kairon readiness stable check
+kairon readiness stable report --format json
+kairon readiness stable report --format markdown
+```
+
+- canonical resultは`.kairon/readiness/stable-result.json`、operator viewは
+  `.kairon/readiness/stable-report.md`へ出力する。
+- `required`と`external_required`の16 gateすべてがcurrent / fresh / verified `PASS`で、
+  global blockerが0件の場合だけ`stable_ready=true`になる。
+- T189 manifestの18 scenario、document digest、exact-ID cleanup完了を再検証する。
+- `SETUP_REQUIRED`、stale、tampered、wrong commit、cleanup失敗、migration / rollback /
+  DR rehearsal失敗を手動overrideしない。
+- 未解決high / critical incident、security high / critical、secret exposureは1件でもblockする。
+- readiness判定はGitHub Releaseを変更しない。Stable昇格はapproval-bound promotion commandを
+  別途明示実行する。
+
 ## Secret / Generated Artifact確認
 
 <!-- kairon:release-evidence -->
@@ -301,6 +333,7 @@ kairon release notes --since <ref> --write
 - `npm run build` と `npm test` が通っている。
 - `kairon readiness check` がexit code 0を返している。
 - RCへ進める場合は`kairon readiness rc check`がexit code 0を返している。
+- Stableへ進める場合は`kairon readiness stable check`がexit code 0を返している。
 - 対象範囲のtargeted testまたはoperation test結果がPRまたはrelease notesにある。
 - README / docs更新要否を判断済み。
 - `package.json` と `src/index.ts` のversionが一致している。

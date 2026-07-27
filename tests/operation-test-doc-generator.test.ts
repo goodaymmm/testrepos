@@ -154,6 +154,10 @@ describe("operation test document generator", () => {
     expect(commands).toContain("<!-- command-group: WINDOWS_REBOOT_BEFORE -->");
     expect(commands).toContain("<!-- command-group: WINDOWS_REBOOT_AFTER -->");
     expect(commands).toContain("<!-- command-group: CLEANUP -->");
+    expect(commands).toContain("$manifest.status = if (");
+    expect(commands).toContain("alias=\"SUMMARY\"");
+    expect(commands).toContain("$cleanupBinding.sha256");
+    expect(commands).toContain("$manifestJson = $manifest | ConvertTo-Json");
     expect(commands).not.toContain("Bearer ");
     expect(commands).not.toContain("Remove-Item *");
     expect(manifest.kind).toBe("stable_acceptance_evidence_manifest");

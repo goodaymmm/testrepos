@@ -116,6 +116,9 @@ describe("PR and release documentation", () => {
     expect(checklist).toContain("npm test");
     expect(checklist).toContain("kairon release validate");
     expect(checklist).toContain("kairon readiness rc check");
+    expect(checklist).toContain("<!-- kairon:t190-stable-readiness -->");
+    expect(checklist).toContain("kairon readiness stable check");
+    expect(checklist).toContain("stable_ready=true");
     expect(checklist).toContain("14 gateがすべて`PASS`");
     expect(checklist).toContain("rc_ready=true");
     expect(checklist).toContain("external_required");
@@ -140,6 +143,25 @@ describe("PR and release documentation", () => {
     expect(commands).toContain("rc-result.json");
     expect(commands).toContain("rc-report.md");
     expect(commands).toContain("high / critical incident");
+  });
+
+  it("documents the Stable readiness decision and non-automatic promotion", async () => {
+    const commands = await readUtf8("docs/cli-commands-v0.md");
+    const checklist = await readUtf8("docs/release-checklist-v0.md");
+    const notes = await readUtf8("docs/release-notes-v0.md");
+
+    for (const command of ["manifest", "check", "report"]) {
+      expect(commands).toContain(`kairon readiness stable ${command}`);
+      expect(checklist).toContain(`kairon readiness stable ${command}`);
+    }
+    expect(commands).toContain("stable-evidence-manifest.json");
+    expect(commands).toContain("stable-result.json");
+    expect(commands).toContain("stable-report.md");
+    expect(checklist).toContain("16 gate");
+    expect(checklist).toContain("exact-ID cleanup");
+    expect(checklist).toContain("Stable昇格はapproval-bound");
+    expect(notes).toContain("T190");
+    expect(notes).toContain("global blocker");
   });
 
   it("documents Discord HTTP Interactions signature verification", async () => {

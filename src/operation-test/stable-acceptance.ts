@@ -26,7 +26,13 @@ export type StableAcceptanceScenario = {
 };
 
 export type StableAcceptanceManifestScenario = StableAcceptanceScenario & {
-  status: "NOT_RUN" | "PASS";
+  status:
+    | "NOT_RUN"
+    | "PASS"
+    | "UNPASSED"
+    | "SETUP_REQUIRED"
+    | "OPTIONAL"
+    | "UNKNOWN";
   carried_from_previous: boolean;
   evidence_paths: string[];
 };
@@ -35,7 +41,7 @@ export type StableAcceptanceEvidenceManifest = {
   schema_version: "0.1";
   kind: "stable_acceptance_evidence_manifest";
   run_id: string;
-  status: "planned";
+  status: "planned" | "completed" | "incomplete";
   source_commit: string;
   result_root: string;
   previous_result_root: string | null;
@@ -49,6 +55,7 @@ export type StableAcceptanceEvidenceManifest = {
   scenarios: StableAcceptanceManifestScenario[];
   cleanup_plan_path: string;
   generated_at: string;
+  completed_at?: string;
 };
 
 export type StableAcceptanceCleanupResourceType =
@@ -65,7 +72,7 @@ export type StableAcceptanceCleanupPlan = {
   kind: "stable_acceptance_cleanup_plan";
   run_id: string;
   source_commit: string;
-  status: "planned";
+  status: "planned" | "completed";
   confirmation: string;
   safety: {
     exact_ids_only: true;
@@ -75,9 +82,9 @@ export type StableAcceptanceCleanupPlan = {
   resources: Array<{
     alias: string;
     type: StableAcceptanceCleanupResourceType;
-    exact_id: null;
+    exact_id: string | null;
     created_by_harness: true;
-    cleanup_status: "not_created";
+    cleanup_status: "not_created" | "deleted" | "verified_absent";
   }>;
   generated_at: string;
 };
@@ -583,7 +590,50 @@ function renderStableCommandList(input: {
     "  cleanup_status = (Get-Content $STABLE_CLEANUP_PLAN -Raw -Encoding UTF8 | ConvertFrom-Json).status",
     "}",
     "$summaryJson = $summary | ConvertTo-Json -Depth 30",
-    "[IO.File]::WriteAllText((Join-Path $RESULT_ROOT \"summary.json\"), $summaryJson + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))",
+    "$summaryPath = Join-Path $RESULT_ROOT \"summary.json\"",
+    "[IO.File]::WriteAllText($summaryPath, $summaryJson + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))",
+    "$resultById = @{}",
+    "foreach ($record in @($carried + $records)) { $resultById[$record.id] = $record }",
+    "foreach ($scenario in $manifest.scenarios) {",
+    "  $record = $resultById[$scenario.test_id]",
+    "  if ($null -eq $record) {",
+    "    $scenario.status = \"UNKNOWN\"",
+    "    $scenario.evidence_paths = @()",
+    "    continue",
+    "  }",
+    "  $scenario.status = switch ([string]$record.status) {",
+    "    \"PASS\" { \"PASS\" }",
+    "    \"SETUP_REQUIRED\" { \"SETUP_REQUIRED\" }",
+    "    \"OPTIONAL\" { \"OPTIONAL\" }",
+    "    \"UNKNOWN\" { \"UNKNOWN\" }",
+    "    default { \"UNPASSED\" }",
+    "  }",
+    "  $scenario.evidence_paths = if ($scenario.carried_from_previous) {",
+    "    @($manifest.previous_result_root)",
+    "  } else {",
+    "    @(\"$(([string]$manifest.result_root).TrimEnd('/'))/results/$($scenario.test_id).json\")",
+    "  }",
+    "}",
+    "$cleanup = Get-Content $STABLE_CLEANUP_PLAN -Raw -Encoding UTF8 | ConvertFrom-Json",
+    "$manifest.status = if (",
+    "  @($manifest.scenarios | Where-Object { $_.status -ne \"PASS\" }).Count -eq 0 -and",
+    "  $cleanup.status -eq \"completed\"",
+    ") { \"completed\" } else { \"incomplete\" }",
+    "$manifest | Add-Member -NotePropertyName completed_at -NotePropertyValue ([DateTimeOffset]::UtcNow.ToString(\"o\")) -Force",
+    "$bindings = @($manifest.documents)",
+    "$cleanupBinding = @($bindings | Where-Object { $_.alias -eq \"CLEANUP_PLAN\" })[0]",
+    "$cleanupBinding.sha256 = (Get-FileHash -LiteralPath $STABLE_CLEANUP_PLAN -Algorithm SHA256).Hash.ToLowerInvariant()",
+    "$summaryBinding = @($bindings | Where-Object { $_.alias -eq \"SUMMARY\" })[0]",
+    "$summaryDigest = (Get-FileHash -LiteralPath $summaryPath -Algorithm SHA256).Hash.ToLowerInvariant()",
+    "if ($null -eq $summaryBinding) {",
+    "  $bindings += [pscustomobject]@{ alias=\"SUMMARY\"; path=\"$(([string]$manifest.result_root).TrimEnd('/'))/summary.json\"; sha256=$summaryDigest }",
+    "} else {",
+    "  $summaryBinding.path = \"$(([string]$manifest.result_root).TrimEnd('/'))/summary.json\"",
+    "  $summaryBinding.sha256 = $summaryDigest",
+    "}",
+    "$manifest.documents = @($bindings)",
+    "$manifestJson = $manifest | ConvertTo-Json -Depth 50",
+    "[IO.File]::WriteAllText($STABLE_MANIFEST, $manifestJson + [Environment]::NewLine, [Text.UTF8Encoding]::new($false))",
     "cd $KAIRON",
     `kairon test summarize --result-root $RESULT_ROOT --test-list ${psString(input.testListPath)} --suggest`,
     "```"

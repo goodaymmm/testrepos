@@ -326,6 +326,7 @@ function inferExecutedAt(
 ): Date {
   const candidates = [
     parsed?.executed_at,
+    parsed?.completed_at,
     parsed?.generated_at,
     parsed?.finished_at,
     parsed?.created_at,

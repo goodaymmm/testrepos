@@ -6,6 +6,10 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 ## Unreleased
 
 <!-- kairon:release-notes-unreleased -->
+- T190でT176-T189のfresh evidenceを16 gateへ集約するStable Local Release readinessを追加。
+- T189の18 scenario、document digest、exact-ID cleanup、current source commitを再検証し、
+  incident、security、secret exposure、cleanup failureをglobal blockerとして機械判定。
+- `kairon readiness stable manifest / check / report`を追加し、判定とStable昇格操作を分離。
 - T181でverified downloadのapply / rollbackをtransaction化し、runtime・state integrity・
   disk capacityのpreflightとuser-local staging health gateを追加。
 - active package switch後のversion・doctor・state post-check、digest付きrollback packageへの

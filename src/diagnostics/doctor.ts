@@ -42,6 +42,10 @@ import {
   evaluateRcReadiness,
   rcReadinessManifestExists
 } from "../readiness/rc-readiness.js";
+import {
+  evaluateStableReadiness,
+  stableReadinessManifestExists
+} from "../readiness/stable-readiness.js";
 import { resolveWorkflowRuntimeConfig } from "../workflow/config.js";
 import { inspectWorkflowCheckpointStore } from "../workflow/checkpoint-manager.js";
 import { inspectCapabilityPolicyConfig } from "../policy/trust-policy.js";
@@ -265,6 +269,9 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   }
   if (await rcReadinessManifestExists(options.projectRoot)) {
     checks.push(await checkRcReadiness(options.projectRoot));
+  }
+  if (await stableReadinessManifestExists(options.projectRoot)) {
+    checks.push(await checkStableReadiness(options.projectRoot));
   }
 
   const sanitizedChecks = checks.map(sanitizeDoctorCheck);
@@ -2209,6 +2216,47 @@ async function checkRcReadiness(projectRoot: string): Promise<DoctorCheck> {
       title,
       ["status=UNKNOWN", "rc_ready=false"],
       "Repair the RC readiness manifest and run kairon readiness rc check."
+    );
+  }
+}
+
+async function checkStableReadiness(
+  projectRoot: string
+): Promise<DoctorCheck> {
+  const id = "readiness.stable";
+  const title = "Stable Local Release readiness gate";
+  try {
+    const result = await evaluateStableReadiness(projectRoot);
+    const details = [
+      `status=${result.status}`,
+      `stable_ready=${result.stable_ready}`,
+      `manifest_status=${result.manifest.status}`,
+      `pass=${result.counts.PASS}`,
+      `unpassed=${result.counts.UNPASSED}`,
+      `setup_required=${result.counts.SETUP_REQUIRED}`,
+      `unknown=${result.counts.UNKNOWN}`,
+      `blockers=${result.blockers.length}`,
+      `cleanup_status=${result.cleanup.status}`,
+      `security_high=${result.security.high}`,
+      `security_critical=${result.security.critical}`,
+      `secret_exposures=${result.security.secret_exposures}`,
+      `unresolved_high_incidents=${result.incidents.unresolved_high}`,
+      `unresolved_critical_incidents=${result.incidents.unresolved_critical}`
+    ];
+    return result.stable_ready
+      ? pass(id, title, details)
+      : warning(
+          id,
+          title,
+          details,
+          "Refresh Stable evidence and run kairon readiness stable check."
+        );
+  } catch {
+    return warning(
+      id,
+      title,
+      ["status=UNKNOWN", "stable_ready=false"],
+      "Repair the Stable readiness manifest and run kairon readiness stable check."
     );
   }
 }
