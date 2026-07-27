@@ -13,6 +13,11 @@ T175時点では、file-based canonical state、公式CLI session、approval / r
 
 `.kairon/`をcanonical sourceとする境界、external writeのapproval、Boardのread-only、public npmへpublishしない方針は継続する。credentialはenvironmentまたは明示したOS credential storeから実行時に解決し、canonical stateやevidenceへ保存しない。`.kairon/experimental/workflows/`はcandidate compatibility pathであり、production workflow stateは`.kairon/workflows/`に保存する。
 
+T187ではdeterministic capacity benchmark、絶対値budget、同一環境baseline比を追加し、
+`PERFORMANCE_REGRESSION`を15番目のRC gateとして接続する。benchmark artifactは
+`.kairon/performance/`へ保存し、hostname、username、credential、project source本文を
+含めない。実時間の閾値は通常unit testから分離する。
+
 ## 前提
 
 - Kairon は対象プロジェクトの root にインストールされる。

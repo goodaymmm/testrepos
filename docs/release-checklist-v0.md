@@ -72,16 +72,17 @@ Beta配布の機械判定では、すべての必須gateが`PASS`の場合だけ
 
 ## Release Candidate Readiness Gate
 
-T160-T174の証跡をRC gateへ登録し、現在commitに対する配布・更新・復旧・
-workflow・Agent・RAG・複数project・stable remoteの成立を確認します。
+T160-T187の証跡をRC gateへ登録し、現在commitに対する配布・更新・復旧・
+workflow・Agent・RAG・複数project・stable remote・performance budgetの成立を確認します。
 
 <!-- kairon:t175-rc-validation-baseline -->
-T175 operation testでは、current source commitへbindした14 gateがすべて`PASS`し、global blocker 0件、secret finding 0件、`rc_ready=true`を確認しました。この結果は現行sourceのRelease Candidate baselineであり、次のversion artifactを公開する際はrelease commitに対してmanifestと全external evidenceを再生成します。
+T175 operation testでは、当時のcurrent source commitへbindした14 gateがすべて`PASS`し、global blocker 0件、secret finding 0件、`rc_ready=true`を確認しました。T187以降は`PERFORMANCE_REGRESSION`を加えた15 gateで再判定します。次のversion artifactを公開する際はrelease commitに対してmanifestと全external evidenceを再生成します。
 
 ```powershell
 kairon readiness rc manifest `
   --evidence BASELINE_DOCS=.\operation-test-results\t160.json `
   --evidence RELEASE_ARTIFACT=.\operation-test-results\t161-release-verify.json `
+  --evidence PERFORMANCE_REGRESSION=.\.kairon\performance\runs\PERF-current.json `
   --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\full-test.json `
   --evidence SECURITY_INTEGRITY=.\operation-test-results\secret-scan.json
 

@@ -8,7 +8,7 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 
 <!-- kairon:t175-rc-baseline -->
 <!-- kairon:t177-local-rc-baseline -->
-このリポジトリの現行sourceは、T160-T176の実装とoperation testを`0.3.0`へ固定した個人運用向けLocal RC baselineです。build、unit / integration test、state integrity、secret scanに加え、配布・更新・復旧・workflow・Agent・RAG・複数project・stable remoteを対象とするRC readiness 14 gateがすべて`PASS`し、global blocker 0件を確認済みです。`0.3.0` artifactはcurrent source commitから再生成・検証し、GitHub prereleaseへの公開は別の承認済みrelease作業として扱います。
+このリポジトリの現行sourceは、T160-T187の実装を`0.3.0`へ固定した個人運用向けLocal RC baselineです。build、unit / integration test、state integrity、secret scanに加え、配布・更新・復旧・workflow・Agent・RAG・複数project・stable remote・performance regressionを対象とするRC readiness 15 gateを機械判定します。T175 operation testでは当時の14 gateがすべて`PASS`し、global blocker 0件を確認済みです。T187以降はcurrent source commitの性能証跡を追加して再検証します。`0.3.0` artifactはcurrent source commitから再生成・検証し、GitHub prereleaseへの公開は別の承認済みrelease作業として扱います。
 
 Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Agent CLI、approval、Git / deploy guard、maintenanceをローカルで統合します。外部writeと高リスク操作はdefault disabledまたはapproval requiredであり、Boardはread-onlyを維持します。
 
@@ -38,10 +38,11 @@ Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Age
 - local lexical / vector / hybrid RAG、incremental embedding cache、RAG integrity / rebuild、quality gate、context連携
 - user-local multi-project registry、read-only supervisor、resource conflict診断
 - provider quota / suspend policy、operation test profile / summary支援
+- deterministic capacity benchmark、絶対値budget、同一環境baseline regression判定
 - checksummed private local package、install / update / rollback / uninstall
 - reproducible `0.3.0` Local RC artifact、approval-gated GitHub Release、verified manual update channel
 - allowlist収集、secret scan、hash manifest付きのsanitized support bundle
-- evidence manifest、Beta互換gate、Release Candidate readiness 14 gate
+- evidence manifest、Beta互換gate、Release Candidate readiness 15 gate
 
 `0.3.0` Local RC後の次のrelease作業:
 
@@ -623,8 +624,8 @@ README更新が必要な代表条件:
 詳細は [docs/pr-release-checklist-v0.md](docs/pr-release-checklist-v0.md) を参照してください。
 
 release判断では [docs/release-checklist-v0.md](docs/release-checklist-v0.md) を使い、`npm run build`、`npm test`、対象operation test、secret / generated artifact確認、README更新要否、version同期を確認します。
-`kairon readiness manifest`でBeta互換証跡を、`kairon readiness rc manifest`でRC証跡のSHA-256・source commit・有効期限を固定します。RCは`kairon readiness rc check`で14 gateとglobal blockerを判定し、全gateが`PASS`かつblocker 0件の場合だけ`rc_ready=true`となります。外部未設定は`SETUP_REQUIRED`、期限切れ・別commit・改変済み証跡は`UNKNOWN`として扱います。
-release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在のLocal RC versionは `0.3.0`で、T160-T176をcurrent source commitへ固定します。versionを変更する場合は `package.json`、`package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。`kairon release validate` でversion形式・同期、release checklist marker、`Unreleased` marker、現在version entryを一括確認できます。
+`kairon readiness manifest`でBeta互換証跡を、`kairon readiness rc manifest`でRC証跡のSHA-256・source commit・有効期限を固定します。RCは`kairon readiness rc check`で15 gateとglobal blockerを判定し、全gateが`PASS`かつblocker 0件の場合だけ`rc_ready=true`となります。外部未設定は`SETUP_REQUIRED`、期限切れ・別commit・改変済み証跡は`UNKNOWN`として扱います。
+release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在のLocal RC versionは `0.3.0`で、T160-T187をcurrent source commitへ固定します。versionを変更する場合は `package.json`、`package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。`kairon release validate` でversion形式・同期、release checklist marker、`Unreleased` marker、現在version entryを一括確認できます。
 
 local packageはpublic npm registryへpublishせず、`npm run release:pack`でchecksummed tarballを生成します。Windowsでのinstall、update/rollback、uninstall手順は [docs/installation.md](docs/installation.md) を参照してください。uninstallはprojectの`.kairon/`を削除しません。
 
@@ -702,7 +703,7 @@ T160-T176ではLocal Betaを配布可能なRelease Candidateへ拡張し、T175 
 4. `kairon start --daemon`またはWindows Task Schedulerを使い、`kairon status`とdaemon reportを監視する。
 5. GitHub、deploy、Discord HTTP、remote Boardはdry-run / loopbackから開始し、外部writeを段階的に有効化する。
 6. `kairon maintenance run`、backup、cleanup proposal、RAG verifyを定期実行する。
-7. 配布前はpackage verifyとRC readiness 14 gateを現在commitのevidenceで再生成する。
+7. 配布前はpackage verify、representative performance benchmark、RC readiness 15 gateを現在commitのevidenceで再生成する。
 
 ## 関連ドキュメント
 
@@ -713,6 +714,7 @@ T160-T176ではLocal Betaを配布可能なRelease Candidateへ拡張し、T175 
 - [docs/installation.md](docs/installation.md)
 - [docs/release-checklist-v0.md](docs/release-checklist-v0.md)
 - [docs/release-provenance-v0.md](docs/release-provenance-v0.md)
+- [docs/performance-budget-v0.md](docs/performance-budget-v0.md)
 - [docs/windows-daemon-ops-v0.md](docs/windows-daemon-ops-v0.md)
 - [docs/disaster-recovery-v0.md](docs/disaster-recovery-v0.md)
 - [docs/observability-v0.md](docs/observability-v0.md)

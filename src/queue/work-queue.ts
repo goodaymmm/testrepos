@@ -173,10 +173,7 @@ export class WorkQueue {
       const claimTtlMs = options.claimTtlMs ?? 300_000;
       recoverExpiredClaims(state, now);
 
-      const item = state.items
-        .filter((candidate) => candidate.status === "ready")
-        .filter((candidate) => !(options.blocked?.(candidate) ?? false))
-        .sort(compareReadyItems)[0];
+      const item = selectReadyQueueItem(state.items, options.blocked);
 
       if (item === undefined) {
         return null;
@@ -272,9 +269,7 @@ export class WorkQueue {
 
   async list(status?: QueueStatus): Promise<QueueItem[]> {
     const state = await this.readState();
-    return state.items
-      .filter((item) => status === undefined || item.status === status)
-      .map((item) => ({ ...item }));
+    return listQueueItems(state.items, status);
   }
 
   async expireStaleTestItems(now = new Date()): Promise<QueueItem[]> {
@@ -409,6 +404,25 @@ export class WorkQueue {
   private queuePath(): string {
     return path.join(getKaironPaths(this.projectRoot).stateDir, "queue.json");
   }
+}
+
+export function listQueueItems(
+  items: readonly QueueItem[],
+  status?: QueueStatus
+): QueueItem[] {
+  return items
+    .filter((item) => status === undefined || item.status === status)
+    .map((item) => ({ ...item }));
+}
+
+export function selectReadyQueueItem(
+  items: readonly QueueItem[],
+  blocked?: (item: QueueItem) => boolean
+): QueueItem | undefined {
+  return items
+    .filter((candidate) => candidate.status === "ready")
+    .filter((candidate) => !(blocked?.(candidate) ?? false))
+    .sort(compareReadyItems)[0];
 }
 
 function compareReadyItems(left: QueueItem, right: QueueItem): number {

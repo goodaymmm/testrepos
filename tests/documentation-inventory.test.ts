@@ -11,7 +11,7 @@ describe("T177 documentation inventory", () => {
     expect(readme).toContain("<!-- kairon:t175-rc-baseline -->");
     expect(readme).toContain("<!-- kairon:t177-local-rc-baseline -->");
     expect(readme).toContain("Local RC baseline");
-    expect(readme).toContain("RC readiness 14 gate");
+    expect(readme).toContain("RC readiness 15 gate");
     expect(readme).toContain("global blocker 0件");
     expect(readme).toContain("現在のLocal RC versionは `0.3.0`");
     expect(readme).toContain("24時間daemon");
@@ -105,7 +105,8 @@ describe("T177 documentation inventory", () => {
       incident: await readUtf8("docs/incident-lifecycle-v0.md"),
       cli: await readUtf8("docs/cli-commands-v0.md"),
       remote: await readUtf8("docs/stable-remote-operations-v0.md"),
-      disasterRecovery: await readUtf8("docs/disaster-recovery-v0.md")
+      disasterRecovery: await readUtf8("docs/disaster-recovery-v0.md"),
+      performance: await readUtf8("docs/performance-budget-v0.md")
     };
     const inventory = [
       {
@@ -247,6 +248,16 @@ describe("T177 documentation inventory", () => {
         source: "src/remote/status.ts",
         document: documents.remote,
         marker: "kairon remote doctor"
+      },
+      {
+        source: "src/performance/benchmark.ts",
+        document: documents.performance,
+        marker: "<!-- kairon:performance-regression-gate -->"
+      },
+      {
+        source: "src/performance/budget.ts",
+        document: documents.cli,
+        marker: "kairon performance compare"
       }
     ];
 

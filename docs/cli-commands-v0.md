@@ -1174,6 +1174,27 @@ kairon update rollback --to 0.1.0 --confirm 0.1.0
 
 `update apply`と`update rollback`はcache済みartifactを再検証してから`scripts/update-local-beta.ps1`を起動する。exact `--confirm`が必要で、PowerShell lifecycleがtarget versionを確認した場合だけ`.kairon/update/registry.json`のinstalled、previous、last successful versionを更新する。失敗時はregistryを成功扱いにせず、既存scriptがpackage / state rollbackとdiagnostic bundleを処理する。rollback targetは事前に`update download`でcache済みでなければならない。
 
+## kairon performance
+
+queue、state、workflow、RAG、Board、multi-projectのdeterministic capacity suiteを
+通常unit testから分離して実行する。
+
+```powershell
+kairon performance run --profile representative
+kairon performance run --profile full
+kairon performance run --scenario queue.list.10k --iterations 7
+kairon performance compare .kairon\performance\runs\<current>.json `
+  --baseline .kairon\performance\runs\<baseline>.json
+kairon performance report .kairon\performance\comparisons\<comparison>.json
+```
+
+`run`は固定seed、warmup、複数sampleからmedian / p95 / heap deltaを計算し、絶対値
+budgetを評価する。`compare`はmachine fingerprintとNode majorが一致する場合だけ
+baseline比を評価し、1.5倍を超えるregressionを`UNPASSED`とする。環境が異なる比較は
+`UNKNOWN`であり、自動的に`PASS`へしない。artifactにはhostname、username、
+credential、project source本文を保存しない。詳細は`docs/performance-budget-v0.md`を
+参照する。
+
 ## kairon readiness
 
 T145以降のoperation test、doctor、daemon certification、backup rehearsal、GitHub / Discordのlive確認、RAG verify、provider compliance、local beta lifecycleなどの証跡を集約し、Beta配布可否を機械判定する。
@@ -1203,6 +1224,7 @@ Release Candidate判定は`readiness rc`配下で実行する。
 kairon readiness rc manifest `
   --evidence BASELINE_DOCS=.\operation-test-results\t160.json `
   --evidence RELEASE_ARTIFACT=.\operation-test-results\t161-release-verify.json `
+  --evidence PERFORMANCE_REGRESSION=.\.kairon\performance\runs\PERF-current.json `
   --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\full-test.json `
   --evidence SECURITY_INTEGRITY=.\operation-test-results\secret-scan.json
 
@@ -1212,7 +1234,7 @@ kairon readiness rc report --format markdown
 
 RC manifestは`.kairon/readiness/rc-evidence-manifest.json`、canonical resultは
 `.kairon/readiness/rc-result.json`、Markdown operator viewは
-`.kairon/readiness/rc-report.md`へ保存する。14 gateは`required`、
+`.kairon/readiness/rc-report.md`へ保存する。15 gateは`required`、
 `external_required`、`optional`へ分類され、必須gate全件が`PASS`かつglobal blockerが
 0件の場合だけ`rc_ready=true`となる。外部環境未準備、stale / tampered / wrong commit
 evidence、未解決のhigh / critical incident、secret findingは自動overrideしない。

@@ -29,7 +29,10 @@ describe("Release Candidate readiness gate", () => {
 
     expect(result.rc_ready).toBe(true);
     expect(result.status).toBe("PASS");
-    expect(result.gates).toHaveLength(14);
+    expect(result.gates).toHaveLength(15);
+    expect(result.gates.find(
+      (gate) => gate.id === "PERFORMANCE_REGRESSION"
+    )?.status).toBe("PASS");
     expect(result.gates.every((gate) => gate.status === "PASS")).toBe(true);
     expect(result.blockers).toEqual([]);
     expect(result.secret_scan).toMatchObject({
