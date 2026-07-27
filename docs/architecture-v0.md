@@ -18,6 +18,11 @@ T187ではdeterministic capacity benchmark、絶対値budget、同一環境basel
 `.kairon/performance/`へ保存し、hostname、username、credential、project source本文を
 含めない。実時間の閾値は通常unit testから分離する。
 
+T188ではdependency / lockfile / license、archive / portable path、credential redaction、
+HTTP、child process、generated artifact、canonical stateを`security_baseline_result`へ
+集約する。既存`SECURITY_INTEGRITY` gateはexternal-requiredとなり、offline checkが
+PASSでもfreshなnpm audit evidenceがなければ`SETUP_REQUIRED`とする。
+
 ## 前提
 
 - Kairon は対象プロジェクトの root にインストールされる。

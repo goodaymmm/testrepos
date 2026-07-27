@@ -8,6 +8,7 @@ export type CliInvocation = {
   stdin?: string;
   env?: NodeJS.ProcessEnv;
   timeoutMs?: number;
+  maxOutputBytes?: number;
 };
 
 export type CommandRunResult = {
@@ -22,6 +23,8 @@ export type CommandRunResult = {
   startedAt: string;
   finishedAt: string;
   timedOut: boolean;
+  stdoutTruncated?: boolean;
+  stderrTruncated?: boolean;
 };
 
 export type CommandRunner = (
@@ -34,6 +37,11 @@ export type ProcessInvocation = {
   env: NodeJS.ProcessEnv;
   shell: boolean;
 };
+
+export const commandRunnerSecurityPolicy = {
+  default_max_output_bytes: 4 * 1024 * 1024,
+  windows_shell_shims: ["codex", ".cmd", ".bat"]
+} as const;
 
 export function buildProcessInvocation(
   invocation: CliInvocation,
@@ -53,6 +61,12 @@ export const spawnCommandRunner: CommandRunner = async (invocation) =>
   new Promise<CommandRunResult>((resolve) => {
     const startedAt = new Date().toISOString();
     const processInvocation = buildProcessInvocation(invocation);
+    const maxOutputBytes =
+      invocation.maxOutputBytes ??
+      commandRunnerSecurityPolicy.default_max_output_bytes;
+    if (!Number.isSafeInteger(maxOutputBytes) || maxOutputBytes <= 0) {
+      throw new Error("Command output limit must be a positive safe integer.");
+    }
     const child = spawn(processInvocation.command, processInvocation.args, {
       cwd: invocation.cwd,
       env: processInvocation.env,
@@ -60,8 +74,8 @@ export const spawnCommandRunner: CommandRunner = async (invocation) =>
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true
     });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
+    const stdout = new BoundedOutputCapture(maxOutputBytes);
+    const stderr = new BoundedOutputCapture(maxOutputBytes);
     let timedOut = false;
     let settled = false;
 
@@ -91,11 +105,13 @@ export const spawnCommandRunner: CommandRunner = async (invocation) =>
         pid: child.pid ?? null,
         exitCode: 1,
         signal: null,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: `${Buffer.concat(stderr).toString("utf8")}${String(error)}\n`,
+        stdout: stdout.text(),
+        stderr: `${stderr.text()}${String(error)}\n`,
         startedAt,
         finishedAt: new Date().toISOString(),
-        timedOut
+        timedOut,
+        ...(stdout.truncated ? { stdoutTruncated: true } : {}),
+        ...(stderr.truncated ? { stderrTruncated: true } : {})
       });
     });
 
@@ -114,11 +130,13 @@ export const spawnCommandRunner: CommandRunner = async (invocation) =>
         pid: child.pid ?? null,
         exitCode,
         signal,
-        stdout: Buffer.concat(stdout).toString("utf8"),
-        stderr: Buffer.concat(stderr).toString("utf8"),
+        stdout: stdout.text(),
+        stderr: stderr.text(),
         startedAt,
         finishedAt: new Date().toISOString(),
-        timedOut
+        timedOut,
+        ...(stdout.truncated ? { stdoutTruncated: true } : {}),
+        ...(stderr.truncated ? { stderrTruncated: true } : {})
       });
     });
 
@@ -127,6 +145,36 @@ export const spawnCommandRunner: CommandRunner = async (invocation) =>
     }
     child.stdin.end();
   });
+
+class BoundedOutputCapture {
+  readonly #chunks: Buffer[] = [];
+  #bytes = 0;
+  truncated = false;
+
+  constructor(private readonly maxBytes: number) {}
+
+  push(chunk: Buffer): void {
+    const value = Buffer.from(chunk);
+    this.#chunks.push(value);
+    this.#bytes += value.length;
+    while (this.#bytes > this.maxBytes && this.#chunks.length > 0) {
+      const overflow = this.#bytes - this.maxBytes;
+      const first = this.#chunks[0]!;
+      if (first.length <= overflow) {
+        this.#chunks.shift();
+        this.#bytes -= first.length;
+      } else {
+        this.#chunks[0] = first.subarray(overflow);
+        this.#bytes -= overflow;
+      }
+      this.truncated = true;
+    }
+  }
+
+  text(): string {
+    return Buffer.concat(this.#chunks, this.#bytes).toString("utf8");
+  }
+}
 
 function shouldUseWindowsShellShim(
   command: string,

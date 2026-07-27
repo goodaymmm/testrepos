@@ -94,6 +94,12 @@ export type BoardServerHandle = BoardServeResult & {
   waitUntilClosed: () => Promise<void>;
 };
 
+export const boardHttpSecurityLimits = {
+  max_header_bytes: 16 * 1024,
+  max_header_count: 64,
+  allowed_methods: ["GET", "HEAD"]
+} as const;
+
 export async function startBoardServer(
   projectRoot: string,
   options: BoardServerOptions = {}
@@ -107,7 +113,9 @@ export async function startBoardServer(
   const access =
     profile === "loopback" ? createBoardAccess(options, now()) : undefined;
   const rateLimiter = new BoardRateLimiter(preparedProfile.rateLimitPerMinute);
-  const server = createServer(async (request, response) => {
+  const server = createServer(
+    { maxHeaderSize: boardHttpSecurityLimits.max_header_bytes },
+    async (request, response) => {
     const method = request.method ?? "UNKNOWN";
     const requestUrl = new URL(request.url ?? "/", `http://${host}`);
     const route = classifyBoardAccessRoute(requestUrl.pathname);
@@ -388,7 +396,9 @@ export async function startBoardServer(
       });
       send(response, method, 500, "text/plain; charset=utf-8", "Board render failed.");
     }
-  });
+    }
+  );
+  server.maxHeadersCount = boardHttpSecurityLimits.max_header_count;
 
   await listen(server, requestedPort, host);
   server.ref();

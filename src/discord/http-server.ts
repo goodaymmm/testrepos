@@ -143,6 +143,12 @@ type PreparedDiscordHttpServer =
 const defaultPublicKeyEnv = "KAIRON_DISCORD_PUBLIC_KEY";
 const defaultMaxBodyBytes = 1024 * 1024;
 const defaultRequestTimeoutMs = 10_000;
+export const discordHttpSecurityLimits = {
+  max_body_bytes: defaultMaxBodyBytes,
+  max_header_bytes: 16 * 1024,
+  max_header_count: 64,
+  request_timeout_ms: defaultRequestTimeoutMs
+} as const;
 
 export async function startDiscordHttpInteractionsServer(
   projectRoot: string,
@@ -193,8 +199,11 @@ export async function startDiscordHttpInteractionsServer(
   }
 
   const maxBodyBytes = options.maxBodyBytes ?? defaultMaxBodyBytes;
+  assertPositiveInteger(maxBodyBytes, "Discord HTTP request body limit");
   const replayGuard = new DiscordHttpReplayGuard(replayTtlSeconds);
-  const server = createServer(async (request, response) => {
+  const server = createServer(
+    { maxHeaderSize: discordHttpSecurityLimits.max_header_bytes },
+    async (request, response) => {
     try {
       const requestUrl = new URL(request.url ?? "/", `http://${host}`);
       if (requestUrl.pathname === "/health") {
@@ -296,7 +305,10 @@ export async function startDiscordHttpInteractionsServer(
               : "internal_error"
       });
     }
-  });
+    }
+  );
+  server.maxHeadersCount = discordHttpSecurityLimits.max_header_count;
+  server.requestTimeout = requestTimeoutMs;
 
   await listen(server, requestedPort, host);
   server.ref();

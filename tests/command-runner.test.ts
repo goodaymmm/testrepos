@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildProcessInvocation,
+  spawnCommandRunner,
   type CommandRunResult
 } from "../src/agents/command-runner.js";
 import { classifyCliRunResult } from "../src/agents/cli-classification.js";
@@ -56,6 +57,25 @@ describe("buildProcessInvocation", () => {
     );
 
     expect(invocation.shell).toBe(false);
+  });
+
+  it("bounds captured child process output and retains the latest bytes", async () => {
+    const result = await spawnCommandRunner({
+      command: process.execPath,
+      args: [
+        "-e",
+        "process.stdout.write('prefix-' + 'x'.repeat(128) + '-tail')"
+      ],
+      cwd: process.cwd(),
+      maxOutputBytes: 32,
+      timeoutMs: 5_000
+    });
+
+    expect(result.exitCode).toBe(0);
+    expect(Buffer.byteLength(result.stdout)).toBeLessThanOrEqual(32);
+    expect(result.stdout).toContain("-tail");
+    expect(result.stdout).not.toContain("prefix-");
+    expect(result.stdoutTruncated).toBe(true);
   });
 
   it("classifies CLI authentication, rate limit, permission, timeout, and no-output results", () => {

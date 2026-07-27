@@ -33,6 +33,12 @@ describe("Release Candidate readiness gate", () => {
     expect(result.gates.find(
       (gate) => gate.id === "PERFORMANCE_REGRESSION"
     )?.status).toBe("PASS");
+    expect(result.gates.find(
+      (gate) => gate.id === "SECURITY_INTEGRITY"
+    )).toMatchObject({
+      status: "PASS",
+      classification: "external_required"
+    });
     expect(result.gates.every((gate) => gate.status === "PASS")).toBe(true);
     expect(result.blockers).toEqual([]);
     expect(result.secret_scan).toMatchObject({
