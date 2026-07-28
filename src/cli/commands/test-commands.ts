@@ -8,6 +8,13 @@ import {
 } from "../../operation-test/test-doc-generator.js";
 import { summarizeOperationTestResults } from "../../operation-test/result-summary.js";
 import { spawnCommandRunner } from "../../agents/command-runner.js";
+import {
+  finalizeStableCanary,
+  formatStableCanaryFinalization,
+  formatStableCanaryPreparation,
+  prepareStableCanary,
+  type StableCanaryDependencies
+} from "../../operation-test/stable-canary.js";
 
 export type GenerateOperationTestCommandsOptions = {
   profile?: string[];
@@ -25,6 +32,23 @@ export type GenerateOperationTestDocsOptions = {
   previousResultRoot?: string;
   overwrite?: boolean;
   dryRun?: boolean;
+};
+
+export type PrepareStableCanaryCommandOptions = {
+  verification?: string;
+  output?: string;
+  nodeRuntimeRoot?: string;
+  gitRuntimeRoot?: string;
+  fixture?: string;
+  timeoutSeconds?: string;
+  keepOnFailure?: boolean;
+  credentialProvider?: string;
+  format?: string;
+};
+
+export type FinalizeStableCanaryCommandOptions = {
+  input?: string;
+  format?: string;
 };
 
 export function generateOperationTestCommandsCommand(
@@ -85,6 +109,60 @@ export async function generateOperationTestDocsCommand(
   return formatOperationTestDocGenerationResult(result);
 }
 
+export async function prepareStableCanaryCommand(
+  projectRoot: string,
+  options: PrepareStableCanaryCommandOptions,
+  deps: StableCanaryDependencies = {}
+): Promise<string> {
+  if (
+    options.nodeRuntimeRoot === undefined ||
+    options.nodeRuntimeRoot.trim().length === 0
+  ) {
+    throw new Error("Specify --node-runtime-root for the clean Windows canary.");
+  }
+  if (
+    options.gitRuntimeRoot === undefined ||
+    options.gitRuntimeRoot.trim().length === 0
+  ) {
+    throw new Error("Specify --git-runtime-root for the clean Windows canary.");
+  }
+  const format = normalizeTextJsonFormat(options.format);
+  const preparation = await prepareStableCanary(projectRoot, {
+    verificationPath: options.verification,
+    outputRoot: options.output,
+    nodeRuntimeRoot: options.nodeRuntimeRoot,
+    gitRuntimeRoot: options.gitRuntimeRoot,
+    fixturePath: options.fixture,
+    timeoutSeconds: parseOptionalInteger(
+      options.timeoutSeconds,
+      "--timeout-seconds"
+    ),
+    keepOnFailure: options.keepOnFailure,
+    credentialProvider: options.credentialProvider
+  }, deps);
+  return formatStableCanaryPreparation(preparation, projectRoot, format);
+}
+
+export async function finalizeStableCanaryCommand(
+  projectRoot: string,
+  options: FinalizeStableCanaryCommandOptions,
+  deps: StableCanaryDependencies = {}
+): Promise<{ text: string; ok: boolean }> {
+  if (options.input === undefined || options.input.trim().length === 0) {
+    throw new Error("Specify --input for the Stable canary finalization.");
+  }
+  const format = normalizeTextJsonFormat(options.format);
+  const finalization = await finalizeStableCanary(
+    projectRoot,
+    options.input,
+    deps
+  );
+  return {
+    text: formatStableCanaryFinalization(finalization, projectRoot, format),
+    ok: finalization.result.status === "PASS"
+  };
+}
+
 function normalizeFormat(value: string | undefined): "powershell" | "json" {
   if (value === undefined || value.trim().length === 0) {
     return "powershell";
@@ -112,6 +190,32 @@ function normalizeTemplate(
   throw new Error(
     `Invalid --template: ${value}. Expected generic or stable-acceptance.`
   );
+}
+
+function normalizeTextJsonFormat(
+  value: string | undefined
+): "text" | "json" {
+  if (value === undefined || value.trim().length === 0) {
+    return "text";
+  }
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "text" || normalized === "json") {
+    return normalized;
+  }
+  throw new Error(`Invalid --format: ${value}. Expected text or json.`);
+}
+
+function parseOptionalInteger(
+  value: string | undefined,
+  optionName: string
+): number | undefined {
+  if (value === undefined || value.trim().length === 0) {
+    return undefined;
+  }
+  if (!/^\d+$/u.test(value.trim())) {
+    throw new Error(`${optionName} must be an integer.`);
+  }
+  return Number.parseInt(value.trim(), 10);
 }
 
 async function resolveSourceCommit(projectRoot: string): Promise<string> {

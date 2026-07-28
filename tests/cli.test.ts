@@ -617,11 +617,15 @@ describe("createProgram", () => {
     const summarize = test?.commands.find((command) => command.name() === "summarize");
     const commands = test?.commands.find((command) => command.name() === "commands");
     const docs = test?.commands.find((command) => command.name() === "docs");
+    const stableCanary = test?.commands.find(
+      (command) => command.name() === "stable-canary"
+    );
 
     expect(test?.description()).toContain("operation test results");
     expect(test?.commands.map((command) => command.name()).sort()).toEqual([
       "commands",
       "docs",
+      "stable-canary",
       "summarize"
     ]);
     expect(commands?.description()).toContain("Generate PowerShell commands");
@@ -652,6 +656,34 @@ describe("createProgram", () => {
         "--apply-pass"
       ])
     );
+    expect(stableCanary?.description()).toContain("Windows Sandbox");
+    expect(stableCanary?.commands.map((command) => command.name())).toEqual([
+      "prepare",
+      "finalize"
+    ]);
+    const prepare = stableCanary?.commands.find(
+      (command) => command.name() === "prepare"
+    );
+    const finalize = stableCanary?.commands.find(
+      (command) => command.name() === "finalize"
+    );
+    expect(prepare?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining([
+        "--verification",
+        "--output",
+        "--node-runtime-root",
+        "--git-runtime-root",
+        "--fixture",
+        "--timeout-seconds",
+        "--keep-on-failure",
+        "--credential-provider",
+        "--format"
+      ])
+    );
+    expect(finalize?.options.map((option) => option.long)).toEqual([
+      "--input",
+      "--format"
+    ]);
   });
 
   it("registers production workflow and candidate commands", () => {

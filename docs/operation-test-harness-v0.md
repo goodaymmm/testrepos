@@ -66,6 +66,39 @@ $RESULT_ROOT
 Node.jsを使うfixture生成は、`node -e` ではなく `$RESULT_ROOT` 配下の一時 `.mjs` ファイルを生成して実行する形式にします。
 `GH_TOKEN` / `GITHUB_TOKEN` などのsecretは値を出さず、必要なenv名だけを表示します。
 
+## T195 Clean Windows Stable canary
+
+`stable-canary` profileは、T194で作成したfreshなpublished Stable verificationを入力にし、
+Windows Sandbox用のinput manifest、bootstrap PowerShell、`.wsb`を生成します。Sandboxへ
+Kairon source checkoutや`npm link`環境は共有せず、Node.js 22+ runtime、Git runtime、
+canary harness/result directoryだけをmapします。
+
+```powershell
+kairon test commands --profile stable-canary
+
+.\scripts\kairon-stable-canary.ps1 `
+  -ProjectRoot "C:\Users\hikar\Documents\AutoRunner" `
+  -TimeoutSeconds 1800
+```
+
+runnerは開始前に既存の`WindowsSandbox` processを確認します。既存instanceの所有者を
+証明できない場合は`reason=windows_sandbox_already_running`、
+`unknown_sandbox_action=refuse`として停止し、自動終了しません。runner自身が起動した
+Sandboxもtimeout時には強制終了せず、Sandbox result欠落を`SETUP_REQUIRED`として
+finalizeします。
+
+Sandbox内では、公開release URLからT194に記録されたexact 5 assetsをdownloadし、
+size / SHA-256、consumer verification、user-local global install、version、fixture init、
+doctor contract、state integrity、read-only status、uninstall、`.kairon`保持を順に確認します。
+resultにはcommand IDだけを保存し、command output、credential値、host cacheは保存しません。
+`ProjectRoot`はStable verificationを保持するKairon repository rootであり、production
+projectではありません。canary projectはSandbox内へ生成します。
+
+private release等でpublic downloadできない場合は、tokenをartifactへ埋め込まず
+`stable_artifact_download_unavailable`として`SETUP_REQUIRED`にします。credentialを
+共有する方式は、secret brokerまたは短命credentialのcleanup契約を別途用意するまで
+canaryの標準経路には含めません。
+
 ## 実行対象
 
 デフォルトでは次をすべて実行します。

@@ -98,6 +98,23 @@ describe("kairon-operation-test.ps1", () => {
     expect(script).toContain("cleanup_created_by_harness_only=True");
   });
 
+  it("keeps the T195 Windows Sandbox runner source-free and refuses unknown instances", async () => {
+    const script = await readFile(
+      path.resolve("scripts", "kairon-stable-canary.ps1"),
+      "utf8"
+    );
+
+    expect(script).toContain("test\", \"stable-canary\", \"prepare");
+    expect(script).toContain("windows_sandbox_already_running");
+    expect(script).toContain("unknown_sandbox_action=refuse");
+    expect(script).toContain("launched_sandbox_action=leave_running");
+    expect(script).toContain("test\", \"stable-canary\", \"finalize");
+    expect(script).not.toContain("Stop-Process");
+    expect(script).not.toContain("hcsdiag kill");
+    expect(script).not.toContain("npm link");
+    expect(script).not.toContain("git clone");
+  });
+
   it("generates Stable live-process ownership guards", async () => {
     const root = await createTempProject();
     const generated = await writeOperationTestDocs(root, {
