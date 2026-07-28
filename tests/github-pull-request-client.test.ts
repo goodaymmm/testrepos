@@ -9,13 +9,18 @@ import {
   mergeGitHubPullRequest
 } from "../src/github/pull-request-merge.js";
 
+type FetchFunction = (
+  input: string | URL | Request,
+  init?: RequestInit
+) => Promise<Response>;
+
 describe("GitHub pull request client", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
 
   it("inspects encoded base and head refs without returning the token", async () => {
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+    const fetchMock = vi.fn<FetchFunction>(async (input) => {
       const url = String(input);
       const sha = url.endsWith("/heads/main") ? "base-sha" : "head-sha";
       return jsonResponse(200, { object: { sha } });
@@ -42,7 +47,7 @@ describe("GitHub pull request client", () => {
   });
 
   it("creates a pull request with the shared GitHub request contract", async () => {
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn<FetchFunction>(async () =>
       jsonResponse(201, {
         html_url: "https://github.com/goodaymmm/Kairon/pull/134",
         number: 134,
@@ -100,7 +105,7 @@ describe("GitHub pull request client", () => {
   });
 
   it("normalizes live PR, protection, check, and review evidence for merge", async () => {
-    const fetchMock = vi.fn(async (input: string | URL | Request) => {
+    const fetchMock = vi.fn<FetchFunction>(async (input) => {
       const url = String(input);
       if (url.endsWith("/pulls/149")) {
         return jsonResponse(200, {
@@ -186,7 +191,7 @@ describe("GitHub pull request client", () => {
   });
 
   it("merges with the expected head SHA and selected method", async () => {
-    const fetchMock = vi.fn(async () =>
+    const fetchMock = vi.fn<FetchFunction>(async () =>
       jsonResponse(200, { merged: true, sha: "merged-sha" })
     );
     vi.stubGlobal("fetch", fetchMock);

@@ -241,7 +241,8 @@ describe("Stable security baseline", () => {
     const auditPath = await writeAudit(root, { high: 0, critical: 0 });
     const checkResult = await securityCheckCommand(root, {
       npmAudit: auditPath,
-      sourceCommit
+      sourceCommit,
+      now: () => fixedNow
     });
     const artifact = JSON.parse(
       await readFile(

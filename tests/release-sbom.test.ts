@@ -93,13 +93,50 @@ describe("release SBOM", () => {
     }));
   });
 
-  it("does not serialize local paths or credential-like fields", async () => {
+  it("allows credential words in dependency identities without serializing host data", async () => {
     const output = path.join(root, "sbom.cdx.json");
     await createReleaseSbom(root, checksumPath, { output });
     const serialized = await readFile(output, "utf8");
 
     expect(serialized).not.toContain(root);
-    expect(serialized).not.toMatch(/(?:token|password|secret|authorization)/iu);
+    expect(serialized).toContain("pkg:npm/js-tokens@9.0.1");
+  });
+
+  it.each([
+    ["api_token", "secret-token-value"],
+    ["Authorization", "Bearer secret-value"],
+    ["host_username", "local-user"],
+    ["build-hostname", "workstation-01"]
+  ])("rejects a populated sensitive field named %s", async (field, value) => {
+    const output = path.join(root, "sbom.cdx.json");
+    await createReleaseSbom(root, checksumPath, { output });
+    const sbom = JSON.parse(await readFile(output, "utf8")) as Record<string, unknown>;
+    sbom[field] = value;
+    await writeFile(output, `${JSON.stringify(sbom, null, 2)}\n`, "utf8");
+
+    const verification = await verifyReleaseSbom(output);
+
+    expect(verification.ok).toBe(false);
+    expect(verification.checks).toContainEqual(expect.objectContaining({
+      id: "host_data_absent",
+      status: "fail"
+    }));
+  });
+
+  it("rejects an absolute host path stored in a non-sensitive field", async () => {
+    const output = path.join(root, "sbom.cdx.json");
+    await createReleaseSbom(root, checksumPath, { output });
+    const sbom = JSON.parse(await readFile(output, "utf8")) as Record<string, unknown>;
+    sbom.build_context = "C:\\Users\\operator\\release";
+    await writeFile(output, `${JSON.stringify(sbom, null, 2)}\n`, "utf8");
+
+    const verification = await verifyReleaseSbom(output);
+
+    expect(verification.ok).toBe(false);
+    expect(verification.checks).toContainEqual(expect.objectContaining({
+      id: "host_data_absent",
+      status: "fail"
+    }));
   });
 });
 
@@ -127,6 +164,12 @@ async function writeFixture(root: string, checksumPath: string): Promise<void> {
           dev: true,
           integrity,
           license: "Apache-2.0"
+        },
+        "node_modules/js-tokens": {
+          version: "9.0.1",
+          dev: true,
+          integrity,
+          license: "MIT"
         },
         "node_modules/shared": {
           version: "3.0.0",

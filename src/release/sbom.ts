@@ -107,6 +107,15 @@ type PackageLockEntry = {
   link?: unknown;
 };
 
+const sensitiveSbomFieldSuffixes = [
+  "authorization",
+  "hostname",
+  "password",
+  "secret",
+  "token",
+  "username"
+] as const;
+
 export async function createReleaseSbom(
   projectRoot: string,
   checksumManifestFile: string,
@@ -467,11 +476,60 @@ function readMetadataProperty(sbom: ReleaseSbom, name: string): string | null {
 }
 
 function containsHostSpecificData(value: unknown): boolean {
-  const serialized = JSON.stringify(value);
-  return (
-    /(?:[A-Za-z]:\\|\/Users\/|\/home\/)/u.test(serialized) ||
-    /(?:token|password|secret|authorization|hostname|username)/iu.test(serialized)
+  if (typeof value === "string") {
+    return containsAbsoluteHostPath(value);
+  }
+  if (Array.isArray(value)) {
+    return value.some(containsHostSpecificData);
+  }
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.name === "string" &&
+    isSensitiveFieldName(record.name) &&
+    hasMeaningfulValue(record.value)
+  ) {
+    return true;
+  }
+
+  return Object.entries(record).some(([key, entry]) =>
+    (isSensitiveFieldName(key) && hasMeaningfulValue(entry)) ||
+    containsHostSpecificData(entry)
   );
+}
+
+function containsAbsoluteHostPath(value: string): boolean {
+  return /(?:[A-Za-z]:[\\/]|\/Users\/|\/home\/)/u.test(value);
+}
+
+function isSensitiveFieldName(value: string): boolean {
+  const segments = value
+    .trim()
+    .toLowerCase()
+    .split(/[^a-z0-9]+/u)
+    .filter((entry) => entry.length > 0);
+  const finalSegment = segments.at(-1);
+  return finalSegment !== undefined &&
+    sensitiveSbomFieldSuffixes.some((suffix) => finalSegment.endsWith(suffix));
+}
+
+function hasMeaningfulValue(value: unknown): boolean {
+  if (value === null || value === undefined) {
+    return false;
+  }
+  if (typeof value === "string") {
+    return value.trim().length > 0;
+  }
+  if (Array.isArray(value)) {
+    return value.length > 0;
+  }
+  if (typeof value === "object") {
+    return Object.keys(value).length > 0;
+  }
+  return true;
 }
 
 function parseUnknownJson(content: Uint8Array, label: string): unknown {

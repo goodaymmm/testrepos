@@ -24,7 +24,11 @@ const gateway: PreparedDiscordGateway = {
   allowed_user_ids: ["owner"],
   register_commands_on_start: true,
   ack_timeout_ms: 2500,
-  idempotency_ttl_minutes: 60
+  idempotency_ttl_minutes: 60,
+  reconnect: {
+    enabled: true,
+    max_backoff_seconds: 60
+  }
 };
 
 describe("Discord interactions", () => {
