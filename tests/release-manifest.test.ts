@@ -282,7 +282,7 @@ async function createPackageFixture(root: string): Promise<{
     path: entry.path,
     content: Buffer.from(entry.content, "utf8")
   }));
-  const packageBytes = gzipSync(createTar(entries), { mtime: 0 });
+  const packageBytes = gzipSync(createTar(entries));
   const packagePath = path.join(root, "kairon-0.3.0.tgz");
   const manifestPath = `${packagePath}.sha256.json`;
   await writeFile(packagePath, packageBytes);

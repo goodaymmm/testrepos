@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createServer } from "node:net";
 import { describe, expect, it } from "vitest";
 import { writeOperationTestDocs } from "../src/operation-test/test-doc-generator.js";
 import { createTempProject } from "./test-utils.js";
@@ -95,6 +96,96 @@ describe("kairon-operation-test.ps1", () => {
     expect(script).toContain("stable_acceptance_evidence_manifest");
     expect(script).toContain("cleanup_exact_ids_only=True");
     expect(script).toContain("cleanup_created_by_harness_only=True");
+  });
+
+  it("generates Stable live-process ownership guards", async () => {
+    const root = await createTempProject();
+    const generated = await writeOperationTestDocs(root, {
+      range: "T176-T189",
+      template: "stable-acceptance",
+      resultRoot: "operation-test-results/stable-run",
+      sourceCommit: "a".repeat(40),
+      generatedAt: new Date("2026-07-27T00:00:00.000Z")
+    });
+    const commandPath = generated.files.find(
+      (file) => file.kind === "command_list"
+    )?.path;
+    expect(commandPath).toBeTruthy();
+    const markdown = await readFile(path.join(root, commandPath!), "utf8");
+
+    expect(markdown).toContain("<!-- command-group: LIVE_PROCESS_PREFLIGHT -->");
+    expect(markdown).toContain("Assert-StablePortAvailable");
+    expect(markdown).toContain("Start-StableTrackedProcess");
+    expect(markdown).toContain("Stop-StableTrackedProcess");
+    expect(markdown).toContain("Refusing to stop process");
+    expect(markdown).toContain("TEST_TUNNEL_PROCESS");
+    expect(markdown).toContain("created");
+    expect(markdown).toContain("deleted");
+  });
+
+  runIfPowerShell("refuses to stop an unknown process that owns a Stable live port", async () => {
+    const root = await createTempProject();
+    const generated = await writeOperationTestDocs(root, {
+      range: "T176-T189",
+      template: "stable-acceptance",
+      resultRoot: "operation-test-results/stable-run",
+      sourceCommit: "a".repeat(40),
+      generatedAt: new Date("2026-07-27T00:00:00.000Z")
+    });
+    const commandPath = generated.files.find(
+      (file) => file.kind === "command_list"
+    )?.path;
+    const markdown = await readFile(path.join(root, commandPath!), "utf8");
+    const processGuard = markdown.match(
+      /(\$script:STABLE_TRACKED_PROCESSES[\s\S]*?)(?=function Invoke-StableVitest)/u
+    )?.[1];
+    expect(processGuard).toBeTruthy();
+
+    const server = createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", resolve);
+    });
+    try {
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        throw new Error("Unable to determine test server port.");
+      }
+      const scriptPath = path.join(root, "assert-port-owner.ps1");
+      await writeFile(
+        scriptPath,
+        [
+          "$ErrorActionPreference = \"Stop\"",
+          processGuard!,
+          "try {",
+          `  Assert-StablePortAvailable -Port ${address.port}`,
+          "  throw \"expected occupied port rejection\"",
+          "} catch {",
+          "  $_.Exception.Message",
+          "}"
+        ].join("\n"),
+        "utf8"
+      );
+
+      const result = spawnSync(
+        powershell!,
+        ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", scriptPath],
+        {
+          cwd: root,
+          encoding: "utf8",
+          timeout: 10_000
+        }
+      );
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain(`port ${address.port} is already in use`);
+      expect(result.stdout).toContain(`pid=${process.pid}`);
+      expect(server.listening).toBe(true);
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        server.close((error) => error === undefined ? resolve() : reject(error));
+      });
+    }
   });
 
   runIfPowerShell("validates a generated Stable acceptance manifest", async () => {

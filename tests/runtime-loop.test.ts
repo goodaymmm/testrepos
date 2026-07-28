@@ -301,6 +301,9 @@ describe("RuntimeLoop", () => {
       now: () => new Date("2026-05-25T08:00:00.000Z"),
       gitTransactionRunner: async (request) => {
         capturedRequest = request;
+        if ("action" in request) {
+          throw new Error("Expected a new git transaction request.");
+        }
         return {
           schema_version: "0.1",
           transaction_id: "GTX-0001",

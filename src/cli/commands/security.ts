@@ -19,6 +19,7 @@ export type SecurityCheckCommandOptions = {
   artifact?: string[];
   output?: string;
   sourceCommit?: string;
+  now?: () => Date;
 };
 
 export type SecurityReportCommandOptions = {
@@ -33,7 +34,8 @@ export async function securityCheckCommand(
     npmAuditPath: options.npmAudit,
     artifactPaths: options.artifact,
     output: options.output,
-    sourceCommit: options.sourceCommit
+    sourceCommit: options.sourceCommit,
+    now: options.now
   });
   return {
     text: [
