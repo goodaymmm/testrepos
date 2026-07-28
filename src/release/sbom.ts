@@ -7,6 +7,10 @@ import {
   calculateReleaseInventorySha256,
   normalizeReleaseInventory
 } from "./release-manifest.js";
+import {
+  parseReleaseVerificationContext,
+  type ReleaseVerificationContext
+} from "./verification-context.js";
 
 export type CycloneDxHash = {
   alg: "SHA-512";
@@ -71,6 +75,7 @@ export type ReleaseSbomCheck = {
 export type ReleaseSbomVerificationResult = {
   schema_version: "0.1";
   ok: boolean;
+  verification_context: ReleaseVerificationContext;
   sbom_path: string;
   package_version: string | null;
   package_lock_sha256: string | null;
@@ -88,6 +93,7 @@ export type CreateReleaseSbomOptions = {
 export type VerifyReleaseSbomOptions = {
   projectRoot?: string;
   checksumManifest?: string;
+  verificationContext?: ReleaseVerificationContext;
 };
 
 type PackageLock = {
@@ -166,7 +172,8 @@ export async function createReleaseSbom(
   await writeJsonFileAtomic(outputPath, sbom);
   const verification = await verifyReleaseSbom(outputPath, {
     projectRoot: root,
-    checksumManifest: checksumPath
+    checksumManifest: checksumPath,
+    verificationContext: "source"
   });
   if (!verification.ok) {
     throw new Error(
@@ -194,6 +201,9 @@ export async function verifyReleaseSbom(
   sbomFile: string,
   options: VerifyReleaseSbomOptions = {}
 ): Promise<ReleaseSbomVerificationResult> {
+  const verificationContext = parseReleaseVerificationContext(
+    options.verificationContext
+  );
   const sbomPath = path.resolve(sbomFile);
   const bytes = await readFile(sbomPath);
   const info = await stat(sbomPath);
@@ -215,9 +225,10 @@ export async function verifyReleaseSbom(
     ? null
     : readMetadataProperty(sbom, "kairon:package-inventory-sha256");
   let lockBound = lockHash !== null;
-  if (options.projectRoot !== undefined && lockHash !== null && sbom !== null) {
+  if (verificationContext === "source" && lockHash !== null && sbom !== null) {
     try {
-      const lockBytes = await readFile(path.join(path.resolve(options.projectRoot), "package-lock.json"));
+      const sourceRoot = path.resolve(options.projectRoot ?? process.cwd());
+      const lockBytes = await readFile(path.join(sourceRoot, "package-lock.json"));
       const lock = parsePackageLock(lockBytes);
       lockBound =
         sha256(lockBytes) === lockHash &&
@@ -261,6 +272,7 @@ export async function verifyReleaseSbom(
   return {
     schema_version: "0.1",
     ok: checks.every((entry) => entry.status === "pass"),
+    verification_context: verificationContext,
     sbom_path: sbomPath,
     package_version: sbom?.metadata.component.version ?? null,
     package_lock_sha256: lockHash,

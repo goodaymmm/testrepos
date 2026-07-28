@@ -19,6 +19,7 @@ import {
   verifyReleaseManifest,
   type CreateReleaseManifestOptions
 } from "../../release/release-manifest.js";
+import { parseReleaseVerificationContext } from "../../release/verification-context.js";
 import {
   createReleaseProvenance,
   formatReleaseProvenance,
@@ -135,6 +136,7 @@ export type ReleaseBumpCommandOptions = {
 export type ReleaseVerifyCommandOptions = {
   manifest?: string;
   releaseManifest?: string;
+  verificationContext?: string;
   commandRunner?: CommandRunner;
 };
 
@@ -220,13 +222,17 @@ export async function releaseVerifyCommand(
     return { text: formatLocalBetaVerification(result), ok: result.ok };
   }
 
+  const verificationContext = parseReleaseVerificationContext(
+    options.verificationContext
+  );
   const releaseManifest = await verifyReleaseManifest(
     options.releaseManifest,
     packageFile,
     options.manifest,
     {
       projectRoot,
-      commandRunner: options.commandRunner
+      commandRunner: options.commandRunner,
+      verificationContext
     }
   );
   return {

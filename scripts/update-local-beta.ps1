@@ -166,7 +166,12 @@ try {
     "--manifest", $packageInfo.ManifestPath
   )
   if ($null -ne $resolvedReleaseManifest) {
-    $verifyArguments += @("--release-manifest", $resolvedReleaseManifest)
+    $verifyArguments += @(
+      "--release-manifest",
+      $resolvedReleaseManifest,
+      "--verification-context",
+      "consumer"
+    )
   }
   $verifyOutput = Invoke-KaironLocalBetaCommand `
     -Command $updatedKairon.Source `

@@ -92,7 +92,7 @@ kairon release pack [--output <path>]
 kairon release sbom --manifest <manifest.json> [--output <sbom.cdx.json>]
 kairon release provenance --package <package.tgz> --manifest <manifest.json> --sbom <sbom.cdx.json> [--output <provenance.json>]
 kairon release manifest --package <package.tgz> --manifest <manifest.json> [--sbom <sbom.cdx.json> --provenance <provenance.json>] [--output <path>]
-kairon release verify <package.tgz> [--manifest <manifest.json>] [--release-manifest <release-manifest.json>]
+kairon release verify <package.tgz> [--manifest <manifest.json>] [--release-manifest <release-manifest.json>] [--verification-context source|consumer]
 kairon release notes --since <ref> [--write]
 kairon release bump --version <version> [--write]
 kairon release github promote plan --version <version> --repository <owner/repo> [--expires-in-minutes <minutes>]
@@ -1104,7 +1104,7 @@ kairon release pack --output C:\tmp\kairon-beta
 kairon release sbom --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json --output .\release-artifacts\0.3.0\sbom.cdx.json
 kairon release provenance --package .\release-artifacts\0.3.0\kairon-0.3.0.tgz --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json --sbom .\release-artifacts\0.3.0\sbom.cdx.json --output .\release-artifacts\0.3.0\provenance.json
 kairon release manifest --package .\release-artifacts\0.3.0\kairon-0.3.0.tgz --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json --sbom .\release-artifacts\0.3.0\sbom.cdx.json --provenance .\release-artifacts\0.3.0\provenance.json
-kairon release verify .\release-artifacts\0.3.0\kairon-0.3.0.tgz --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json --release-manifest .\release-artifacts\0.3.0\release-manifest.json
+kairon release verify .\release-artifacts\0.3.0\kairon-0.3.0.tgz --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json --release-manifest .\release-artifacts\0.3.0\release-manifest.json --verification-context source
 kairon release notes --since v0.1.0
 kairon release notes --since v0.1.0 --write
 kairon release bump --version 0.3.0
@@ -1129,8 +1129,12 @@ SHA-256へbindする。`release provenance`はclean source commit、Node/npm ver
 package/checksum/SBOM digestをlocal build provenanceへ保存する。`release manifest`へ
 `--sbom`と`--provenance`を指定する場合は必ず対で指定し、それぞれのsizeとSHA-256を
 `attestations`へ保存する。`release verify --release-manifest`はtar path、link、必須file、
-禁止path、package metadataに加え、lockfile、inventory、SBOM、provenance、現在sourceとの
-bindingを再検証する。旧manifestの`attestations`省略は後方互換として許可する。
+禁止path、package metadataに加え、lockfile、inventory、SBOM、provenanceのbindingを
+再検証する。既定の`--verification-context source`は現在のclean tracked sourceとmanifestを
+比較する。install / update側だけが`consumer`を明示し、consumer projectのGit treeとは
+比較せず、manifestとprovenanceのsource SHAを含むartifact内部bindingを検証する。
+resultは`source_tree_check`と`artifact_source_binding`を分けて表示する。
+旧manifestの`attestations`省略は後方互換として許可する。
 public npm registryへのpublishは行わない。詳細は`docs/release-provenance-v0.md`を参照する。
 
 `release github plan`は検証済みの`release-artifacts/<version>/`、cleanなlocal HEAD、remote base branch SHA、既存tag / release / assetを照合し、高risk approvalへbindした`.kairon/release/github/plans/<plan-id>.json`を作る。既定はprereleaseで、まだprereleaseとして公開していない新規Stable releaseだけ`--stable`を明示できる。既存prereleaseの昇格には専用の`release github promote`を使う。tokenは`--token-env`、`GH_TOKEN`、`GITHUB_TOKEN`、明示設定したWindows Credential Manager参照の順で解決し、値はartifactやCLI出力へ保存しない。

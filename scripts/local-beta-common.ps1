@@ -212,7 +212,12 @@ function Test-KaironStagedPackage {
     $PackageInfo.ManifestPath
   )
   if (-not [string]::IsNullOrWhiteSpace($ReleaseManifest)) {
-    $verifyArguments += @("--release-manifest", $ReleaseManifest)
+    $verifyArguments += @(
+      "--release-manifest",
+      $ReleaseManifest,
+      "--verification-context",
+      "consumer"
+    )
   }
   $null = Invoke-KaironLocalBetaCommand `
     -Command $Prerequisites.NodeCommand `
