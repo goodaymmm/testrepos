@@ -6,9 +6,18 @@ Kairon は、既存プロジェクトにドッキングして、人間と AI Age
 
 ## 現在の位置づけ
 
-<!-- kairon:t175-rc-baseline -->
-<!-- kairon:t177-local-rc-baseline -->
-このリポジトリの現行sourceは、T160-T188の実装を`0.3.0`へ固定した個人運用向けLocal RC baselineです。build、unit / integration test、state integrity、Stable security baselineに加え、配布・更新・復旧・workflow・Agent・RAG・複数project・stable remote・performance regressionを対象とするRC readiness 15 gateを機械判定します。T175 operation testでは当時の14 gateがすべて`PASS`し、global blocker 0件を確認済みです。T187で性能証跡を追加し、T188で既存`SECURITY_INTEGRITY`をfreshなnpm auditを含むexternal-required gateへ強化しました。`0.3.0` artifactはcurrent source commitから再生成・検証し、GitHub prereleaseへの公開は別の承認済みrelease作業として扱います。
+<!-- kairon:t192-stable-baseline -->
+このリポジトリの現行sourceは、T160-T191の実装を`0.3.0`へ固定した個人運用向け
+Stable Local Release baselineです。build、unit / integration test、state integrity、
+clean Windows update / rollback、Stable security baselineに加え、配布・更新・復旧・
+workflow・Agent・RAG・複数project・stable remote・performance regressionを対象とする
+Stable Readiness 16 gateを機械判定します。T189 Stable Acceptanceは18 / 18 scenario、
+T190 Stable Readinessは16 / 16 gateが`PASS`し、T191のblocker修正後のcurrent sourceで
+`stable_ready=true`、global blocker 0件を確認済みです。
+
+`Stable Local Release`はpublic npm packageやSaaSを意味しません。`0.3.0` artifactは
+current source commitから再生成・検証し、GitHub ReleaseへのpublishとStable昇格は
+readiness判定とは分離したapproval-bound操作として扱います。
 
 Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Agent CLI、approval、Git / deploy guard、maintenanceをローカルで統合します。外部writeと高リスク操作はdefault disabledまたはapproval requiredであり、Boardはread-onlyを維持します。
 
@@ -40,15 +49,18 @@ Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Age
 - provider quota / suspend policy、operation test profile / summary支援
 - deterministic capacity benchmark、絶対値budget、同一環境baseline regression判定
 - checksummed private local package、install / update / rollback / uninstall
-- reproducible `0.3.0` Local RC artifact、approval-gated GitHub Release、verified manual update channel
+- reproducible `0.3.0` Stable Local artifact、CycloneDX SBOM / provenance、approval-gated GitHub Release
+- transactional update / rollback、schema migration、post-install health gate
+- local metrics / SLO、alert policy、bounded self-healing、scheduled multi-project health
+- off-device DR、Stable security baseline、Stable Acceptance / Readiness
 - allowlist収集、secret scan、hash manifest付きのsanitized support bundle
-- evidence manifest、Beta互換gate、Release Candidate readiness 15 gate
+- evidence manifest、Beta / Release Candidate互換gate、Stable Readiness 16 gate
 
-`0.3.0` Local RC後の次のrelease作業:
+`0.3.0` Stable baseline後のrelease / maintenance作業:
 
-- release commitからのartifact再生成とclean Windows検証
-- approval-gated GitHub prerelease publishとremote asset再検証
-- operation evidenceをbindした配布可否の最終判断
+- release commitからのartifact再生成とapproval-gated GitHub publish / Stable昇格
+- 公開済みStable assetのremote再検証とclean Windows canary
+- 明示的なpatch release、update / rollback、長期運用evidenceの継続確認
 
 ## 前提
 
@@ -440,7 +452,7 @@ checkpointのcanonical stateは常にJSON fileです。`runtime.json.workflow.ch
 
 `runtime.json.workflow.enabled=true`をproposal経由で適用した場合だけproduction workflow itemをruntimeがclaimし、既定は無効です。旧projectの`KAIRON_WORKFLOW_RUNTIME`はconfigに`enabled`がない場合だけ互換fallbackとして利用されます。`--candidate`を使う`.kairon/experimental/workflows/`経路は互換性とdry-run評価用であり、production canonical stateの代替ではありません。
 
-### Local RC package / Readiness
+### Stable Local package / Readiness
 
 ```powershell
 npm run release:pack
@@ -624,8 +636,8 @@ README更新が必要な代表条件:
 詳細は [docs/pr-release-checklist-v0.md](docs/pr-release-checklist-v0.md) を参照してください。
 
 release判断では [docs/release-checklist-v0.md](docs/release-checklist-v0.md) を使い、`npm run build`、`npm test`、対象operation test、secret / generated artifact確認、README更新要否、version同期を確認します。
-`kairon readiness manifest`でBeta互換証跡を、`kairon readiness rc manifest`でRC証跡のSHA-256・source commit・有効期限を固定します。RCは`kairon readiness rc check`で15 gateとglobal blockerを判定し、全gateが`PASS`かつblocker 0件の場合だけ`rc_ready=true`となります。外部未設定は`SETUP_REQUIRED`、期限切れ・別commit・改変済み証跡は`UNKNOWN`として扱います。
-release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在のLocal RC versionは `0.3.0`で、T160-T188をcurrent source commitへ固定します。versionを変更する場合は `package.json`、`package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。`kairon release validate` でversion形式・同期、release checklist marker、`Unreleased` marker、現在version entryを一括確認できます。
+`kairon readiness manifest`でBeta互換証跡を、`kairon readiness rc manifest`でRC証跡を、`kairon readiness stable manifest`でStable証跡のSHA-256・source commit・有効期限を固定します。Stableは`kairon readiness stable check`で16 gateとglobal blockerを判定し、全gateが`PASS`かつblocker 0件の場合だけ`stable_ready=true`となります。外部未設定は`SETUP_REQUIRED`、期限切れ・別commit・改変済み証跡は`UNKNOWN`として扱います。
+release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在のStable Local Release versionは `0.3.0`で、T160-T191をcurrent source commitへ固定します。versionを変更する場合は `package.json`、`package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。`kairon release validate` でversion形式・同期、release checklist marker、`Unreleased` marker、現在version entryを一括確認できます。
 
 local packageはpublic npm registryへpublishせず、`npm run release:pack`でchecksummed tarballを生成します。Windowsでのinstall、update/rollback、uninstall手順は [docs/installation.md](docs/installation.md) を参照してください。uninstallはprojectの`.kairon/`を削除しません。
 
@@ -684,6 +696,8 @@ T67-T75では、local runtimeだけでなくGitHub / Discordを含む外部接�
 
 ### T175 Release Candidate baseline
 
+<!-- kairon:t175-rc-baseline -->
+<!-- kairon:t177-local-rc-baseline -->
 T160-T176ではLocal Betaを配布可能なRelease Candidateへ拡張し、T175 readinessで全14 gate、global blocker 0件、secret finding 0、未PASS系status 0を確認しました。T177でこの範囲を`0.3.0` Local RCへ固定します。local operation resultはgenerated evidenceのためrepositoryへcommitせず、再検証時は現在commitに対して生成し直します。
 
 | 分類 | T175時点の検証範囲 |
@@ -703,7 +717,7 @@ T160-T176ではLocal Betaを配布可能なRelease Candidateへ拡張し、T175 
 4. `kairon start --daemon`またはWindows Task Schedulerを使い、`kairon status`とdaemon reportを監視する。
 5. GitHub、deploy、Discord HTTP、remote Boardはdry-run / loopbackから開始し、外部writeを段階的に有効化する。
 6. `kairon maintenance run`、backup、cleanup proposal、RAG verifyを定期実行する。
-7. 配布前はpackage verify、representative performance benchmark、fresh npm auditを含むSecurity Baseline、RC readiness 15 gateを現在commitのevidenceで再生成する。
+7. 配布前はpackage verify、representative performance benchmark、fresh npm auditを含むSecurity Baseline、Stable Acceptance 18 scenario、Stable Readiness 16 gateを現在commitのevidenceで再生成する。
 
 ## 関連ドキュメント
 

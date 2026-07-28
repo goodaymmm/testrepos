@@ -56,7 +56,7 @@ describe("release commands", () => {
     expect(formatReleaseValidation(result)).toContain("summary.fail=0");
   });
 
-  it("validates the current 0.3.0 Local RC release contract", async () => {
+  it("validates the current 0.3.0 Stable Local Release contract", async () => {
     const result = await validateRelease(path.resolve("."));
 
     expect(result).toMatchObject({

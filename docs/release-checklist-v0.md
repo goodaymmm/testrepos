@@ -134,6 +134,13 @@ kairon readiness stable report --format markdown
 - readiness判定はGitHub Releaseを変更しない。Stable昇格はapproval-bound promotion commandを
   別途明示実行する。
 
+<!-- kairon:t192-stable-baseline -->
+T191のblocker修正後にcurrent sourceへ証跡を再bindし、Stable Acceptance 18 / 18 scenario、
+Stable Readiness 16 / 16 gate、global blocker 0件、`stable_ready=true`を確認した。
+この確認は個人運用向け`0.3.0` Stable Local Release baselineを示す。実際のGitHub Release
+publish / Stable昇格では、release commitからartifactとexternal evidenceを再生成し、
+既存のapproval-bound commandを明示実行する。
+
 ## Secret / Generated Artifact確認
 
 <!-- kairon:release-evidence -->
@@ -155,7 +162,9 @@ git diff --cached --stat
 ## Versioning方針
 
 <!-- kairon:versioning-policy -->
-現在のLocal RC artifactはT160-T176を収録した`0.3.0`で、現行source commitから再生成・検証します。GitHub prereleaseへ公開するまではlocal artifactとして扱います。packageは `private: true` のため、
+現在のStable Local Release artifactはT160-T191を収録した`0.3.0`で、現行source commitから
+再生成・検証します。GitHub Releaseへのpublish / Stable昇格はreadiness判定から分離した
+approval-bound操作です。packageは `private: true` のため、
 npm publishを前提にしたversion bumpではなく、運用上のrelease tag / release noteの
 判断材料としてversionを扱います。
 
@@ -183,7 +192,7 @@ kairon release bump --version <next-version> --write
 `--write` はtracked worktreeがcleanな場合だけ実行できます。
 実行時は `.kairon/release/backups/<timestamp>/` に変更前の対象fileを保存します。
 
-## Reproducible Local RC Artifact
+## Reproducible Stable Local Artifact
 
 version bumpをcommitしたclean tracked worktreeでpackageを生成し、そのpackage、checksum
 manifest、CycloneDX SBOM、local build provenanceをsource commitへbindします。
@@ -219,7 +228,7 @@ lockfile・inventory・sourceのbindingが一致しない場合は生成を拒�
 ## Approval-gated GitHub Release
 
 <!-- kairon:github-release-distribution -->
-検証済みLocal RC artifactをGitHub Releaseへ配布する場合は、planとpublishを分離します。tokenには対象repositoryのContents read/write権限が必要です。`GH_TOKEN`または`GITHUB_TOKEN`を使い、値自体は表示・保存しません。
+検証済みStable Local artifactをGitHub Releaseへ配布する場合は、planとpublishを分離します。tokenには対象repositoryのContents read/write権限が必要です。`GH_TOKEN`または`GITHUB_TOKEN`を使い、値自体は表示・保存しません。
 
 ```powershell
 kairon release github plan `

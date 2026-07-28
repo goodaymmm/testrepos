@@ -2,7 +2,9 @@
 
 ## 目的
 
-この文書はT180時点のLocal RCで実装済みの`kairon` CLI command仕様を定義する。歴史的なMVP判断は該当節に残すが、Command Listと各command節は現行実装を基準とする。
+この文書はT191時点の`0.3.0` Stable Local Releaseで実装済みの`kairon` CLI command仕様を
+定義する。歴史的なMVP / RC判断は該当節に残すが、Command Listと各command節は
+現行実装を基準とする。
 
 ## Command List
 

@@ -4,9 +4,17 @@
 
 Kaironはpublic npm registryへpublishせず、`npm pack`で生成したtarballとSHA-256 manifestを使ってWindowsへ配布します。packageは`private: true`と`license=UNLICENSED`を維持します。
 
-<!-- kairon:t175-distribution-baseline -->
-<!-- kairon:t177-local-rc-distribution -->
-現在の`0.3.0` packageはT160-T176を収録し、T177で固定するLocal RCです。artifactはcurrent source commitから生成・検証し、GitHub prereleaseへ公開するまではlocal artifactとして扱います。version番号は`package.json`、`package-lock.json`、`src/index.ts`を一次情報とし、release manifestでsource commitとartifactを結び付けます。
+<!-- kairon:t192-stable-distribution -->
+現在の`0.3.0` packageはT160-T191を収録した個人運用向けStable Local Releaseです。
+artifactはcurrent source commitから生成し、package、checksum manifest、CycloneDX SBOM、
+local build provenance、release manifestを相互検証します。GitHub Releaseへのpublishと
+Stable昇格はreadiness判定から分離したapproval-bound操作です。version番号は
+`package.json`、`package-lock.json`、`src/index.ts`を一次情報とし、release manifestで
+source commitとartifactを結び付けます。
+
+`Stable Local Release`はpublic npm registryへのpublishを意味しません。利用側のupdateも
+backgroundで自動適用せず、`check`、`download`、`apply`を分離し、applyにはexact confirmと
+transactional health gateを要求します。
 
 ## Requirements
 
