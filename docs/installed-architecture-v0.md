@@ -9,7 +9,24 @@ Orchestrator は制御プロトコル、状態遷移契約、policy contract を
 
 ## 現行実装baseline
 
-T159時点のinstalled runtimeは、same-day Terminal-backed CLI Session、daily handoff、state integrity / backup、Windows daemon、approval follow-up、production workflow、Discord / Boardの外部read-only経路を持つ。以下の構成図は構想だけではなく現行Local Betaの責務境界を示す。将来拡張は各節で明示し、実装済み経路と混在させない。
+<!-- kairon:t192-stable-installed-baseline -->
+T191時点のinstalled runtimeは、same-day Terminal-backed CLI Session、daily handoff、
+state integrity / backup、Windows daemon、approval follow-up、production workflow、
+Discord / Boardの外部read-only経路に加え、transactional update / rollback、
+local metrics / SLO、alert policy、bounded self-healing、scheduled multi-project health、
+off-device DRを持つ。以下の構成図は構想だけではなく、個人運用向け
+`0.3.0` Stable Local Releaseの責務境界を示す。
+
+packageはpublic npm registryへpublishせず、user-local Windows環境へ検証済みtarballとして
+導入する。install / update / rollbackはpackage、checksum manifest、SBOM、provenance、
+release manifestを検証し、state migration、staging health、post-install healthが成功した
+場合だけ完了する。Boardはread-only、external writeはapproval required、
+credentialはenvironmentまたは明示したOS credential storeから実行時に解決する。
+
+Stable Acceptance 18 scenarioとStable Readiness 16 gateはsource releaseの配布可能性を
+判定する。個々のinstalled projectは`doctor`、`state check`、daemon / remote statusで
+継続確認し、GitHub promotion、update apply、restoreをreadinessから自動実行しない。
+将来拡張は各節で明示し、実装済み経路と混在させない。
 
 ## 責務分離
 

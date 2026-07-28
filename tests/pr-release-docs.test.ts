@@ -42,7 +42,7 @@ describe("PR and release documentation", () => {
     expect(readme).toContain("docs/installation.md");
   });
 
-  it("documents private local RC packaging and state-preserving uninstall", async () => {
+  it("documents private Stable Local packaging and state-preserving uninstall", async () => {
     const installation = await readUtf8("docs/installation.md");
     const commands = await readUtf8("docs/cli-commands-v0.md");
     const checklist = await readUtf8("docs/release-checklist-v0.md");
@@ -106,6 +106,8 @@ describe("PR and release documentation", () => {
     const notes = await readUtf8("docs/release-notes-v0.md");
     const prChecklist = await readUtf8("docs/pr-release-checklist-v0.md");
 
+    expect(readme).toContain("<!-- kairon:t192-stable-baseline -->");
+    expect(readme).toContain("Stable Local Release baseline");
     expect(readme).toContain("<!-- kairon:t175-rc-baseline -->");
     expect(readme).toContain("<!-- kairon:t177-local-rc-baseline -->");
     expect(checklist).toContain("<!-- kairon:release-readiness -->");
@@ -117,6 +119,7 @@ describe("PR and release documentation", () => {
     expect(checklist).toContain("kairon release validate");
     expect(checklist).toContain("kairon readiness rc check");
     expect(checklist).toContain("<!-- kairon:t190-stable-readiness -->");
+    expect(checklist).toContain("<!-- kairon:t192-stable-baseline -->");
     expect(checklist).toContain("kairon readiness stable check");
     expect(checklist).toContain("stable_ready=true");
     expect(checklist).toContain("14 gateがすべて`PASS`");
@@ -124,8 +127,9 @@ describe("PR and release documentation", () => {
     expect(checklist).toContain("external_required");
     expect(notes).toContain("<!-- kairon:release-notes-unreleased -->");
     expect(notes).toContain("<!-- kairon:versioning-policy -->");
-    expect(notes).toContain("## 0.3.0 - 2026-07-26");
-    expect(notes).toContain("現在のLocal RC versionは `0.3.0`");
+    expect(notes).toContain("## 0.3.0 - 2026-07-28");
+    expect(notes).toContain("現在のStable Local Release versionは `0.3.0`");
+    expect(notes).toContain("T191");
     expect(notes).toContain("kairon release validate");
     expect(prChecklist).toContain("docs/release-checklist-v0.md");
     expect(prChecklist).toContain("docs/release-notes-v0.md");

@@ -4,16 +4,17 @@ import { describe, expect, it } from "vitest";
 import { createProgram } from "../src/cli/main.js";
 import { createDefaultConfigs } from "../src/core/config/defaults.js";
 
-describe("T177 documentation inventory", () => {
-  it("identifies the T175 readiness evidence and current 0.3.0 Local RC boundary", async () => {
+describe("T192 documentation inventory", () => {
+  it("identifies the current 0.3.0 Stable Local Release boundary", async () => {
     const readme = await readUtf8("README.md");
 
-    expect(readme).toContain("<!-- kairon:t175-rc-baseline -->");
-    expect(readme).toContain("<!-- kairon:t177-local-rc-baseline -->");
-    expect(readme).toContain("Local RC baseline");
-    expect(readme).toContain("RC readiness 15 gate");
+    expect(readme).toContain("<!-- kairon:t192-stable-baseline -->");
+    expect(readme).toContain("Stable Local Release baseline");
+    expect(readme).toContain("Stable Readiness 16 gate");
+    expect(readme).toContain("Stable Acceptanceは18 / 18 scenario");
+    expect(readme).toContain("stable_ready=true");
     expect(readme).toContain("global blocker 0件");
-    expect(readme).toContain("現在のLocal RC versionは `0.3.0`");
+    expect(readme).toContain("現在のStable Local Release versionは `0.3.0`");
     expect(readme).toContain("24時間daemon");
     expect(readme).toContain("production workflow");
     expect(readme).toContain("HTTP Interactions");
@@ -25,48 +26,55 @@ describe("T177 documentation inventory", () => {
     expect(readme).not.toContain("<!-- kairon:t159-beta-baseline -->");
   });
 
-  it("keeps the RC baseline synchronized across operator documents", async () => {
+  it("keeps the Stable baseline synchronized across operator documents", async () => {
     const baselines = [
       {
+        path: "README.md",
+        marker: "<!-- kairon:t192-stable-baseline -->",
+        baseline: "T191"
+      },
+      {
         path: "docs/architecture-v0.md",
-        marker: "<!-- kairon:t175-architecture-baseline -->",
-        baseline: "T175"
+        marker: "<!-- kairon:t192-stable-architecture-baseline -->",
+        baseline: "T191"
+      },
+      {
+        path: "docs/installed-architecture-v0.md",
+        marker: "<!-- kairon:t192-stable-installed-baseline -->",
+        baseline: "T191"
       },
       {
         path: "docs/release-checklist-v0.md",
-        marker: "<!-- kairon:t175-rc-validation-baseline -->",
-        baseline: "T175"
+        marker: "<!-- kairon:t192-stable-baseline -->",
+        baseline: "T191"
       },
       {
         path: "docs/installation.md",
-        marker: "<!-- kairon:t177-local-rc-distribution -->",
-        baseline: "T177"
-      },
-      {
-        path: "docs/windows-daemon-ops-v0.md",
-        marker: "<!-- kairon:t175-daemon-baseline -->",
-        baseline: "T175"
-      },
-      {
-        path: "docs/stable-remote-operations-v0.md",
-        marker: "<!-- kairon:t175-stable-remote-baseline -->",
-        baseline: "T175"
+        marker: "<!-- kairon:t192-stable-distribution -->",
+        baseline: "T191"
       }
     ];
 
     for (const baseline of baselines) {
       const document = await readUtf8(baseline.path);
-      expect(document, `missing RC baseline in ${baseline.path}`).toContain(
+      expect(document, `missing Stable baseline in ${baseline.path}`).toContain(
         baseline.marker
       );
       expect(document, `missing ${baseline.baseline} baseline wording in ${baseline.path}`).toContain(
         baseline.baseline
       );
+      expect(document, `missing Stable Local Release wording in ${baseline.path}`).toContain(
+        "Stable Local Release"
+      );
     }
 
-    const architecture = await readUtf8("docs/architecture-v0.md");
+    const readme = await readUtf8("README.md");
     const daemon = await readUtf8("docs/windows-daemon-ops-v0.md");
-    expect(architecture).not.toContain("<!-- kairon:t159-architecture-baseline -->");
+    const remote = await readUtf8("docs/stable-remote-operations-v0.md");
+    expect(readme).toContain("<!-- kairon:t175-rc-baseline -->");
+    expect(readme).toContain("<!-- kairon:t177-local-rc-baseline -->");
+    expect(daemon).toContain("<!-- kairon:t175-daemon-baseline -->");
+    expect(remote).toContain("<!-- kairon:t175-stable-remote-baseline -->");
     expect(daemon).not.toContain("<!-- kairon:t159-daemon-baseline -->");
   });
 

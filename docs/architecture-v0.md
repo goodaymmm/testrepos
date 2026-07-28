@@ -6,10 +6,21 @@
 起動順序、日次運用、Job 実行手順は `docs/workflow-v0.md` に分離する。
 実装 module 構成と内部 API は `docs/implementation-skeleton-v0.md` に分離する。
 
-## T175実装baseline
+## Stable Local Release実装baseline
 
-<!-- kairon:t175-architecture-baseline -->
-T175時点では、file-based canonical state、公式CLI session、approval / review / Git guard、Windows daemon、Watchdog / Incident recovery、branch / join / compensationを含むproduction workflow、durable checkpoint store、capability trust policy、hybrid local RAG、multi-project supervisor、Discord Gateway / HTTP Interactions、stable remote read-only Board、reproducible local package、verified update / rollback、Release Candidate readiness 14 gateまでを実装・operation test済みである。
+<!-- kairon:t192-stable-architecture-baseline -->
+T191時点では、file-based canonical state、公式CLI session、approval / review / Git guard、
+Windows daemon、Watchdog / Incident recovery、branch / join / compensationを含む
+production workflow、durable checkpoint store、capability trust policy、hybrid local RAG、
+multi-project supervisor、Discord Gateway / HTTP Interactions、stable remote read-only Board、
+reproducible `0.3.0` package、SBOM / provenance、transactional update / rollback、
+local metrics / SLO、alert policy、bounded self-healing、off-device DR、
+performance / security baselineまでを実装・operation test済みである。
+
+T189 Stable Acceptanceは18 / 18 scenario、T190 Stable Readinessは16 / 16 gateが`PASS`し、
+T191のblocker修正後のcurrent sourceで`stable_ready=true`、global blocker 0件である。
+この判定はStable Local Releaseとして公開可能であることを示すが、GitHub Releaseのpublishや
+Stable昇格を自動実行しない。
 
 `.kairon/`をcanonical sourceとする境界、external writeのapproval、Boardのread-only、public npmへpublishしない方針は継続する。credentialはenvironmentまたは明示したOS credential storeから実行時に解決し、canonical stateやevidenceへ保存しない。`.kairon/experimental/workflows/`はcandidate compatibility pathであり、production workflow stateは`.kairon/workflows/`に保存する。
 
@@ -22,6 +33,11 @@ T188ではdependency / lockfile / license、archive / portable path、credential
 HTTP、child process、generated artifact、canonical stateを`security_baseline_result`へ
 集約する。既存`SECURITY_INTEGRITY` gateはexternal-requiredとなり、offline checkが
 PASSでもfreshなnpm audit evidenceがなければ`SETUP_REQUIRED`とする。
+
+T189-T190ではclean Windows、GitHub、Discord、stable remote、DRを含む18 scenarioを
+current source commitへbindし、16 gateのfreshness、SHA-256、artifact kind、global blockerを
+再検証する。readiness resultとexternal mutationは分離し、promotion、update、restoreは
+それぞれ既存のapproval / exact confirm境界を通す。
 
 ## 前提
 
