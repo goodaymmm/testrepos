@@ -54,6 +54,7 @@ export type GitHubReleaseRecord = {
   id: number;
   tag_name: string;
   name: string;
+  target_commitish?: string;
   draft: boolean;
   prerelease: boolean;
   html_url: string;
@@ -427,6 +428,7 @@ function normalizeRelease(
     id: readPositiveInteger(value.id, operation),
     tag_name: readString(value.tag_name, operation),
     name: readString(value.name, operation),
+    target_commitish: readString(value.target_commitish, operation),
     draft: readBoolean(value.draft, operation),
     prerelease: readBoolean(value.prerelease, operation),
     html_url: readString(value.html_url, operation),

@@ -25,9 +25,9 @@ import {
 } from "../release/release-manifest.js";
 import {
   compareCoreVersions,
-  isVersionAllowedByChannel,
   parseCoreVersion,
   requireUpdateChannel,
+  selectReleaseForChannel,
   type UpdateChannelConfig
 } from "./channel.js";
 import {
@@ -598,16 +598,7 @@ async function selectRemoteCandidate(
     token,
     perPage: 100
   });
-  const eligible = releases
-    .filter((release) => !release.draft)
-    .map((release) => ({ release, version: versionFromTag(release.tag_name) }))
-    .filter((entry): entry is { release: GitHubReleaseRecord; version: string } =>
-      entry.version !== null &&
-      isVersionAllowedByChannel(config, entry.version, entry.release.prerelease) &&
-      (requestedVersion === undefined || entry.version === requestedVersion)
-    )
-    .sort((left, right) => compareCoreVersions(right.version, left.version));
-  const selected = eligible[0];
+  const selected = selectReleaseForChannel(config, releases, requestedVersion);
   if (selected === undefined) {
     throw new Error(
       requestedVersion === undefined
@@ -724,11 +715,6 @@ async function requireGitHubToken(
     );
   }
   return resolved.value;
-}
-
-function versionFromTag(tag: string): string | null {
-  const match = /^v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/u.exec(tag);
-  return match?.[1] ?? null;
 }
 
 function assertRuntimeCompatible(manifest: ReleaseManifest): void {

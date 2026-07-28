@@ -163,6 +163,7 @@ import {
   releaseGitHubVerifyCommand,
   releaseStablePromotionApplyCommand,
   releaseStablePromotionPlanCommand,
+  releaseStableVerifyCommand,
   releaseManifestCommand,
   releaseNotesCommand,
   releasePackCommand,
@@ -2396,6 +2397,38 @@ export function createProgram(): Command {
       output?: string;
     }) => {
       console.log(await releaseManifestCommand(process.cwd(), options));
+    });
+
+  const releaseStable = release
+    .command("stable")
+    .description("Verify a published Stable release through read-only GitHub access.");
+
+  releaseStable
+    .command("verify")
+    .description("Download and verify the current published Stable release.")
+    .requiredOption("--version <version>", "Stable release version, for example 0.3.0.")
+    .requiredOption("--repository <owner/repo>", "Source GitHub repository.")
+    .option("--base-branch <branch>", "Remote source branch. Defaults to main.")
+    .option("--token-env <envName>", "Token environment variable. Defaults to GH_TOKEN then GITHUB_TOKEN.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: {
+      version: string;
+      repository: string;
+      baseBranch?: string;
+      tokenEnv?: string;
+      format: string;
+    }) => {
+      if (options.format !== "text" && options.format !== "json") {
+        throw new Error("Stable verification format must be text or json.");
+      }
+      const result = await releaseStableVerifyCommand(process.cwd(), {
+        ...options,
+        format: options.format
+      });
+      console.log(result.text);
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
     });
 
   const releaseGitHub = release
