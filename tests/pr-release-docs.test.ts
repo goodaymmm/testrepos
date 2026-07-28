@@ -66,7 +66,12 @@ describe("PR and release documentation", () => {
     expect(commands).toContain("kairon release github plan");
     expect(commands).toContain("kairon release github publish");
     expect(commands).toContain("kairon release github verify");
+    expect(commands).toContain("kairon release stable verify");
     expect(checklist).toContain("<!-- kairon:github-release-distribution -->");
+    expect(checklist).toContain("### Published Stable Verification");
+    expect(checklist).toContain(
+      ".kairon/release/stable-verifications/STV-*.json"
+    );
     expect(checklist).toContain("docs/release-provenance-v0.md");
   });
 

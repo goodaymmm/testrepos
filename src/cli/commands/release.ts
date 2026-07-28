@@ -48,6 +48,12 @@ import {
   type StablePromotionDependencies,
   type StablePromotionPlanRequest
 } from "../../release/stable-promotion.js";
+import {
+  formatStableReleaseVerification,
+  verifyPublishedStableRelease,
+  type StableReleaseVerificationDependencies,
+  type VerifyPublishedStableReleaseInput
+} from "../../release/stable-verification.js";
 
 export type ReleaseCheckResult = {
   schema_version: string;
@@ -166,6 +172,10 @@ export type ReleaseStablePromotionApplyCommandOptions = Omit<
   StablePromotionApplyRequest,
   "planId"
 >;
+export type ReleaseStableVerifyCommandOptions =
+  VerifyPublishedStableReleaseInput & {
+    format?: "text" | "json";
+  };
 
 type PackageJson = {
   version?: unknown;
@@ -363,6 +373,26 @@ export async function releaseStablePromotionApplyCommand(
     await applyStablePromotion(projectRoot, { planId, ...options }, deps),
     projectRoot
   );
+}
+
+export async function releaseStableVerifyCommand(
+  projectRoot: string,
+  options: ReleaseStableVerifyCommandOptions,
+  deps: StableReleaseVerificationDependencies = {}
+): Promise<{ text: string; ok: boolean }> {
+  const execution = await verifyPublishedStableRelease(
+    projectRoot,
+    options,
+    deps
+  );
+  return {
+    text: formatStableReleaseVerification(
+      execution,
+      projectRoot,
+      options.format ?? "text"
+    ),
+    ok: execution.result.status === "PASS"
+  };
 }
 
 export async function collectReleaseCheck(

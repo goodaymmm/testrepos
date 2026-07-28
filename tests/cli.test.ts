@@ -820,6 +820,7 @@ describe("createProgram", () => {
       "pack",
       "provenance",
       "sbom",
+      "stable",
       "validate",
       "verify"
     ]);
@@ -850,6 +851,17 @@ describe("createProgram", () => {
         .find((command) => command.name() === "bump")
         ?.options.map((option) => option.long)
     ).toEqual(expect.arrayContaining(["--type", "--version", "--dry-run", "--write"]));
+    const stable = release?.commands.find((command) => command.name() === "stable");
+    expect(stable?.commands.map((command) => command.name())).toEqual(["verify"]);
+    expect(
+      stable?.commands[0]?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining([
+      "--version",
+      "--repository",
+      "--base-branch",
+      "--token-env",
+      "--format"
+    ]));
     const github = release?.commands.find((command) => command.name() === "github");
     expect(github?.commands.map((command) => command.name()).sort()).toEqual([
       "plan",

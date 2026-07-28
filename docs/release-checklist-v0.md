@@ -288,6 +288,30 @@ kairon release github verify `
 - 完全一致したStableへの再実行は`already_promoted`とし、GitHub writeを行わない。
 - 成功時はsanitized auditに加えて`.kairon/update/stable-release.json`へStable versionを記録する。
 
+### Published Stable Verification
+
+Stable昇格後は、local artifactを参照せず利用者と同じremote releaseをread-onlyで再取得します。
+
+```powershell
+kairon release stable verify `
+  --version 0.3.0 `
+  --repository owner/repo
+
+kairon release stable verify `
+  --version 0.3.0 `
+  --repository owner/repo `
+  --format json
+```
+
+- `draft=false`、`prerelease=false`、version、tag、release nameを検証する。
+- package、checksum manifest、release manifest、SBOM、provenanceのexact 5 assetをdownloadする。
+- downloadしたbundleは`consumer` contextで検証し、tag SHAとmanifest source SHAを照合する。
+- integrityとStable channel currentnessを別checkとして記録する。
+- resultは`.kairon/release/stable-verifications/STV-*.json`へatomic writeする。
+- temp downloadは成功・失敗にかかわらず削除する。
+- raw GitHub response、signed download URL、token、credential名はresultへ保存しない。
+- verifyはrelease、tag、assetを作成・更新・削除しない。
+
 ## Verified Update And Rollback
 
 release利用側では`stable | beta | pinned`のmanual channelを明示設定し、check / download / applyを分離します。
@@ -350,3 +374,4 @@ kairon release notes --since <ref> --write
 - SBOM、provenance、release manifestを同じpackageとsource commitから生成し、
   `release verify`で相互bindingが通っている。
 - GitHub配布を行う場合は`release github verify`が`status=verified`を返している。
+- Stable昇格後は`release stable verify`がintegrity / currentnessともに`PASS`を返している。

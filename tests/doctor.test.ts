@@ -37,7 +37,7 @@ describe("runDoctor", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.summary).toMatchObject({ error: 0, warning: 1 });
+    expect(result.summary).toMatchObject({ error: 0, warning: 2 });
     expect(statusById(result, "git.repository")).toBe("pass");
     expect(statusById(result, "git.gitignore")).toBe("pass");
     expect(statusById(result, "cli.availability")).toBe("pass");
@@ -51,6 +51,10 @@ describe("runDoctor", () => {
     expect(statusById(result, "remote.profile")).toBe("pass");
     expect(statusById(result, "runtime.recovery")).toBe("pass");
     expect(statusById(result, "state.disaster_recovery")).toBe("pass");
+    expect(statusById(result, "release.stable_verification")).toBe("warning");
+    expect(checkById(result, "release.stable_verification")?.details).toContain(
+      "status=not_run"
+    );
     expect(checkById(result, "state.disaster_recovery")?.details).toContain(
       "status=not_configured"
     );

@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { resolveInside } from "../core/fs/paths.js";
+import type { GitHubReleaseRecord } from "../github/release-client.js";
 
 export type UpdateChannel = "stable" | "beta" | "pinned";
 
@@ -130,6 +131,28 @@ export function isVersionAllowedByChannel(
     return true;
   }
   return version === config.pinned_version;
+}
+
+export function selectReleaseForChannel(
+  config: UpdateChannelConfig,
+  releases: GitHubReleaseRecord[],
+  requestedVersion?: string
+): { release: GitHubReleaseRecord; version: string } | undefined {
+  const requested = requestedVersion === undefined
+    ? undefined
+    : normalizeVersion(requestedVersion);
+  return releases
+    .filter((release) => !release.draft)
+    .map((release) => ({
+      release,
+      version: versionFromTag(release.tag_name)
+    }))
+    .filter((entry): entry is { release: GitHubReleaseRecord; version: string } =>
+      entry.version !== undefined &&
+      isVersionAllowedByChannel(config, entry.version, entry.release.prerelease) &&
+      (requested === undefined || entry.version === requested)
+    )
+    .sort((left, right) => compareCoreVersions(right.version, left.version))[0];
 }
 
 export function updateChannelConfirmation(
@@ -281,4 +304,12 @@ function isCoreVersion(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function versionFromTag(tag: string): string | undefined {
+  const match = /^v(.+)$/u.exec(tag.trim());
+  if (match === null || !isCoreVersion(match[1])) {
+    return undefined;
+  }
+  return match[1];
 }

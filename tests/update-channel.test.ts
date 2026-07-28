@@ -4,9 +4,11 @@ import { describe, expect, it } from "vitest";
 import {
   compareCoreVersions,
   isVersionAllowedByChannel,
+  selectReleaseForChannel,
   setUpdateChannel,
   showUpdateChannel
 } from "../src/update/channel.js";
+import type { GitHubReleaseRecord } from "../src/github/release-client.js";
 import {
   readStableReleasePromotion,
   recordStableReleasePromotion
@@ -111,4 +113,46 @@ describe("update channel", () => {
       status: "unconfigured"
     });
   });
+
+  it("selects the latest release through the same Stable channel contract", () => {
+    const config = {
+      schema_version: "0.1" as const,
+      channel: "stable" as const,
+      repository: "goodaymmm/Kairon",
+      base_branch: "main",
+      automatic_updates: false as const,
+      updated_at: "2026-07-28T00:00:00.000Z"
+    };
+    const releases = [
+      release(1, "0.3.0", false),
+      release(2, "0.3.1", true),
+      release(3, "0.2.9", false),
+      { ...release(4, "0.4.0", false), draft: true }
+    ];
+
+    expect(selectReleaseForChannel(config, releases)).toMatchObject({
+      version: "0.3.0",
+      release: { id: 1 }
+    });
+    expect(selectReleaseForChannel(config, releases, "0.2.9")).toMatchObject({
+      version: "0.2.9",
+      release: { id: 3 }
+    });
+  });
 });
+
+function release(
+  id: number,
+  version: string,
+  prerelease: boolean
+): GitHubReleaseRecord {
+  return {
+    id,
+    tag_name: `v${version}`,
+    name: `Kairon ${version}`,
+    draft: false,
+    prerelease,
+    html_url: "https://example.invalid/release",
+    assets: []
+  };
+}

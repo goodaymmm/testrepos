@@ -46,6 +46,9 @@ import {
   evaluateStableReadiness,
   stableReadinessManifestExists
 } from "../readiness/stable-readiness.js";
+import {
+  inspectLatestStableReleaseVerification
+} from "../release/stable-verification.js";
 import { resolveWorkflowRuntimeConfig } from "../workflow/config.js";
 import { inspectWorkflowCheckpointStore } from "../workflow/checkpoint-manager.js";
 import { inspectCapabilityPolicyConfig } from "../policy/trust-policy.js";
@@ -264,6 +267,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkWatchdogAlerts(options.projectRoot));
   checks.push(await checkRuntimeObservability(options.projectRoot));
   checks.push(await checkRagStatus(options.projectRoot));
+  checks.push(await checkPublishedStableVerification(options.projectRoot));
   if (await readinessManifestExists(options.projectRoot)) {
     checks.push(await checkBetaReadiness(options.projectRoot));
   }
@@ -2259,6 +2263,54 @@ async function checkStableReadiness(
       "Repair the Stable readiness manifest and run kairon readiness stable check."
     );
   }
+}
+
+async function checkPublishedStableVerification(
+  projectRoot: string
+): Promise<DoctorCheck> {
+  const id = "release.stable_verification";
+  const title = "Published Stable release verification";
+  const latest = await inspectLatestStableReleaseVerification(projectRoot);
+  if (latest.status === "missing") {
+    return warning(
+      id,
+      title,
+      ["status=not_run"],
+      "run kairon release stable verify --version <version> --repository <owner/repo>"
+    );
+  }
+  if (latest.status === "corrupt") {
+    return warning(
+      id,
+      title,
+      ["status=corrupt"],
+      "remove or repair the latest Stable verification artifact and rerun the command"
+    );
+  }
+  const result = latest.result;
+  const expired = Date.parse(result.expires_at) <= Date.now();
+  const details = [
+    `status=${result.status}`,
+    `integrity_status=${result.integrity_status}`,
+    `currentness_status=${result.currentness_status}`,
+    `repository=${result.repository}`,
+    `version=${result.version}`,
+    `release_id=${result.release_id ?? "none"}`,
+    `credential_provider=${result.credential_provider ?? "none"}`,
+    `checked_at=${result.checked_at}`,
+    `expires_at=${result.expires_at}`,
+    `expired=${expired}`,
+    `reasons=${result.reasons.join(",") || "none"}`
+  ];
+  const rerun = [
+    "kairon release stable verify",
+    `--version ${result.version}`,
+    `--repository ${result.repository}`,
+    `--base-branch ${result.base_branch}`
+  ].join(" ");
+  return result.status === "PASS" && !expired
+    ? pass(id, title, details)
+    : warning(id, title, details, rerun);
 }
 
 function pass(id: string, title: string, details: string[]): DoctorCheck {

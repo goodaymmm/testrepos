@@ -61,6 +61,7 @@ describe("GitHub release client", () => {
       release: {
         id: 162,
         tag_name: "v0.2.0",
+        target_commitish: sha,
         draft: false,
         prerelease: true,
         assets: [{ id: 1, name: "kairon-0.2.0.tgz", size_bytes: 12 }]
@@ -211,6 +212,7 @@ function releaseResponse(input: { draft: boolean }): Record<string, unknown> {
     id: 162,
     tag_name: "v0.2.0",
     name: "Kairon 0.2.0 Local Beta",
+    target_commitish: sha,
     draft: input.draft,
     prerelease: true,
     html_url: "https://github.com/goodaymmm/Kairon/releases/tag/v0.2.0",

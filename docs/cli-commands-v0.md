@@ -93,6 +93,7 @@ kairon release sbom --manifest <manifest.json> [--output <sbom.cdx.json>]
 kairon release provenance --package <package.tgz> --manifest <manifest.json> --sbom <sbom.cdx.json> [--output <provenance.json>]
 kairon release manifest --package <package.tgz> --manifest <manifest.json> [--sbom <sbom.cdx.json> --provenance <provenance.json>] [--output <path>]
 kairon release verify <package.tgz> [--manifest <manifest.json>] [--release-manifest <release-manifest.json>] [--verification-context source|consumer]
+kairon release stable verify --version <version> --repository <owner/repo> [--base-branch <branch>] [--token-env <envName>] [--format text|json]
 kairon release notes --since <ref> [--write]
 kairon release bump --version <version> [--write]
 kairon release github promote plan --version <version> --repository <owner/repo> [--expires-in-minutes <minutes>]
@@ -1116,6 +1117,8 @@ kairon release github verify --version 0.2.0 --repository owner/repo
 kairon release github promote plan --version 0.3.0 --repository owner/repo --expires-in-minutes 30
 kairon release github promote apply REL-0002 --approval-id APR-0002 --confirm REL-0002
 kairon release github verify --version 0.3.0 --repository owner/repo --stable
+kairon release stable verify --version 0.3.0 --repository owner/repo
+kairon release stable verify --version 0.3.0 --repository owner/repo --format json
 ```
 
 `release validate` は `package.json.version` と `KAIRON_VERSION` のcore SemVer形式と同期、
@@ -1140,6 +1143,13 @@ public npm registryへのpublishは行わない。詳細は`docs/release-provena
 `release github plan`は検証済みの`release-artifacts/<version>/`、cleanなlocal HEAD、remote base branch SHA、既存tag / release / assetを照合し、高risk approvalへbindした`.kairon/release/github/plans/<plan-id>.json`を作る。既定はprereleaseで、まだprereleaseとして公開していない新規Stable releaseだけ`--stable`を明示できる。既存prereleaseの昇格には専用の`release github promote`を使う。tokenは`--token-env`、`GH_TOKEN`、`GITHUB_TOKEN`、明示設定したWindows Credential Manager参照の順で解決し、値はartifactやCLI出力へ保存しない。
 
 `release github publish`はplanに一致するapproved approval、`--confirm`の完全一致、local / remote source SHA、asset hashを再検証してからtag、draft release、release公開を順に実行する。旧manifestは3 asset、attestation付きmanifestはSBOM / provenanceを含む5 assetを公開する。同じtag / release / assetが完全一致する再実行は成功し、途中までuploadされた場合は検証済みassetを再利用する。同名assetの内容不一致、重複、source driftはmutationを続行せずblockedにする。`release github verify`はremote assetを再downloadし、sizeとSHA-256をlocal release manifestへ照合する。
+
+`release stable verify`は公開済みStable releaseを利用者視点でread-only検証する。
+`draft=false`、`prerelease=false`、version / tag / release name、exact 5 asset、
+consumer manifest binding、tag / manifest source SHA、Stable channel currentnessを確認する。
+integrityとcurrentnessは別statusで表示し、resultを
+`.kairon/release/stable-verifications/STV-*.json`へatomic保存する。GitHubへのwrite、
+raw API response、signed download URL、token保存は行わず、temp downloadは必ず削除する。
 
 `release github promote plan`は公開済みprereleaseをread-onlyで検査し、release ID、tag SHA、
 source commit、5 assetのID / digest、SBOM / provenance digest、expiryを高risk approvalへ
