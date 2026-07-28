@@ -1,4 +1,5 @@
 import { mkdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeProject } from "../src/cli/commands/init.js";
@@ -37,7 +38,7 @@ describe("runDoctor", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.summary).toMatchObject({ error: 0, warning: 2 });
+    expect(result.summary).toMatchObject({ error: 0, warning: 3 });
     expect(statusById(result, "git.repository")).toBe("pass");
     expect(statusById(result, "git.gitignore")).toBe("pass");
     expect(statusById(result, "cli.availability")).toBe("pass");
@@ -55,6 +56,10 @@ describe("runDoctor", () => {
     expect(checkById(result, "release.stable_verification")?.details).toContain(
       "status=not_run"
     );
+    expect(statusById(result, "release.post_release_health")).toBe("warning");
+    expect(checkById(result, "release.post_release_health")?.details).toContain(
+      "decision=not_run"
+    );
     expect(checkById(result, "state.disaster_recovery")?.details).toContain(
       "status=not_configured"
     );
@@ -69,6 +74,117 @@ describe("runDoctor", () => {
     expect(checkById(result, "cli.availability")?.details).toContain(
       "antigravity(gemini): agy available=true"
     );
+  });
+
+  it("surfaces continue and rollback_required post-release decisions", async () => {
+    const root = await createInitializedGitProject();
+    const now = new Date();
+    const artifactPath = path.join(
+      root,
+      ".kairon",
+      "release",
+      "post-release-health",
+      "latest.json"
+    );
+    const baseArtifact = withPostReleaseDigest({
+      schema_version: "0.1",
+      artifact_kind: "post_release_health_result",
+      decision: "continue",
+      release: {
+        verification_id: "STV-20260728080000-aaaaaaaaaaaa",
+        release_id: 501,
+        repository: "goodaymmm/Kairon",
+        version: "0.3.0",
+        tag: "v0.3.0",
+        source_commit: "a".repeat(40),
+        artifact_digest: "b".repeat(64)
+      },
+      update: {
+        transaction_id: "UTX-0001",
+        download_id: "UPD-0001",
+        transaction_status: "completed",
+        rollback_target: "0.2.0",
+        verified_cache: true,
+        approval_required: true,
+        exact_command:
+          "kairon update rollback --to 0.2.0 --confirm 0.2.0"
+      },
+      observation: {
+        required_minutes: 60,
+        canary_finalized_at: now.toISOString(),
+        slo_window_start: now.toISOString(),
+        slo_window_end: now.toISOString(),
+        completed: true
+      },
+      incidents: {
+        unresolved_warning: 0,
+        unresolved_high: 0,
+        unresolved_critical: 0,
+        references: []
+      },
+      security: {
+        status: "PASS",
+        high: 0,
+        critical: 0,
+        secret_exposures: 0
+      },
+      state: {
+        status: "ok",
+        errors: 0,
+        warnings: 0
+      },
+      evidence: [],
+      checks: [],
+      reasons: [],
+      remediation: [],
+      read_only_guard: {
+        project_state_digest_before: "c".repeat(64),
+        project_state_digest_after: "c".repeat(64),
+        installed_state_digest_before: "d".repeat(64),
+        installed_state_digest_after: "d".repeat(64),
+        mutation_detected: false
+      },
+      generated_at: now.toISOString(),
+      expires_at: new Date(now.getTime() + 60_000).toISOString(),
+      rollback_automatic: false,
+      approval_automatic: false
+    });
+    await writeJsonFileAtomic(artifactPath, baseArtifact);
+
+    const continued = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      githubBranchProtectionClient: async () => ({
+        kind: "protected",
+        requiredPullRequestReviews: true,
+        requiredStatusChecks: true,
+        enforceAdmins: true
+      })
+    });
+    expect(statusById(continued, "release.post_release_health")).toBe("pass");
+    expect(
+      checkById(continued, "release.post_release_health")?.details
+    ).toContain("decision=continue");
+
+    await writeJsonFileAtomic(artifactPath, withPostReleaseDigest({
+      ...baseArtifact,
+      decision: "rollback_required",
+      reasons: ["transaction_post_check_failed"]
+    }));
+    const rollback = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      githubBranchProtectionClient: async () => ({
+        kind: "protected",
+        requiredPullRequestReviews: true,
+        requiredStatusChecks: true,
+        enforceAdmins: true
+      })
+    });
+    expect(statusById(rollback, "release.post_release_health")).toBe("error");
+    expect(
+      checkById(rollback, "release.post_release_health")?.next_action
+    ).toBe("kairon update rollback --to 0.2.0 --confirm 0.2.0");
   });
 
   it("warns for invalid alert policy diagnostics without losing watchdog state", async () => {
@@ -1317,6 +1433,38 @@ async function enableDiscordProvider(root: string): Promise<void> {
   const discord = providers.discord as Record<string, unknown>;
   discord.enabled = true;
   await writeJsonFileAtomic(notificationsPath, notifications);
+}
+
+function withPostReleaseDigest<T extends {
+  decision: string;
+  evidence: unknown[];
+  checks: unknown[];
+  incidents: { references: string[] };
+}>(artifact: T): T & { health_id: string; state_digest: string } {
+  const stateDigest = createHash("sha256")
+    .update(JSON.stringify({
+      evidence: artifact.evidence.map((entry) => {
+        const reference = entry as {
+          kind?: unknown;
+          sha256?: unknown;
+          status?: unknown;
+        };
+        return {
+          kind: reference.kind,
+          sha256: reference.sha256,
+          status: reference.status
+        };
+      }),
+      decision: artifact.decision,
+      checks: artifact.checks,
+      incidents: artifact.incidents.references
+    }))
+    .digest("hex");
+  return {
+    ...artifact,
+    health_id: `PRH-20260728090000-${stateDigest.slice(0, 12)}`,
+    state_digest: stateDigest
+  };
 }
 
 function checkById(result: DoctorResult, id: string) {

@@ -54,6 +54,12 @@ import {
   type StableReleaseVerificationDependencies,
   type VerifyPublishedStableReleaseInput
 } from "../../release/stable-verification.js";
+import {
+  evaluatePostReleaseHealth,
+  formatPostReleaseHealthExecution,
+  writePostReleaseHealthReport,
+  type EvaluatePostReleaseHealthOptions
+} from "../../release/post-release-health.js";
 
 export type ReleaseCheckResult = {
   schema_version: string;
@@ -176,6 +182,16 @@ export type ReleaseStableVerifyCommandOptions =
   VerifyPublishedStableReleaseInput & {
     format?: "text" | "json";
   };
+export type ReleaseHealthCheckCommandOptions = Omit<
+  EvaluatePostReleaseHealthOptions,
+  "now"
+> & {
+  format?: "text" | "json";
+};
+export type ReleaseHealthReportCommandOptions = {
+  format?: "json" | "markdown";
+  output?: string;
+};
 
 type PackageJson = {
   version?: unknown;
@@ -393,6 +409,39 @@ export async function releaseStableVerifyCommand(
     ),
     ok: execution.result.status === "PASS"
   };
+}
+
+export async function releaseHealthCheckCommand(
+  projectRoot: string,
+  options: ReleaseHealthCheckCommandOptions
+): Promise<{ text: string; decision: string; ok: boolean }> {
+  const execution = await evaluatePostReleaseHealth(projectRoot, options);
+  return {
+    text: formatPostReleaseHealthExecution(
+      execution,
+      projectRoot,
+      options.format ?? "text"
+    ),
+    decision: execution.result.decision,
+    ok: execution.result.decision === "continue"
+  };
+}
+
+export async function releaseHealthReportCommand(
+  projectRoot: string,
+  options: ReleaseHealthReportCommandOptions = {}
+): Promise<string> {
+  const result = await writePostReleaseHealthReport(projectRoot, {
+    format: options.format ?? "markdown",
+    output: options.output
+  });
+  return result.output_path === undefined
+    ? result.text
+    : [
+        result.text.trimEnd(),
+        "",
+        `report=${result.output_path}`
+      ].join("\n");
 }
 
 export async function collectReleaseCheck(

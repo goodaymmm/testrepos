@@ -271,6 +271,52 @@ const profiles: OperationTestCommandProfile[] = [
       "unknown_sandbox_terminated=false",
       "credential and source checkout values are absent"
     ]
+  },
+  {
+    id: "post-release-health",
+    title: "T196 Post-release health and rollback decision",
+    task_ids: ["T196"],
+    description:
+      "Bind Stable, canary, update, SLO, incident, security, and state evidence into a read-only rollout decision.",
+    required_env: [
+      "KAIRON_POST_RELEASE_VERIFICATION_PATH",
+      "KAIRON_POST_RELEASE_CANARY_PATH",
+      "KAIRON_POST_RELEASE_TRANSACTION"
+    ],
+    setup: [
+      "Complete T194 Stable verification and T195 Clean Windows canary first.",
+      "Retain the completed update transaction, verified rollback cache, fresh SLO summary, and security baseline.",
+      "The command reports an exact rollback command but never executes or approves it."
+    ],
+    commands: [
+      {
+        kind: "powershell",
+        lines: [
+          "$POST_RELEASE_ARGS = @(",
+          "  \"release\", \"health\", \"check\",",
+          "  \"--release-verification\", $env:KAIRON_POST_RELEASE_VERIFICATION_PATH,",
+          "  \"--canary\", $env:KAIRON_POST_RELEASE_CANARY_PATH,",
+          "  \"--transaction\", $env:KAIRON_POST_RELEASE_TRANSACTION,",
+          "  \"--format\", \"json\"",
+          ")",
+          "if (-not [string]::IsNullOrWhiteSpace($env:KAIRON_POST_RELEASE_SLO_PATH)) {",
+          "  $POST_RELEASE_ARGS += @(\"--slo\", $env:KAIRON_POST_RELEASE_SLO_PATH)",
+          "}",
+          "if (-not [string]::IsNullOrWhiteSpace($env:KAIRON_POST_RELEASE_SECURITY_PATH)) {",
+          "  $POST_RELEASE_ARGS += @(\"--security\", $env:KAIRON_POST_RELEASE_SECURITY_PATH)",
+          "}",
+          "kairon @POST_RELEASE_ARGS"
+        ]
+      }
+    ],
+    expected_evidence: [
+      "decision is continue, hold, or rollback_required",
+      "release ID, source commit, download, and update transaction are bound",
+      "observation window, SLO, incidents, security, and state are classified",
+      "rollback target uses a verified cache and requires explicit approval",
+      "rollback_automatic=false and approval_automatic=false",
+      "project and installed state digests are unchanged"
+    ]
   }
 ];
 
