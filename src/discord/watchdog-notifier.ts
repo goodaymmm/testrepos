@@ -35,6 +35,17 @@ export type DiscordWatchdogNotificationResult = {
   }>;
 };
 
+export type ScheduledUpdateDiscordNotification = {
+  repository: string;
+  channel: string;
+  version: string;
+  release_id: number;
+  status: "new_release" | "pinned_mismatch";
+  download_command: string;
+  fingerprint: string;
+  aggregated?: boolean;
+};
+
 type PendingAlert = {
   alert: WatchdogAlert;
   pending: WatchdogPendingNotification;
@@ -172,6 +183,63 @@ export async function notifyPendingDiscordWatchdogAlerts(
     );
   }
   return result;
+}
+
+export async function createDiscordRestNotificationChannel(
+  botToken: string,
+  channelId: string
+): Promise<DiscordApprovalChannel> {
+  const { REST, Routes } = await import("discord.js");
+  const rest = new REST({ version: "10" }).setToken(botToken);
+  return {
+    id: channelId,
+    send: async (payload) => {
+      const response = (await rest.post(Routes.channelMessages(channelId), {
+        body: payload
+      })) as { id?: unknown };
+      return {
+        id: typeof response.id === "string" ? response.id : undefined
+      };
+    }
+  };
+}
+
+export async function notifyScheduledUpdateRelease(
+  channel: DiscordApprovalChannel,
+  input: ScheduledUpdateDiscordNotification
+): Promise<{ message_id?: string }> {
+  const title = input.aggregated
+    ? "Kairon scheduled update summary"
+    : "Kairon update available";
+  const sent = await channel.send(withIdempotency({
+    content: `${title}: ${input.repository} ${input.version}`,
+    allowedMentions: { parse: [] },
+    embeds: [
+      {
+        title,
+        description:
+          "A verified release is available. Download and apply remain manual.",
+        color: input.status === "new_release" ? 0x1976d2 : 0xf9a825,
+        fields: [
+          { name: "Repository", value: input.repository, inline: true },
+          { name: "Channel", value: input.channel, inline: true },
+          { name: "Version", value: input.version, inline: true },
+          {
+            name: "Release",
+            value: String(input.release_id),
+            inline: true
+          },
+          { name: "Status", value: input.status, inline: true },
+          {
+            name: "Manual download",
+            value: `\`${input.download_command}\``,
+            inline: false
+          }
+        ]
+      }
+    ]
+  }, input.fingerprint));
+  return { message_id: sent.id };
 }
 
 async function sendSingle(

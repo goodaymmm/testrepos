@@ -115,6 +115,49 @@ describe("kairon-daemon-task.ps1", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
   });
+
+  it("keeps the scheduled update task read-only and secret-free", async () => {
+    const script = await readFile(
+      path.resolve("scripts", "kairon-update-check-task.ps1"),
+      "utf8"
+    );
+
+    expect(script).toContain("Register-ScheduledTask");
+    expect(script).toContain("Unregister-ScheduledTask");
+    expect(script).toContain("update schedule run");
+    expect(script).toContain("Test-KaironManagedTask");
+    expect(script).toContain("Refusing to remove a task");
+    expect(script).toContain("-MultipleInstances IgnoreNew");
+    expect(script).not.toContain("update download");
+    expect(script).not.toContain("update apply");
+    expect(script).not.toContain("update rollback");
+    expect(script).not.toContain("GH_TOKEN");
+    expect(script).not.toContain("GITHUB_TOKEN");
+    expect(script).not.toContain("KAIRON_DISCORD");
+  });
+
+  runIfPowerShell("parses the scheduled update helper", async () => {
+    const scriptPath = path.resolve(
+      "scripts",
+      "kairon-update-check-task.ps1"
+    );
+    const result = spawnSync(
+      powershell!,
+      [
+        "-NoProfile",
+        "-Command",
+        `[scriptblock]::Create((Get-Content -LiteralPath '${scriptPath.replaceAll("'", "''")}' -Raw)) | Out-Null`
+      ],
+      {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        timeout: 10_000
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+  });
 });
 
 async function readScript(): Promise<string> {

@@ -278,6 +278,7 @@ async function createPackageFixture(root: string): Promise<{
       "scripts/install-local-beta.ps1",
       "scripts/update-local-beta.ps1",
       "scripts/uninstall-local-beta.ps1",
+      "scripts/kairon-update-check-task.ps1",
       "docs/installation.md",
       "README.md"
     ]
@@ -290,7 +291,8 @@ async function createPackageFixture(root: string): Promise<{
     { path: "package/scripts/local-beta-common.ps1", content: "# common\n" },
     { path: "package/scripts/install-local-beta.ps1", content: "# install\n" },
     { path: "package/scripts/update-local-beta.ps1", content: "# update\n" },
-    { path: "package/scripts/uninstall-local-beta.ps1", content: "# uninstall\n" }
+    { path: "package/scripts/uninstall-local-beta.ps1", content: "# uninstall\n" },
+    { path: "package/scripts/kairon-update-check-task.ps1", content: "# scheduled update\n" }
   ].map((entry) => ({
     path: entry.path,
     content: Buffer.from(entry.content, "utf8")

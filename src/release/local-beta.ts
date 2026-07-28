@@ -109,7 +109,8 @@ const requiredPackageFiles = [
   "package/scripts/local-beta-common.ps1",
   "package/scripts/install-local-beta.ps1",
   "package/scripts/update-local-beta.ps1",
-  "package/scripts/uninstall-local-beta.ps1"
+  "package/scripts/uninstall-local-beta.ps1",
+  "package/scripts/kairon-update-check-task.ps1"
 ];
 
 const requiredFilesAllowlist = [
@@ -118,6 +119,7 @@ const requiredFilesAllowlist = [
   "scripts/install-local-beta.ps1",
   "scripts/update-local-beta.ps1",
   "scripts/uninstall-local-beta.ps1",
+  "scripts/kairon-update-check-task.ps1",
   "docs/installation.md",
   "README.md"
 ];
@@ -365,6 +367,7 @@ function isAllowedPackagePath(value: string): boolean {
     value === "package/scripts/install-local-beta.ps1" ||
     value === "package/scripts/update-local-beta.ps1" ||
     value === "package/scripts/uninstall-local-beta.ps1" ||
+    value === "package/scripts/kairon-update-check-task.ps1" ||
     value === "package/dist" ||
     value.startsWith("package/dist/")
   );

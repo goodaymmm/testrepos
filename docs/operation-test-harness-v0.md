@@ -121,6 +121,21 @@ binding不一致、post-check failure、high / critical incident、state / secur
 rollback、approval、Agent task、GitHub操作を自動実行しません。判定前後のproject stateと
 installed registry digestも比較します。
 
+## T197 Scheduled update check
+
+`scheduled-update-check` profileは、Windows Task Schedulerへのexact task登録、read-only
+check、同一release通知のdeduplicate、status、解除を順に確認します。
+
+```powershell
+kairon test commands --profile scheduled-update-check
+```
+
+管理者PowerShell、configured update channel、`GH_TOKEN` / `GITHUB_TOKEN`またはWindows
+Credential Managerが必要です。Discord live通知を確認する場合だけDiscord providerを有効に
+します。証跡では`mutation_detected=false`、credential値の非出力、
+`automatic_download=false`、`automatic_apply=false`、`automatic_restart=false`を確認します。
+外部条件不足は`SETUP_REQUIRED`であり、foreign Taskは置換・削除しません。
+
 ## 実行対象
 
 デフォルトでは次をすべて実行します。

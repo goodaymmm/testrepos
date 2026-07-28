@@ -317,6 +317,45 @@ const profiles: OperationTestCommandProfile[] = [
       "rollback_automatic=false and approval_automatic=false",
       "project and installed state digests are unchanged"
     ]
+  },
+  {
+    id: "scheduled-update-check",
+    title: "T197 Read-only scheduled update check",
+    task_ids: ["T197"],
+    description:
+      "Install, run, verify, deduplicate, and remove one exact Windows scheduled update notification task.",
+    required_env: ["GH_TOKEN or GITHUB_TOKEN"],
+    setup: [
+      "Run in Windows PowerShell as Administrator with the Stable update channel configured.",
+      "Enable Discord only when live notification evidence is required.",
+      "The scheduled task stores no token value and never downloads, applies, or restarts Kairon."
+    ],
+    commands: [
+      {
+        kind: "powershell",
+        lines: [
+          "$T197_TASK = \"Kairon T197 Update Check $RUN_STAMP\"",
+          "kairon update schedule install `",
+          "  --task-name $T197_TASK `",
+          "  --interval-hours 24 `",
+          "  --timeout-ms 60000 `",
+          "  --cooldown-hours 24",
+          "kairon update schedule run",
+          "kairon update schedule run",
+          "kairon update schedule status",
+          "kairon update schedule uninstall",
+          "kairon update schedule status"
+        ]
+      }
+    ],
+    expected_evidence: [
+      "task_status=registered before execution and missing after uninstall",
+      "new_release, current, pinned_mismatch, or remote_unavailable classification",
+      "same repository/channel/version/release notification is deduplicated",
+      "credential provider is reported without a credential value",
+      "mutation_detected=false",
+      "automatic_download=false, automatic_apply=false, and automatic_restart=false"
+    ]
   }
 ];
 

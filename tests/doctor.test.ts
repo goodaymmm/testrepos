@@ -19,6 +19,7 @@ import { suspendProvider } from "../src/agents/provider-policy.js";
 import { runWatchdogCheck } from "../src/runtime/watchdog.js";
 import { ProjectRegistry } from "../src/projects/registry.js";
 import { BackupCatalog } from "../src/state/backup-catalog.js";
+import { scheduledUpdatePaths } from "../src/update/scheduled-check.js";
 
 const discordIds = {
   application: "111111111111111111",
@@ -60,6 +61,10 @@ describe("runDoctor", () => {
     expect(checkById(result, "release.post_release_health")?.details).toContain(
       "decision=not_run"
     );
+    expect(statusById(result, "update.scheduled_check")).toBe("pass");
+    expect(checkById(result, "update.scheduled_check")?.details).toContain(
+      "enabled=false"
+    );
     expect(checkById(result, "state.disaster_recovery")?.details).toContain(
       "status=not_configured"
     );
@@ -73,6 +78,50 @@ describe("runDoctor", () => {
     );
     expect(checkById(result, "cli.availability")?.details).toContain(
       "antigravity(gemini): agy available=true"
+    );
+  });
+
+  it("reports missing and foreign scheduled update tasks", async () => {
+    const root = await createInitializedGitProject();
+    const paths = scheduledUpdatePaths(root);
+    await writeJsonFileAtomic(paths.profile, {
+      schema_version: "0.1",
+      enabled: true,
+      task_name: "Kairon T197 Test",
+      interval_hours: 24,
+      timeout_ms: 60_000,
+      cooldown_hours: 24,
+      kairon_command: "kairon",
+      updated_at: new Date().toISOString()
+    });
+
+    const missing = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+    expect(statusById(missing, "update.scheduled_check")).toBe("warning");
+    expect(checkById(missing, "update.scheduled_check")?.details).toContain(
+      "task_status=unknown"
+    );
+
+    await writeJsonFileAtomic(paths.taskStatus, {
+      schema_version: "0.1",
+      status: "foreign",
+      task_name: "Kairon T197 Test",
+      action: "status",
+      managed: false,
+      reason: "task_is_not_managed_by_kairon",
+      observed_at: new Date().toISOString()
+    });
+    const foreign = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+    expect(statusById(foreign, "update.scheduled_check")).toBe("error");
+    expect(checkById(foreign, "update.scheduled_check")?.details).toContain(
+      "task_status=foreign"
     );
   });
 

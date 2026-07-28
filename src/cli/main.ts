@@ -208,7 +208,11 @@ import {
   updateChannelShowCommand,
   updateCheckCommand,
   updateDownloadCommand,
-  updateRollbackCommand
+  updateRollbackCommand,
+  updateScheduleInstallCommand,
+  updateScheduleRunCommand,
+  updateScheduleStatusCommand,
+  updateScheduleUninstallCommand
 } from "./commands/update.js";
 import {
   finalizeStableCanaryCommand,
@@ -2331,6 +2335,108 @@ export function createProgram(): Command {
       console.log(await updateCheckCommand(
         process.cwd(),
         KAIRON_VERSION,
+        options
+      ));
+    });
+
+  const updateSchedule = update
+    .command("schedule")
+    .description(
+      "Manage the read-only Windows scheduled update notification check."
+    );
+
+  updateSchedule
+    .command("install")
+    .description(
+      "Install the exact Kairon-managed Windows scheduled update task."
+    )
+    .option(
+      "--interval-hours <hours>",
+      "Read-only check interval. Defaults to 24."
+    )
+    .option(
+      "--timeout-ms <milliseconds>",
+      "Remote check timeout. Defaults to 60000."
+    )
+    .option(
+      "--cooldown-hours <hours>",
+      "Notification retry cooldown. Defaults to 24."
+    )
+    .option("--task-name <name>", "Windows Task Scheduler task name.")
+    .option(
+      "--token-env <envName>",
+      "Token environment variable name. The value is never stored in the task."
+    )
+    .option(
+      "--kairon-command <path>",
+      "Kairon executable path used by Task Scheduler."
+    )
+    .action(async (options: {
+      intervalHours?: string;
+      timeoutMs?: string;
+      cooldownHours?: string;
+      taskName?: string;
+      tokenEnv?: string;
+      kaironCommand?: string;
+    }) => {
+      console.log(await updateScheduleInstallCommand(process.cwd(), {
+        intervalHours: parseOptionalPositiveInteger(
+          options.intervalHours,
+          "--interval-hours"
+        ),
+        timeoutMs: parseOptionalPositiveInteger(
+          options.timeoutMs,
+          "--timeout-ms"
+        ),
+        cooldownHours: parseOptionalPositiveInteger(
+          options.cooldownHours,
+          "--cooldown-hours"
+        ),
+        taskName: options.taskName,
+        tokenEnv: options.tokenEnv,
+        kaironCommand: options.kaironCommand
+      }));
+    });
+
+  updateSchedule
+    .command("status")
+    .description(
+      "Show task health, last result, next run, and credential availability."
+    )
+    .option("--task-name <name>", "Task name used before a profile exists.")
+    .option("--kairon-command <path>", "Kairon executable path.")
+    .action(async (options: {
+      taskName?: string;
+      kaironCommand?: string;
+    }) => {
+      console.log(await updateScheduleStatusCommand(process.cwd(), options));
+    });
+
+  updateSchedule
+    .command("run")
+    .description(
+      "Run one read-only update check without download, apply, or restart."
+    )
+    .action(async () => {
+      console.log(await updateScheduleRunCommand(
+        process.cwd(),
+        KAIRON_VERSION
+      ));
+    });
+
+  updateSchedule
+    .command("uninstall")
+    .description(
+      "Remove only the exact Windows task managed by this Kairon profile."
+    )
+    .option("--task-name <name>", "Task name used before a profile exists.")
+    .option("--kairon-command <path>", "Kairon executable path.")
+    .action(async (options: {
+      taskName?: string;
+      kaironCommand?: string;
+    }) => {
+      console.log(await updateScheduleUninstallCommand(
+        process.cwd(),
         options
       ));
     });
