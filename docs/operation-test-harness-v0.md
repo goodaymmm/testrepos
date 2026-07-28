@@ -99,6 +99,28 @@ private release等でpublic downloadできない場合は、tokenをartifactへ�
 共有する方式は、secret brokerまたは短命credentialのcleanup契約を別途用意するまで
 canaryの標準経路には含めません。
 
+## T196 Post-release health
+
+`post-release-health` profileは、T194 Stable verification、T195 canary final result、
+completed update transaction、verified download / rollback cache、fresh SLO / security、
+incident store、canonical stateをrelease単位で照合します。
+
+```powershell
+kairon test commands --profile post-release-health
+
+$env:KAIRON_POST_RELEASE_VERIFICATION_PATH = "<STV artifact>"
+$env:KAIRON_POST_RELEASE_CANARY_PATH = "<canary final-result.json>"
+$env:KAIRON_POST_RELEASE_TRANSACTION = "UTX-0001"
+kairon test commands --profile post-release-health
+```
+
+判定は`continue`、`hold`、`rollback_required`の3値です。evidence不足、warning、
+観測window不足、verified rollback cache不足は`hold`です。release / transaction
+binding不一致、post-check failure、high / critical incident、state / security failureは
+`rollback_required`です。profileはrollback targetとexact commandを表示しますが、
+rollback、approval、Agent task、GitHub操作を自動実行しません。判定前後のproject stateと
+installed registry digestも比較します。
+
 ## 実行対象
 
 デフォルトでは次をすべて実行します。

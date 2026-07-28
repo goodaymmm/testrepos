@@ -94,6 +94,8 @@ kairon release provenance --package <package.tgz> --manifest <manifest.json> --s
 kairon release manifest --package <package.tgz> --manifest <manifest.json> [--sbom <sbom.cdx.json> --provenance <provenance.json>] [--output <path>]
 kairon release verify <package.tgz> [--manifest <manifest.json>] [--release-manifest <release-manifest.json>] [--verification-context source|consumer]
 kairon release stable verify --version <version> --repository <owner/repo> [--base-branch <branch>] [--token-env <envName>] [--format text|json]
+kairon release health check --release-verification <path> --canary <path> --transaction <id-or-path> [--slo <path>] [--security <path>] [--observation-minutes <minutes>]
+kairon release health report [--format json|markdown] [--output <path>]
 kairon release notes --since <ref> [--write]
 kairon release bump --version <version> [--write]
 kairon release github promote plan --version <version> --repository <owner/repo> [--expires-in-minutes <minutes>]
@@ -1129,6 +1131,8 @@ kairon release github promote apply REL-0002 --approval-id APR-0002 --confirm RE
 kairon release github verify --version 0.3.0 --repository owner/repo --stable
 kairon release stable verify --version 0.3.0 --repository owner/repo
 kairon release stable verify --version 0.3.0 --repository owner/repo --format json
+kairon release health check --release-verification <STV.json> --canary <final-result.json> --transaction UTX-0001
+kairon release health report --format markdown
 ```
 
 `release validate` は `package.json.version` と `KAIRON_VERSION` のcore SemVer形式と同期、
@@ -1160,6 +1164,15 @@ consumer manifest binding、tag / manifest source SHA、Stable channel currentne
 integrityとcurrentnessは別statusで表示し、resultを
 `.kairon/release/stable-verifications/STV-*.json`へatomic保存する。GitHubへのwrite、
 raw API response、signed download URL、token保存は行わず、temp downloadは必ず削除する。
+
+`release health check`はStable verification、Clean Windows canary、update transactionと
+verified download、SLO、incident、security、state integrityを照合し、`continue`、
+`hold`、`rollback_required`を決定する。release ID、version、source commit、package
+digest、transaction IDが一致し、観測windowと全required evidenceがPASSの場合だけ
+`continue`になる。resultとoperator reportは
+`.kairon/release/post-release-health/`へ保存する。`release health report`はlatest resultを
+再評価せずJSONまたはMarkdownへrenderする。health commandはrollbackを実行せず、
+verified cacheに対するexact rollback commandとapproval要件だけを表示する。
 
 `release github promote plan`は公開済みprereleaseをread-onlyで検査し、release ID、tag SHA、
 source commit、5 assetのID / digest、SBOM / provenance digest、expiryを高risk approvalへ

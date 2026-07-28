@@ -49,6 +49,9 @@ import {
 import {
   inspectLatestStableReleaseVerification
 } from "../release/stable-verification.js";
+import {
+  inspectLatestPostReleaseHealth
+} from "../release/post-release-health.js";
 import { resolveWorkflowRuntimeConfig } from "../workflow/config.js";
 import { inspectWorkflowCheckpointStore } from "../workflow/checkpoint-manager.js";
 import { inspectCapabilityPolicyConfig } from "../policy/trust-policy.js";
@@ -268,6 +271,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkRuntimeObservability(options.projectRoot));
   checks.push(await checkRagStatus(options.projectRoot));
   checks.push(await checkPublishedStableVerification(options.projectRoot));
+  checks.push(await checkPostReleaseHealth(options.projectRoot));
   if (await readinessManifestExists(options.projectRoot)) {
     checks.push(await checkBetaReadiness(options.projectRoot));
   }
@@ -2311,6 +2315,63 @@ async function checkPublishedStableVerification(
   return result.status === "PASS" && !expired
     ? pass(id, title, details)
     : warning(id, title, details, rerun);
+}
+
+async function checkPostReleaseHealth(
+  projectRoot: string
+): Promise<DoctorCheck> {
+  const id = "release.post_release_health";
+  const title = "Post-release health decision";
+  const latest = await inspectLatestPostReleaseHealth(projectRoot);
+  if (latest.status === "missing") {
+    return warning(
+      id,
+      title,
+      ["decision=not_run"],
+      "run kairon release health check --release-verification <path> --canary <path> --transaction <id-or-path>"
+    );
+  }
+  if (latest.status === "invalid") {
+    return warning(
+      id,
+      title,
+      ["decision=invalid"],
+      "remove or repair the latest post-release health result and rerun the check"
+    );
+  }
+  const result = latest.result;
+  const expired = Date.parse(result.expires_at) <= Date.now();
+  const details = [
+    `decision=${result.decision}`,
+    `health_id=${result.health_id}`,
+    `release_id=${result.release.release_id ?? "none"}`,
+    `version=${result.release.version ?? "none"}`,
+    `transaction_id=${result.update.transaction_id ?? "none"}`,
+    `observation_completed=${result.observation.completed}`,
+    `verified_cache=${result.update.verified_cache}`,
+    `generated_at=${result.generated_at}`,
+    `expires_at=${result.expires_at}`,
+    `expired=${expired}`,
+    `reasons=${result.reasons.join(",") || "none"}`
+  ];
+  if (result.decision === "rollback_required" && !expired) {
+    return error(
+      id,
+      title,
+      details,
+      result.update.exact_command ??
+        "stop rollout and prepare an approved rollback plan"
+    );
+  }
+  if (result.decision === "continue" && !expired) {
+    return pass(id, title, details);
+  }
+  return warning(
+    id,
+    title,
+    details,
+    "refresh post-release evidence and rerun kairon release health check"
+  );
 }
 
 function pass(id: string, title: string, details: string[]): DoctorCheck {

@@ -93,6 +93,22 @@ describe("operation test command profiles", () => {
     expect(output).not.toContain("github_pat_");
   });
 
+  it("generates the T196 post-release health profile without automatic rollback", () => {
+    const output = generateOperationTestCommandsCommand({
+      profile: ["post-release-health"]
+    });
+
+    expect(output).toContain("# Profile: post-release-health");
+    expect(output).toContain("Tasks: T196");
+    expect(output).toContain("\"release\", \"health\", \"check\"");
+    expect(output).toContain("KAIRON_POST_RELEASE_VERIFICATION_PATH");
+    expect(output).toContain("KAIRON_POST_RELEASE_TRANSACTION");
+    expect(output).toContain("rollback_automatic=false");
+    expect(output).toContain("approval_automatic=false");
+    expect(output).not.toContain("update rollback");
+    expect(output).not.toContain("GH_TOKEN=");
+  });
+
   it("rejects invalid output formats at the CLI command boundary", () => {
     expect(() =>
       generateOperationTestCommandsCommand({ format: "yaml" })

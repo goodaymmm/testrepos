@@ -847,6 +847,7 @@ describe("createProgram", () => {
       "bump",
       "check",
       "github",
+      "health",
       "manifest",
       "notes",
       "pack",
@@ -894,6 +895,32 @@ describe("createProgram", () => {
       "--token-env",
       "--format"
     ]));
+    const health = release?.commands.find(
+      (command) => command.name() === "health"
+    );
+    expect(health?.commands.map((command) => command.name())).toEqual([
+      "check",
+      "report"
+    ]);
+    expect(
+      health?.commands
+        .find((command) => command.name() === "check")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining([
+      "--release-verification",
+      "--canary",
+      "--transaction",
+      "--slo",
+      "--security",
+      "--observation-minutes",
+      "--output",
+      "--format"
+    ]));
+    expect(
+      health?.commands
+        .find((command) => command.name() === "report")
+        ?.options.map((option) => option.long)
+    ).toEqual(["--format", "--output"]);
     const github = release?.commands.find((command) => command.name() === "github");
     expect(github?.commands.map((command) => command.name()).sort()).toEqual([
       "plan",

@@ -312,6 +312,29 @@ kairon release stable verify `
 - raw GitHub response、signed download URL、token、credential名はresultへ保存しない。
 - verifyはrelease、tag、assetを作成・更新・削除しない。
 
+### Post-release Health Decision
+
+Stable canaryとupdate完了後は、rollout継続前にread-only health判定を記録します。
+
+```powershell
+kairon release health check `
+  --release-verification .kairon\release\stable-verifications\<STV>.json `
+  --canary .kairon\release\stable-canaries\<CANARY>\final-result.json `
+  --transaction UTX-0001
+
+kairon release health report --format markdown
+```
+
+- Stable verification、canary、verified download、transactionのrelease ID、version、
+  source commit、package digestを照合する。
+- canary後の既定60分観測windowとfresh SLOが完了している。
+- unresolved warningまたはevidence不足は`hold`とする。
+- post-check failure、binding mismatch、high / critical incident、state / security failureは
+  `rollback_required`とする。
+- rollback targetは事前検証済みcacheに限定し、exact commandを表示する。
+- health判定はrollbackを実行せず、approvalを自動作成・承認しない。
+- 判定前後でproject config / stateとinstalled registry digestが変化していない。
+
 ## Verified Update And Rollback
 
 release利用側では`stable | beta | pinned`のmanual channelを明示設定し、check / download / applyを分離します。
@@ -375,3 +398,5 @@ kairon release notes --since <ref> --write
   `release verify`で相互bindingが通っている。
 - GitHub配布を行う場合は`release github verify`が`status=verified`を返している。
 - Stable昇格後は`release stable verify`がintegrity / currentnessともに`PASS`を返している。
+- canary後は`release health check`がrelease / transactionへbindされ、`continue`または
+  operatorが明示的に受理した`hold` / approved rollback decisionを記録している。

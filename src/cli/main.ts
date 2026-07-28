@@ -161,6 +161,8 @@ import {
   releaseGitHubPlanCommand,
   releaseGitHubPublishCommand,
   releaseGitHubVerifyCommand,
+  releaseHealthCheckCommand,
+  releaseHealthReportCommand,
   releaseStablePromotionApplyCommand,
   releaseStablePromotionPlanCommand,
   releaseStableVerifyCommand,
@@ -2509,6 +2511,94 @@ export function createProgram(): Command {
       if (!result.ok) {
         process.exitCode = 1;
       }
+    });
+
+  const releaseHealth = release
+    .command("health")
+    .description(
+      "Evaluate read-only post-release health and produce a rollback decision."
+    );
+
+  releaseHealth
+    .command("check")
+    .description(
+      "Bind Stable, canary, update, SLO, incident, security, and state evidence."
+    )
+    .requiredOption(
+      "--release-verification <path>",
+      "Published Stable verification artifact."
+    )
+    .requiredOption(
+      "--canary <path>",
+      "T195 Clean Windows canary final result."
+    )
+    .requiredOption(
+      "--transaction <id-or-path>",
+      "Completed update transaction id or project-relative artifact path."
+    )
+    .option(
+      "--slo <path>",
+      "Runtime SLO summary. Defaults to .kairon/metrics/slo/latest.json."
+    )
+    .option(
+      "--security <path>",
+      "Security baseline. Defaults to .kairon/security/security-baseline.json."
+    )
+    .option(
+      "--observation-minutes <minutes>",
+      "Required post-canary observation window. Defaults to 60."
+    )
+    .option(
+      "--output <dir>",
+      "Result directory. Defaults to .kairon/release/post-release-health."
+    )
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: {
+      releaseVerification: string;
+      canary: string;
+      transaction: string;
+      slo?: string;
+      security?: string;
+      observationMinutes?: string;
+      output?: string;
+      format: string;
+    }) => {
+      if (options.format !== "text" && options.format !== "json") {
+        throw new Error("Post-release health format must be text or json.");
+      }
+      const result = await releaseHealthCheckCommand(process.cwd(), {
+        ...options,
+        observationMinutes: parseOptionalPositiveInteger(
+          options.observationMinutes,
+          "--observation-minutes"
+        ),
+        format: options.format
+      });
+      console.log(result.text);
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+    });
+
+  releaseHealth
+    .command("report")
+    .description("Render the latest post-release health operator report.")
+    .option(
+      "--format <format>",
+      "Output format: json or markdown.",
+      "markdown"
+    )
+    .option("--output <path>", "Optional project-relative report output path.")
+    .action(async (options: { format: string; output?: string }) => {
+      if (options.format !== "json" && options.format !== "markdown") {
+        throw new Error(
+          "Post-release health report format must be json or markdown."
+        );
+      }
+      console.log(await releaseHealthReportCommand(process.cwd(), {
+        format: options.format,
+        output: options.output
+      }));
     });
 
   const releaseGitHub = release
