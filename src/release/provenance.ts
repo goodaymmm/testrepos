@@ -8,6 +8,10 @@ import {
 import { writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { verifyLocalBetaPackage } from "./local-beta.js";
 import { verifyReleaseSbom } from "./sbom.js";
+import {
+  parseReleaseVerificationContext,
+  type ReleaseVerificationContext
+} from "./verification-context.js";
 
 export type ReleaseProvenanceSubject = {
   kind: "package" | "checksum_manifest" | "sbom";
@@ -65,6 +69,7 @@ export type ReleaseProvenanceCheck = {
 export type ReleaseProvenanceVerificationResult = {
   schema_version: "0.1";
   ok: boolean;
+  verification_context: ReleaseVerificationContext;
   provenance_path: string;
   package_path: string;
   checksum_manifest_path: string;
@@ -90,6 +95,7 @@ export type VerifyReleaseProvenanceOptions = {
   checksumManifest?: string;
   sbom?: string;
   commandRunner?: CommandRunner;
+  verificationContext?: ReleaseVerificationContext;
 };
 
 export type ReleaseProvenanceResult = {
@@ -188,7 +194,8 @@ export async function createReleaseProvenance(
     package: packagePath,
     checksumManifest: checksumPath,
     sbom: sbomPath,
-    commandRunner
+    commandRunner,
+    verificationContext: "source"
   });
   if (!verification.ok) {
     throw new Error(
@@ -214,6 +221,9 @@ export async function verifyReleaseProvenance(
   provenanceFile: string,
   options: VerifyReleaseProvenanceOptions = {}
 ): Promise<ReleaseProvenanceVerificationResult> {
+  const verificationContext = parseReleaseVerificationContext(
+    options.verificationContext
+  );
   const provenancePath = path.resolve(provenanceFile);
   const bytes = await readFile(provenancePath);
   const info = await stat(provenancePath);
@@ -242,10 +252,10 @@ export async function verifyReleaseProvenance(
   let sourceValid = provenance !== null &&
     /^[a-f0-9]{40,64}$/u.test(provenance.source.commit_sha) &&
     provenance.source.dirty === false;
-  if (sourceValid && options.projectRoot !== undefined) {
+  if (sourceValid && verificationContext === "source") {
     try {
       sourceValid = provenance!.source.commit_sha === await collectCleanSourceCommit(
-        path.resolve(options.projectRoot),
+        path.resolve(options.projectRoot ?? process.cwd()),
         options.commandRunner ?? spawnCommandRunner
       );
     } catch {
@@ -256,7 +266,9 @@ export async function verifyReleaseProvenance(
     "source_identity",
     sourceValid,
     sourceValid
-      ? "Provenance source commit matches a clean tracked source tree."
+      ? verificationContext === "source"
+        ? "Provenance source commit matches a clean tracked source tree."
+        : "Provenance source identity is valid for consumer artifact verification."
       : "Provenance source identity is invalid or does not match the selected source tree."
   ));
 
@@ -313,7 +325,8 @@ export async function verifyReleaseProvenance(
   try {
     sbomVerification = await verifyReleaseSbom(sbomPath, {
       projectRoot: options.projectRoot,
-      checksumManifest: checksumPath
+      checksumManifest: checksumPath,
+      verificationContext
     });
   } catch {
     sbomVerification = null;
@@ -362,6 +375,7 @@ export async function verifyReleaseProvenance(
   return {
     schema_version: "0.1",
     ok: checks.every((entry) => entry.status === "pass"),
+    verification_context: verificationContext,
     provenance_path: provenancePath,
     package_path: packagePath,
     checksum_manifest_path: checksumPath,

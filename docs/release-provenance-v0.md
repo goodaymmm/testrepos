@@ -1,7 +1,7 @@
 # Release Provenance And SBOM v0
 
 <!-- kairon:release-provenance-sbom -->
-Kairon `0.3.0`以降のLocal RC artifactに対し、依存関係、build環境、source commit、
+Kairon `0.3.0`以降のStable Local Release artifactに対し、依存関係、build環境、source commit、
 package、checksum manifestを機械検証可能な形で結び付ける仕様です。
 
 ## 用語と保証範囲
@@ -59,8 +59,21 @@ kairon release manifest `
 
 kairon release verify $package `
   --manifest $checksum `
-  --release-manifest "$artifact\release-manifest.json"
+  --release-manifest "$artifact\release-manifest.json" `
+  --verification-context source
 ```
+
+## Verification context
+
+| context | 用途 | source tree | artifact binding |
+| --- | --- | --- | --- |
+| `source` | pack、manifest生成、GitHub publish | current clean commitと一致必須 | 必須 |
+| `consumer` | install、update、download cache | consumer Gitとは比較しない | 必須 |
+
+既定は`source`です。`consumer`は検証省略ではなく、package、checksum manifest、
+inventory、SBOM、provenance、release manifestを相互検証し、manifestとprovenanceの
+source SHA一致を`artifact_source_binding`として確認します。`source_tree_check`は
+consumer hostのGit treeを選択しなかったことを明示します。
 
 ## SBOM contract
 
@@ -106,14 +119,17 @@ release manifest、SBOM、provenanceの5 assetを同じreleaseへ配置します
 
 ## Verifyで拒否する差異
 
-`kairon release verify --release-manifest`は次を拒否します。
+`kairon release verify --release-manifest`はcontextに関係なく次を拒否します。
 
 - packageまたはchecksum manifestのsize / SHA-256 / filename差異
 - package-lock SHA-256またはdependency component差異
 - package inventory SHA-256差異
 - SBOMまたはprovenanceの置換、改変、version差異
-- provenance source commitと現在のclean tracked sourceの差異
+- release manifestとprovenanceのsource commit差異
 - provenance内のabsolute path、account、host、credential-like field
+
+`source` contextでは、上記に加えてmanifest / provenance source commitと現在の
+clean tracked sourceの差異を拒否します。
 
 artifactを再生成した場合は、SBOM、provenance、release manifestも同じ順で再生成します。
 個別fileのdigestだけを手作業で書き換えません。

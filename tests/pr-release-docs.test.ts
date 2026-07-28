@@ -61,6 +61,8 @@ describe("PR and release documentation", () => {
     expect(commands).toContain("kairon release manifest");
     expect(commands).toContain("kairon release sbom");
     expect(commands).toContain("kairon release provenance");
+    expect(commands).toContain("--verification-context source|consumer");
+    expect(installation).toContain("--verification-context consumer");
     expect(commands).toContain("kairon release github plan");
     expect(commands).toContain("kairon release github publish");
     expect(commands).toContain("kairon release github verify");
@@ -77,6 +79,9 @@ describe("PR and release documentation", () => {
     expect(provenance).toContain("SLSA認証や署名済みattestationを称しない");
     expect(provenance).toContain("kairon release sbom");
     expect(provenance).toContain("kairon release provenance");
+    expect(provenance).toContain("## Verification context");
+    expect(provenance).toContain("source_tree_check");
+    expect(provenance).toContain("artifact_source_binding");
     expect(provenance).toContain("token");
     expect(provenance).toContain("絶対path");
   });

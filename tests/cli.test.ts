@@ -835,7 +835,11 @@ describe("createProgram", () => {
       release?.commands
         .find((command) => command.name() === "verify")
         ?.options.map((option) => option.long)
-    ).toEqual(expect.arrayContaining(["--manifest", "--release-manifest"]));
+    ).toEqual(expect.arrayContaining([
+      "--manifest",
+      "--release-manifest",
+      "--verification-context"
+    ]));
     expect(
       release?.commands
         .find((command) => command.name() === "notes")

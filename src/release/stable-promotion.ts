@@ -172,7 +172,8 @@ export async function planStablePromotion(
     bundle = await loadLocalReleaseBundle(projectRoot, {
       version,
       artifactDir: request.artifactDir,
-      requireAttestations: true
+      requireAttestations: true,
+      commandRunner: deps.commandRunner
     });
   } catch (error) {
     return outcome("blocked", safeErrorCode(error));
@@ -376,7 +377,8 @@ export async function applyStablePromotion(
     const bundle = await loadLocalReleaseBundle(projectRoot, {
       version: plan.version,
       artifactDir: plan.artifact_dir,
-      requireAttestations: true
+      requireAttestations: true,
+      commandRunner: deps.commandRunner
     });
     assertLocalPlanBinding(plan, bundle);
   } catch (error) {
@@ -430,7 +432,8 @@ async function executePromotion(
     const bundle = await loadLocalReleaseBundle(projectRoot, {
       version: plan.version,
       artifactDir: plan.artifact_dir,
-      requireAttestations: true
+      requireAttestations: true,
+      commandRunner: deps.commandRunner
     });
     assertLocalPlanBinding(plan, bundle);
     inspection = await client.inspect({

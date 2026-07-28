@@ -53,7 +53,11 @@ describe("release manifest", () => {
     const verification = await verifyReleaseManifest(
       releaseManifestPath,
       packagePath,
-      checksumManifestPath
+      checksumManifestPath,
+      {
+        projectRoot: path.resolve("."),
+        commandRunner: cleanGitRunner
+      }
     );
 
     expect(manifest).toMatchObject({
@@ -99,8 +103,9 @@ describe("release manifest", () => {
     });
     const verification = await releaseVerifyCommand(packagePath, {
       manifest: checksumManifestPath,
-      releaseManifest: commandManifestPath
-    });
+      releaseManifest: commandManifestPath,
+      commandRunner: cleanGitRunner
+    }, path.resolve("."));
 
     expect(output).toContain("Kairon release manifest created.");
     expect(output).toContain("verification.ok=true");
@@ -132,7 +137,11 @@ describe("release manifest", () => {
     const result = await verifyReleaseManifest(
       tamperedPath,
       packagePath,
-      checksumManifestPath
+      checksumManifestPath,
+      {
+        projectRoot: path.resolve("."),
+        commandRunner: cleanGitRunner
+      }
     );
 
     expect(result.ok).toBe(false);
@@ -165,7 +174,11 @@ describe("release manifest", () => {
     const result = await verifyReleaseManifest(
       released.release_manifest_path,
       copiedPackage,
-      copiedChecksum
+      copiedChecksum,
+      {
+        projectRoot: path.resolve("."),
+        commandRunner: cleanGitRunner
+      }
     );
 
     expect(result.ok).toBe(false);

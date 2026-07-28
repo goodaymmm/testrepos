@@ -70,7 +70,8 @@ kairon release manifest `
 
 kairon release verify .\release-artifacts\0.3.0\kairon-0.3.0.tgz `
   --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json `
-  --release-manifest .\release-artifacts\0.3.0\release-manifest.json
+  --release-manifest .\release-artifacts\0.3.0\release-manifest.json `
+  --verification-context source
 ```
 
 release manifestはtracked worktreeがcleanな場合だけ生成でき、Git commit SHA、runtime
@@ -87,7 +88,8 @@ GitHub Release publication contractはattestation付きmanifestでSBOM/provenanc
 kairon release github verify --version 0.3.0 --repository owner/repo
 kairon release verify .\kairon-0.3.0.tgz `
   --manifest .\kairon-0.3.0.tgz.sha256.json `
-  --release-manifest .\release-manifest.json
+  --release-manifest .\release-manifest.json `
+  --verification-context consumer
 ```
 
 GitHub Releaseの既定channelはprereleaseです。既存prereleaseをStableへ昇格する場合は
@@ -177,6 +179,12 @@ update順序は次の通りです。
 9. package verify、`kairon doctor`、version、state integrityをpost-checkする
 10. 失敗時は事前検証済み旧packageとstate backupへ1回だけrollbackする
 11. rollback結果とsanitized error codeをtransaction artifactとdiagnostic bundleへ保存する
+
+`-ReleaseManifest`を指定したupdateはstagingとswitch後の両方で
+`--verification-context consumer`を使います。consumer projectのGit commitをKairon build
+sourceとは比較せず、release manifestとprovenanceのsource SHA、package、checksum、
+inventory、SBOM、provenanceの相互bindingを検証します。通常のrelease作成・GitHub publish側は
+既定の`source`を使い、current clean tracked sourceとの一致を維持します。
 
 schema migrationが必要なのに`-ApproveSchemaMigration`がない場合、updateはconfigを書き換えず
 失敗し、既存rollback処理へ移る。migration apply自身もfresh state backupを作成し、

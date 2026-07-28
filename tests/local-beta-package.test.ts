@@ -190,6 +190,8 @@ describe("local release package", () => {
     expect(update).toContain("state\", \"backup\", \"create");
     expect(update).toContain("ReleaseManifest");
     expect(update).toContain("--release-manifest");
+    expect(update).toContain("--verification-context");
+    expect(update).toContain("\"consumer\"");
     expect(update).toContain("rollback_package_restored");
     expect(update).toContain("state\", \"backup\", \"restore");
     expect(update).toContain("doctor.ok=true");

@@ -243,7 +243,8 @@ export async function downloadUpdate(
     const stagedVerification = await verifyReleaseManifest(
       path.join(stagingDirectory, "release-manifest.json"),
       path.join(stagingDirectory, candidate.manifest.artifact.package_file),
-      path.join(stagingDirectory, candidate.manifest.artifact.checksum_manifest_file)
+      path.join(stagingDirectory, candidate.manifest.artifact.checksum_manifest_file),
+      { verificationContext: "consumer" }
     );
     if (!stagedVerification.ok || stagedVerification.source_commit !== candidate.sourceCommit) {
       throw new Error("Downloaded update failed release manifest verification.");
@@ -340,7 +341,8 @@ export async function verifyDownloadedUpdate(
   const verification = await verifyReleaseManifest(
     download.release_manifest_path,
     download.package_path,
-    download.checksum_manifest_path
+    download.checksum_manifest_path,
+    { verificationContext: "consumer" }
   );
   if (!verification.ok ||
       verification.package_version !== download.version ||

@@ -178,7 +178,8 @@ export async function planGitHubRelease(
   try {
     bundle = await loadLocalReleaseBundle(projectRoot, {
       version,
-      artifactDir: request.artifactDir
+      artifactDir: request.artifactDir,
+      commandRunner: deps.commandRunner
     });
   } catch (error) {
     return outcome("blocked", safeLocalError(error));
@@ -408,7 +409,8 @@ export async function verifyGitHubRelease(
   try {
     bundle = await loadLocalReleaseBundle(projectRoot, {
       version,
-      artifactDir: request.artifactDir
+      artifactDir: request.artifactDir,
+      commandRunner: deps.commandRunner
     });
   } catch (error) {
     return outcome("blocked", safeLocalError(error));
@@ -816,6 +818,7 @@ export async function loadLocalReleaseBundle(
     version: string;
     artifactDir?: string;
     requireAttestations?: boolean;
+    commandRunner?: CommandRunner;
   }
 ): Promise<LocalReleaseBundle> {
   const artifactRoot = resolveInside(
@@ -832,7 +835,12 @@ export async function loadLocalReleaseBundle(
   const verification = await verifyReleaseManifest(
     releaseManifestPath,
     packagePath,
-    checksumPath
+    checksumPath,
+    {
+      projectRoot,
+      verificationContext: "source",
+      commandRunner: input.commandRunner
+    }
   );
   if (!verification.ok) {
     const failedChecks = verification.checks

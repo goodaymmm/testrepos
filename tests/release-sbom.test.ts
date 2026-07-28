@@ -114,7 +114,9 @@ describe("release SBOM", () => {
     sbom[field] = value;
     await writeFile(output, `${JSON.stringify(sbom, null, 2)}\n`, "utf8");
 
-    const verification = await verifyReleaseSbom(output);
+    const verification = await verifyReleaseSbom(output, {
+      verificationContext: "consumer"
+    });
 
     expect(verification.ok).toBe(false);
     expect(verification.checks).toContainEqual(expect.objectContaining({
@@ -130,7 +132,9 @@ describe("release SBOM", () => {
     sbom.build_context = "C:\\Users\\operator\\release";
     await writeFile(output, `${JSON.stringify(sbom, null, 2)}\n`, "utf8");
 
-    const verification = await verifyReleaseSbom(output);
+    const verification = await verifyReleaseSbom(output, {
+      verificationContext: "consumer"
+    });
 
     expect(verification.ok).toBe(false);
     expect(verification.checks).toContainEqual(expect.objectContaining({

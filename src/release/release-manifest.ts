@@ -16,6 +16,10 @@ import {
 import {
   verifyReleaseSbom
 } from "./sbom.js";
+import {
+  parseReleaseVerificationContext,
+  type ReleaseVerificationContext
+} from "./verification-context.js";
 
 export type ReleaseInventoryEntry = {
   path: string;
@@ -76,6 +80,8 @@ export type ReleaseManifestCheck = {
   id:
     | "manifest_schema"
     | "source_identity"
+    | "source_tree_check"
+    | "artifact_source_binding"
     | "runtime_support"
     | "package_verification"
     | "package_binding"
@@ -90,6 +96,7 @@ export type ReleaseManifestCheck = {
 export type ReleaseManifestVerificationResult = {
   schema_version: "0.1";
   ok: boolean;
+  verification_context: ReleaseVerificationContext;
   release_manifest_path: string;
   package_path: string;
   checksum_manifest_path: string;
@@ -125,6 +132,7 @@ export type CreateReleaseManifestOptions = {
 export type VerifyReleaseManifestOptions = {
   projectRoot?: string;
   commandRunner?: CommandRunner;
+  verificationContext?: ReleaseVerificationContext;
 };
 
 export function parseReleaseManifestContent(
@@ -265,7 +273,11 @@ export async function createReleaseManifest(
     releaseManifestPath,
     packagePath,
     checksumManifestPath,
-    { projectRoot: root, commandRunner }
+    {
+      projectRoot: root,
+      commandRunner,
+      verificationContext: "source"
+    }
   );
   if (!verification.ok) {
     throw new Error(
@@ -299,6 +311,9 @@ export async function verifyReleaseManifest(
   checksumManifestFile?: string,
   options: VerifyReleaseManifestOptions = {}
 ): Promise<ReleaseManifestVerificationResult> {
+  const verificationContext = parseReleaseVerificationContext(
+    options.verificationContext
+  );
   const releaseManifestPath = path.resolve(releaseManifestFile);
   const rawManifest = await readUnknownJson(releaseManifestPath, "release manifest");
   const manifestValid = isReleaseManifest(rawManifest);
@@ -330,6 +345,27 @@ export async function verifyReleaseManifest(
     sourceValid
       ? `Release is bound to clean source commit ${manifest?.source.commit_sha}.`
       : "Release source must contain a valid commit SHA and dirty=false."
+  ));
+  let sourceTreeValid = sourceValid;
+  if (verificationContext === "source") {
+    try {
+      sourceTreeValid = sourceValid &&
+        manifest!.source.commit_sha === await collectCleanSourceCommit(
+          path.resolve(options.projectRoot ?? process.cwd()),
+          options.commandRunner ?? spawnCommandRunner
+        );
+    } catch {
+      sourceTreeValid = false;
+    }
+  }
+  checks.push(resultCheck(
+    "source_tree_check",
+    sourceTreeValid,
+    sourceTreeValid
+      ? verificationContext === "source"
+        ? "Release source commit matches the selected clean tracked source tree."
+        : "Consumer verification does not compare the host project Git tree."
+      : "Release source does not match the selected clean tracked source tree."
   ));
   const runtimeValid = manifest !== null &&
     manifest.runtime_support.node === ">=22" &&
@@ -406,6 +442,10 @@ export async function verifyReleaseManifest(
       : "Package inventory or inventory SHA-256 does not match the checksum manifest."
   ));
 
+  let artifactSourceBound =
+    manifest !== null &&
+    manifest.attestations === undefined &&
+    sourceValid;
   if (manifest?.attestations !== undefined) {
     const sbomPath = path.resolve(
       path.dirname(releaseManifestPath),
@@ -423,7 +463,8 @@ export async function verifyReleaseManifest(
         stat(sbomPath),
         verifyReleaseSbom(sbomPath, {
           projectRoot: options.projectRoot,
-          checksumManifest: checksumManifestPath
+          checksumManifest: checksumManifestPath,
+          verificationContext
         })
       ]);
       sbomBound =
@@ -452,15 +493,18 @@ export async function verifyReleaseManifest(
             package: packagePath,
             checksumManifest: checksumManifestPath,
             sbom: sbomPath,
-            commandRunner: options.commandRunner
+            commandRunner: options.commandRunner,
+            verificationContext
           })
         ]);
       provenanceBound =
         provenanceVerification.ok &&
         provenanceVerification.package_version === manifest.package_version &&
-        provenanceVerification.source_commit === manifest.source.commit_sha &&
         manifest.attestations.provenance.sha256 === sha256(provenanceBytes) &&
         manifest.attestations.provenance.size_bytes === provenanceInfo.size;
+      artifactSourceBound =
+        provenanceVerification.ok &&
+        provenanceVerification.source_commit === manifest.source.commit_sha;
     } catch {
       provenanceBound = false;
     }
@@ -468,14 +512,24 @@ export async function verifyReleaseManifest(
       "provenance_binding",
       provenanceBound,
       provenanceBound
-        ? "Local build provenance content, size, source, and release bindings match."
+        ? "Local build provenance content, size, and release bindings match."
         : "Local build provenance content or release binding does not match."
     ));
   }
+  checks.push(resultCheck(
+    "artifact_source_binding",
+    artifactSourceBound,
+    artifactSourceBound
+      ? manifest?.attestations === undefined
+        ? "Legacy manifest has no provenance attestation; source syntax remains valid."
+        : "Release manifest and provenance use the same source commit."
+      : "Release manifest and provenance source commits do not match."
+  ));
 
   return {
     schema_version: "0.1",
     ok: checks.every((entry) => entry.status === "pass"),
+    verification_context: verificationContext,
     release_manifest_path: releaseManifestPath,
     package_path: packagePath,
     checksum_manifest_path: checksumManifestPath,
@@ -529,6 +583,7 @@ export function formatReleaseManifestVerification(
   return [
     "Kairon release manifest verification:",
     `release_manifest.verification.ok=${result.ok}`,
+    `verification_context=${result.verification_context}`,
     `release_manifest=${result.release_manifest_path}`,
     `package=${result.package_path}`,
     `checksum_manifest=${result.checksum_manifest_path}`,
@@ -694,7 +749,8 @@ async function createAttestationBindings(input: {
     stat(input.sbomPath),
     verifyReleaseSbom(input.sbomPath, {
       projectRoot: input.root,
-      checksumManifest: input.checksumManifestPath
+      checksumManifest: input.checksumManifestPath,
+      verificationContext: "source"
     }),
     readFile(input.provenancePath),
     stat(input.provenancePath),
@@ -703,7 +759,8 @@ async function createAttestationBindings(input: {
       package: input.packagePath,
       checksumManifest: input.checksumManifestPath,
       sbom: input.sbomPath,
-      commandRunner: input.commandRunner
+      commandRunner: input.commandRunner,
+      verificationContext: "source"
     })
   ]);
   if (

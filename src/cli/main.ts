@@ -2336,9 +2336,14 @@ export function createProgram(): Command {
     .argument("<package>", "Path to the local release .tgz package.")
     .option("--manifest <path>", "Checksum manifest path. Defaults to <package>.sha256.json.")
     .option("--release-manifest <path>", "Release manifest path for source and artifact binding verification.")
+    .option(
+      "--verification-context <context>",
+      "Verification context: source or consumer. Defaults to source."
+    )
     .action(async (packageFile: string, options: {
       manifest?: string;
       releaseManifest?: string;
+      verificationContext?: string;
     }) => {
       const result = await releaseVerifyCommand(packageFile, options, process.cwd());
       console.log(result.text);
