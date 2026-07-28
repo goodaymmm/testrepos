@@ -226,3 +226,26 @@ kairon doctor
 続いて旧packageから新packageへのupdate、意図的なdoctor failure時のrollback、uninstall後の`.kairon`保持を確認します。operation test結果やdiagnostic bundleはpackageへ再同梱しません。
 
 Windows Sandboxでは、`0.2.0` rollback packageと`0.3.0` package、各checksum manifest、`0.3.0` release manifestを同じ共有directoryへ配置します。install前後で`kairon --version`、update失敗時の`rollback_package_restored`、uninstall後のglobal command不在とproject `.kairon/`保持を確認します。rollback packageとstate backupは確認完了まで削除しません。
+
+公開済みStable packageのsource-free canaryにはT195 profileを使用します。事前に
+`kairon release stable verify`が`PASS`したfresh artifactを用意し、Kairon source rootで
+build後に次を実行します。
+
+```powershell
+.\scripts\kairon-stable-canary.ps1 `
+  -ProjectRoot "C:\Users\hikar\Documents\AutoRunner" `
+  -TimeoutSeconds 1800
+```
+
+scriptは現在のNode.js runtimeとGit runtimeをread-onlyでWindows Sandboxへmapしますが、
+Kairon source checkout、`node_modules`、global Kairon installはmapしません。Sandboxは
+published Stable assetをdownloadしてconsumer verificationを行い、Sandbox内のuser-local
+npm prefixへinstallします。fixture projectの`doctor --format json`、`state check --format json`、
+`status`を確認した後にuninstallし、`.kairon/project.json`が保持されたことをresultへ記録します。
+`ProjectRoot`はStable verificationを保持するKairon repository rootであり、実際の
+production projectをcanary対象として変更する引数ではありません。
+
+既存Windows Sandboxが起動している場合、scriptはunknown instanceを終了せず
+`SETUP_REQUIRED`で停止します。timeout時も強制終了しません。成功/失敗resultは
+`.kairon/release/stable-canaries/<canary-id>/`へ保存され、credential値やnative command
+outputは含みません。

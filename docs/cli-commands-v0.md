@@ -1089,9 +1089,19 @@ kairon test docs --range T176-T189 --template stable-acceptance --result-root op
 kairon test docs --range T176-T189 --template stable-acceptance --result-root <new-root> --previous-result-root <previous-root>
 kairon test summarize <log-file>
 kairon test summarize --result-root <directory> --test-list <test-list.md> --suggest --patch-preview
+kairon test stable-canary prepare --node-runtime-root <dir> --git-runtime-root <dir>
+kairon test stable-canary finalize --input <stable-canary-input.json>
 ```
 
 `commands`と`docs`はcredential値を埋め込まず、必要なenvironment variable名とsetup条件だけを出力する。`stable-acceptance` templateはtest list、PowerShell command group、source commitへbindしたevidence manifest、exact-ID cleanup planを同時生成する。`--previous-result-root`指定時は既存PASSを変更せず、新しいresult rootの再実行対象から除外する。`summarize`は既定でMarkdownを変更せず候補を表示し、`--apply-pass`を明示した場合もPASS候補だけをbackup付きで反映する。`FAIL`、`SETUP_REQUIRED`、`OPTIONAL`を自動的にPASSへ変更しない。
+
+`stable-canary prepare`は、最新または`--verification`で指定したT194 Stable verificationが
+freshな`PASS`であることを検証し、Windows Sandbox用のinput manifest、bootstrap、
+`.wsb`を生成する。Node.js 22+とGitのruntime rootはread-only mappingとして必須であり、
+source checkoutはmapしない。`finalize`はSandbox resultのcanary ID、release ID、version、
+input digest、全check、secret非混入、cleanupを再検証する。result欠落は
+`SETUP_REQUIRED`、binding driftやintegrity failureは`FAIL`であり、unknown Sandboxを
+自動終了しない。
 
 ## kairon release
 

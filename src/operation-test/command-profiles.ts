@@ -232,6 +232,45 @@ const profiles: OperationTestCommandProfile[] = [
       "evidence_manifest and cleanup_plan are generated before execution",
       "credential values are absent"
     ]
+  },
+  {
+    id: "stable-canary",
+    title: "T195 Clean Windows Stable canary",
+    task_ids: ["T195"],
+    description:
+      "Prepare, launch, and finalize a source-free Stable package install canary in Windows Sandbox.",
+    required_env: [],
+    setup: [
+      "Run on Windows with Windows Sandbox enabled and no existing WindowsSandbox instance.",
+      "Run kairon release stable verify first; the latest fresh PASS artifact is used by default.",
+      "The canary maps Node.js and Git read-only, and never maps the Kairon source checkout."
+    ],
+    commands: [
+      {
+        kind: "powershell",
+        lines: [
+          "$STABLE_CANARY_ARGS = @(",
+          "  \"-ProjectRoot\", $KAIRON,",
+          "  \"-TimeoutSeconds\", \"1800\"",
+          ")",
+          "if (-not [string]::IsNullOrWhiteSpace($env:KAIRON_STABLE_VERIFICATION_PATH)) {",
+          "  $STABLE_CANARY_ARGS += @(\"-Verification\", $env:KAIRON_STABLE_VERIFICATION_PATH)",
+          "}",
+          "if (-not [string]::IsNullOrWhiteSpace($env:KAIRON_STABLE_CANARY_OUTPUT)) {",
+          "  $STABLE_CANARY_ARGS += @(\"-OutputRoot\", $env:KAIRON_STABLE_CANARY_OUTPUT)",
+          "}",
+          ".\\scripts\\kairon-stable-canary.ps1 @STABLE_CANARY_ARGS"
+        ]
+      }
+    ],
+    expected_evidence: [
+      "source verification status is PASS and unexpired",
+      "Windows Sandbox profile maps runtime and result folders only",
+      "download/install/version/doctor/state/read-only/uninstall checks pass",
+      "project state is retained after uninstall",
+      "unknown_sandbox_terminated=false",
+      "credential and source checkout values are absent"
+    ]
   }
 ];
 
