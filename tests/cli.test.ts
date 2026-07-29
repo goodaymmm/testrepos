@@ -1047,7 +1047,8 @@ describe("createProgram", () => {
       "channel",
       "check",
       "download",
-      "rollback"
+      "rollback",
+      "schedule"
     ]);
     const channel = update?.commands.find((command) => command.name() === "channel");
     expect(channel?.commands.map((command) => command.name()).sort()).toEqual([
@@ -1076,6 +1077,27 @@ describe("createProgram", () => {
         .find((command) => command.name() === "rollback")
         ?.options.map((option) => option.long)
     ).toEqual(expect.arrayContaining(["--to", "--confirm", "--dry-run"]));
+    const schedule = update?.commands.find(
+      (command) => command.name() === "schedule"
+    );
+    expect(schedule?.commands.map((command) => command.name()).sort()).toEqual([
+      "install",
+      "run",
+      "status",
+      "uninstall"
+    ]);
+    expect(
+      schedule?.commands
+        .find((command) => command.name() === "install")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining([
+      "--interval-hours",
+      "--timeout-ms",
+      "--cooldown-hours",
+      "--task-name",
+      "--token-env",
+      "--kairon-command"
+    ]));
   });
 
   it("registers merge and deploy dry-run approval commands", () => {

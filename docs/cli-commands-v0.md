@@ -1198,7 +1198,7 @@ git tag / GitHub Releaseは承認済み`release github publish`だけが実行�
 
 ## kairon update
 
-検証済みGitHub Releaseを手動で選択し、user-local cacheを経由して既存Windows package lifecycleへ渡す。background check、silent update、schedulerは実行しない。
+検証済みGitHub Releaseを手動で選択し、user-local cacheを経由して既存Windows package lifecycleへ渡す。channel設定だけではbackground checkやsilent updateを開始しない。定期checkは`update schedule install`で明示的に有効化する。
 
 ```powershell
 kairon update channel show
@@ -1206,6 +1206,10 @@ kairon update channel set beta --repository owner/repo --dry-run
 kairon update channel set beta --repository owner/repo --write --confirm beta
 kairon update channel set pinned --repository owner/repo --version 0.2.0 --write --confirm pinned@0.2.0
 kairon update check
+kairon update schedule install --interval-hours 24 --timeout-ms 60000 --cooldown-hours 24
+kairon update schedule status
+kairon update schedule run
+kairon update schedule uninstall
 kairon update download 0.2.0
 kairon update apply UPD-0001 --confirm UPD-0001 --dry-run
 kairon update apply UPD-0001 --confirm UPD-0001
@@ -1213,6 +1217,10 @@ kairon update rollback --to 0.1.0 --confirm 0.1.0
 ```
 
 `update check`はconfigured channelに合うpublished releaseを照合し、release manifest、tag SHA、Node runtime条件をmemory上で検証する。filesystemとregistryは変更しない。`stable`はprereleaseを除外し、`beta`はstable / prereleaseを許可し、`pinned`は指定versionだけを許可する。
+
+`update schedule`はWindows Task Scheduler上のread-only checkを管理する。既定は無効で、`install`後だけ定期実行する。Taskにはsecret値を保存せず、GitHub tokenは実行時にenvまたはWindows Credential Managerから解決する。`run`は`.kairon/update/schedule/`へsecret-free resultと通知監査を保存し、同一releaseをdeduplicateする。通知には既存alert policyのquiet hours、maintenance window、daily budget、cooldownを適用する。`status`はTask状態、最終結果、次回予定、stale判定、credential provider/sourceだけを表示する。
+
+TaskがKairon管理のdescription、PowerShell action、固定引数と完全一致しない場合、`install`と`uninstall`はそのTaskを置換・削除しない。`run`は分類と手動download commandを返すだけで、download、apply、rollback、restartを自動実行しない。Windows以外、権限不足、credential不足、remote障害は`setup_required`または`remote_unavailable`として診断する。
 
 `update download`は`.tgz`、checksum manifest、release manifestを`%LOCALAPPDATA%\Kairon\updates`配下のpartial directoryへ取得する。package hash、inventory、manifest hash、source commitを検証した後だけatomic renameし、project側には`.kairon/update/downloads/UPD-*.json`のsecret-free metadataを保存する。tokenは`--token-env`、`GH_TOKEN`、`GITHUB_TOKEN`、明示したWindows Credential Manager参照の順で解決し、artifactへ保存しない。
 

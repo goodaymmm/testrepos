@@ -52,6 +52,9 @@ import {
 import {
   inspectLatestPostReleaseHealth
 } from "../release/post-release-health.js";
+import {
+  getScheduledUpdateStatus
+} from "../update/scheduled-check.js";
 import { resolveWorkflowRuntimeConfig } from "../workflow/config.js";
 import { inspectWorkflowCheckpointStore } from "../workflow/checkpoint-manager.js";
 import { inspectCapabilityPolicyConfig } from "../policy/trust-policy.js";
@@ -272,6 +275,11 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkRagStatus(options.projectRoot));
   checks.push(await checkPublishedStableVerification(options.projectRoot));
   checks.push(await checkPostReleaseHealth(options.projectRoot));
+  checks.push(await checkScheduledUpdate(
+    options.projectRoot,
+    env,
+    options.secretResolver
+  ));
   if (await readinessManifestExists(options.projectRoot)) {
     checks.push(await checkBetaReadiness(options.projectRoot));
   }
@@ -2372,6 +2380,78 @@ async function checkPostReleaseHealth(
     details,
     "refresh post-release evidence and rerun kairon release health check"
   );
+}
+
+async function checkScheduledUpdate(
+  projectRoot: string,
+  env: NodeJS.ProcessEnv,
+  secretResolver?: SecretResolver
+): Promise<DoctorCheck> {
+  const id = "update.scheduled_check";
+  const title = "Read-only scheduled update check";
+  const view = await getScheduledUpdateStatus(projectRoot, {
+    env,
+    secretResolver
+  });
+  const details = [
+    `enabled=${view.enabled}`,
+    `task_status=${view.task?.status ?? "unknown"}`,
+    `task_managed=${view.task?.managed ?? false}`,
+    `last_status=${view.latest?.status ?? "not_run"}`,
+    `last_result=${view.latest?.classification ?? "not_run"}`,
+    `last_run=${view.latest?.checked_at ?? "none"}`,
+    `next_run=${view.latest?.next_run_at ?? "none"}`,
+    `stale=${view.stale}`,
+    `credential_status=${view.credential.status}`,
+    `credential_provider=${view.credential.provider ?? "none"}`,
+    "automatic_download=false",
+    "automatic_apply=false",
+    "automatic_restart=false"
+  ];
+  if (!view.enabled) {
+    return pass(id, title, details);
+  }
+  if (view.task?.status === "foreign" || view.task?.status === "error") {
+    return error(
+      id,
+      title,
+      details,
+      "inspect the exact Task Scheduler action and rerun kairon update schedule install"
+    );
+  }
+  if (
+    view.task === null ||
+    view.task.status === "missing" ||
+    view.task.status === "disabled" ||
+    view.task.status === "unknown"
+  ) {
+    return warning(
+      id,
+      title,
+      details,
+      "run kairon update schedule install, then kairon update schedule status"
+    );
+  }
+  if (view.stale) {
+    return warning(
+      id,
+      title,
+      details,
+      "run kairon update schedule run and inspect the latest result"
+    );
+  }
+  if (
+    view.latest?.status === "setup_required" ||
+    view.latest?.classification === "remote_unavailable"
+  ) {
+    return warning(
+      id,
+      title,
+      details,
+      "repair GitHub credential or network access, then run kairon update schedule run"
+    );
+  }
+  return pass(id, title, details);
 }
 
 function pass(id: string, title: string, details: string[]): DoctorCheck {

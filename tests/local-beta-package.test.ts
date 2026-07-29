@@ -81,6 +81,7 @@ describe("local release package", () => {
       "scripts/install-local-beta.ps1",
       "scripts/update-local-beta.ps1",
       "scripts/uninstall-local-beta.ps1",
+      "scripts/kairon-update-check-task.ps1",
       "docs/installation.md",
       "README.md"
     ]);
@@ -112,7 +113,8 @@ describe("local release package", () => {
       "local-beta-common.ps1",
       "install-local-beta.ps1",
       "update-local-beta.ps1",
-      "uninstall-local-beta.ps1"
+      "uninstall-local-beta.ps1",
+      "kairon-update-check-task.ps1"
     ]) {
       const scriptPath = path.resolve("scripts", script);
       const parsed = spawnSync(

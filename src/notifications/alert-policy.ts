@@ -69,6 +69,13 @@ export type AlertPolicyDecision = {
   defer_until?: string;
 };
 
+export type AlertPolicyNotificationInput = {
+  severity: WatchdogSeverity;
+  event: WatchdogPendingNotification["event"];
+  last_notified_at?: string;
+  suppression_reason?: AlertPolicyReason;
+};
+
 type NotificationsAlertPolicyConfig = {
   alert_policy?: AlertPolicyConfig;
 };
@@ -146,22 +153,42 @@ export function evaluateAlertPolicy(
     sent_today: number;
   }
 ): AlertPolicyDecision {
+  return evaluateAlertPolicyNotification(policy, {
+    severity: alert.severity,
+    event: pending.event,
+    last_notified_at: alert.last_notified_at,
+    suppression_reason: pending.suppression_reason
+  }, input);
+}
+
+export function evaluateAlertPolicyNotification(
+  policy: AlertPolicy,
+  notification: AlertPolicyNotificationInput,
+  input: {
+    now: Date;
+    sent_today: number;
+  }
+): AlertPolicyDecision {
   if (!policy.enabled) {
     return { decision: "send", reason: "none" };
   }
 
   const bypassSuppression =
-    pending.event === "resolved" ||
-    (alert.severity === "critical" &&
-      (pending.event === "open" || pending.event === "escalated"));
+    notification.event === "resolved" ||
+    (notification.severity === "critical" &&
+      (notification.event === "open" ||
+        notification.event === "escalated"));
   const route = bypassSuppression
     ? policy.routes.find((candidate) => candidate.provider === "discord")
-    : selectDiscordRoute(policy.routes, alert.severity);
+    : selectDiscordRoute(policy.routes, notification.severity);
   if (route === undefined) {
     const hasLocalRoute = policy.routes.some(
       (candidate) =>
         candidate.provider === "local_audit" &&
-        meetsMinimumSeverity(alert.severity, candidate.minimum_severity)
+        meetsMinimumSeverity(
+          notification.severity,
+          candidate.minimum_severity
+        )
     );
     return {
       decision: "suppress",
@@ -170,7 +197,11 @@ export function evaluateAlertPolicy(
   }
 
   if (!bypassSuppression) {
-    const reminderUntil = reminderDeferUntil(policy, alert, pending, input.now);
+    const reminderUntil = reminderDeferUntil(
+      policy,
+      notification,
+      input.now
+    );
     if (reminderUntil !== undefined) {
       return {
         decision: "defer",
@@ -252,15 +283,21 @@ function meetsMinimumSeverity(
 
 function reminderDeferUntil(
   policy: AlertPolicy,
-  alert: WatchdogAlert,
-  pending: WatchdogPendingNotification,
+  notification: Pick<
+    AlertPolicyNotificationInput,
+    "event" | "last_notified_at"
+  >,
   now: Date
 ): string | undefined {
-  if (pending.event !== "reminder" || alert.last_notified_at === undefined) {
+  if (
+    notification.event !== "reminder" ||
+    notification.last_notified_at === undefined
+  ) {
     return undefined;
   }
   const deferUntil =
-    Date.parse(alert.last_notified_at) + policy.reminder_interval_seconds * 1_000;
+    Date.parse(notification.last_notified_at) +
+    policy.reminder_interval_seconds * 1_000;
   return deferUntil > now.getTime()
     ? new Date(deferUntil).toISOString()
     : undefined;

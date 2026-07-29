@@ -377,3 +377,32 @@ kairon projects health schedule verify
 ```
 
 helperは`scripts/kairon-supervisor-health-task.ps1`である。Task Scheduler引数にはregistry pathと数値profileだけを保存し、token、password、Discord credentialは保存しない。登録・解除時に`task_scheduler_permission_denied`となる場合はWindows PowerShellを管理者として実行する。
+
+## Scheduled update check
+
+runtime daemonとは別に、read-only update checkをTask Schedulerへ登録できる。既定は無効で、登録操作は管理者PowerShellから明示的に実行する。
+
+```powershell
+cd M:\EnglishApp
+
+kairon update schedule install `
+  --interval-hours 24 `
+  --timeout-ms 60000 `
+  --cooldown-hours 24
+
+kairon update schedule status
+kairon update schedule run
+```
+
+helperは`scripts/kairon-update-check-task.ps1`である。Task actionにはhelper、project root、Kairon commandだけを保存し、token値やDiscord credentialは保存しない。tokenはTask実行時に`GH_TOKEN`、`GITHUB_TOKEN`、またはWindows Credential Managerから解決する。`status`で`task_status=registered`、`task_managed=true`、credentialの`present/missing`、最終分類、stale判定を確認する。
+
+同一repository、channel、version、release IDの通知は再送しない。quiet hours、maintenance window、daily budget、cooldownで送信を延期または抑制する場合がある。通知監査ログが壊れている場合は重複送信せず`notification_audit_invalid`で失敗する。
+
+解除は完全一致するKairon管理Taskだけを対象にする。
+
+```powershell
+kairon update schedule uninstall
+kairon update schedule status
+```
+
+foreign taskは置換・削除しない。権限不足では管理者PowerShellで再実行する。解除後も`.kairon/update/schedule/`の結果は調査証跡として保持する。scheduled checkはdownload、apply、rollback、runtime restartを実行しない。

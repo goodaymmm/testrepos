@@ -648,7 +648,7 @@ local packageはpublic npm registryへpublishせず、`npm run release:pack`でc
 固定し、fresh preflightが完全一致する場合だけprerelease flagを解除します。promotion中にasset、
 tag、release identityを差し替えず、再実行済みの場合はGitHub writeなしで`already_promoted`を返します。
 
-利用側は`kairon update channel set`で`stable | beta | pinned`を明示設定し、`update check`、`update download`、`update apply`を分離して実行できます。downloadはuser-local cacheで旧releaseの3 assetまたはattestation付きreleaseの5 assetとtag SHAを検証し、apply / rollbackはexact confirm後にtransactional PowerShell lifecycleへ渡します。runtime・state・disk preflightとuser-local staging healthが成功した場合だけactive packageを切り替え、成功時だけ同じtransaction IDでupdate registryを更新します。rollback失敗時はcritical incidentとrecovery markerを残し、自動再試行やbackground auto-updateは行いません。
+利用側は`kairon update channel set`で`stable | beta | pinned`を明示設定し、`update check`、`update download`、`update apply`を分離して実行できます。downloadはuser-local cacheで旧releaseの3 assetまたはattestation付きreleaseの5 assetとtag SHAを検証し、apply / rollbackはexact confirm後にtransactional PowerShell lifecycleへ渡します。runtime・state・disk preflightとuser-local staging healthが成功した場合だけactive packageを切り替え、成功時だけ同じtransaction IDでupdate registryを更新します。rollback失敗時はcritical incidentとrecovery markerを残し、自動再試行やbackground auto-updateは行いません。任意の`kairon update schedule install`はWindows Task Schedulerでread-only checkと通知だけを定期実行し、download、apply、restartは自動実行しません。
 
 ### 初期運用テストの履歴 (T11-T15)
 

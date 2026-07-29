@@ -69,6 +69,7 @@ export type UpdateCheckResult = {
   channel: UpdateChannelConfig["channel"];
   repository: string;
   current_version: string;
+  selected_release_id: number;
   selected_version: string;
   selected_tag: string;
   selected_source_commit: string;
@@ -141,6 +142,7 @@ export async function checkForUpdate(
     channel: config.channel,
     repository: config.repository,
     current_version: currentVersion,
+    selected_release_id: candidate.release.id,
     selected_version: candidate.version,
     selected_tag: candidate.tag,
     selected_source_commit: candidate.sourceCommit,
@@ -370,6 +372,7 @@ export function formatUpdateCheck(result: UpdateCheckResult): string {
     `channel=${result.channel}`,
     `repository=${result.repository}`,
     `current_version=${result.current_version}`,
+    `selected_release_id=${result.selected_release_id}`,
     `selected_version=${result.selected_version}`,
     `selected_tag=${result.selected_tag}`,
     `selected_source_commit=${result.selected_source_commit}`,

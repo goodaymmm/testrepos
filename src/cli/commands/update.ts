@@ -17,6 +17,17 @@ import {
   type UpdateDependencies,
   type UpdateNetworkOptions
 } from "../../update/downloader.js";
+import {
+  formatScheduledUpdateRun,
+  formatScheduledUpdateStatus,
+  getScheduledUpdateStatus,
+  installScheduledUpdateCheck,
+  runScheduledUpdateCheck,
+  uninstallScheduledUpdateCheck,
+  verifyScheduledUpdateTask,
+  type ScheduledUpdateInstallOptions,
+  type ScheduledUpdateTaskActionOptions
+} from "../../update/scheduled-check.js";
 
 export async function updateChannelShowCommand(projectRoot: string): Promise<string> {
   return formatUpdateChannelView(await showUpdateChannel(projectRoot));
@@ -83,4 +94,36 @@ export async function updateRollbackCommand(
   return formatUpdateApply(
     await rollbackUpdate(projectRoot, currentVersion, version, options, deps)
   );
+}
+
+export async function updateScheduleInstallCommand(
+  projectRoot: string,
+  options: ScheduledUpdateInstallOptions
+): Promise<string> {
+  return installScheduledUpdateCheck(projectRoot, options);
+}
+
+export async function updateScheduleStatusCommand(
+  projectRoot: string,
+  options: ScheduledUpdateTaskActionOptions = {}
+): Promise<string> {
+  const verification = await verifyScheduledUpdateTask(projectRoot, options);
+  const view = await getScheduledUpdateStatus(projectRoot);
+  return [formatScheduledUpdateStatus(view), verification].join("\n");
+}
+
+export async function updateScheduleRunCommand(
+  projectRoot: string,
+  currentVersion: string
+): Promise<string> {
+  return formatScheduledUpdateRun(
+    await runScheduledUpdateCheck(projectRoot, currentVersion)
+  );
+}
+
+export async function updateScheduleUninstallCommand(
+  projectRoot: string,
+  options: ScheduledUpdateTaskActionOptions = {}
+): Promise<string> {
+  return uninstallScheduledUpdateCheck(projectRoot, options);
 }

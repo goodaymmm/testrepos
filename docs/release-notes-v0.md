@@ -9,6 +9,9 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 
 0.3.0 Stable baseline確定後の変更をここへ記録します。
 
+- T197: opt-inのWindows scheduled update check、release通知deduplicate、read-only guard、
+  Doctor / operation test profileを追加。自動download、apply、restartは行わない。
+
 各PR本文とmerge履歴を一次記録とし、local operation resultやgenerated evidenceはrelease
 notesへ埋め込まず、再実行方法と判定結果だけを記録します。
 
