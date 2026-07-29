@@ -182,6 +182,19 @@ export function compareCoreVersions(left: string, right: string): number {
   return 0;
 }
 
+export function isPatchVersionTransition(
+  currentVersion: string,
+  targetVersion: string
+): boolean {
+  const current = parseCoreVersion(currentVersion);
+  const target = parseCoreVersion(targetVersion);
+  return (
+    target[0] === current[0] &&
+    target[1] === current[1] &&
+    target[2] === current[2] + 1
+  );
+}
+
 export function formatUpdateChannelView(result: UpdateChannelView): string {
   return [
     "Kairon update channel:",

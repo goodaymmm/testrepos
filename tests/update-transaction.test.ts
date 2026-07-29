@@ -10,7 +10,9 @@ import {
   finalizeUpdateTransaction,
   readActiveUpdateTransaction,
   readUpdateTransaction,
-  updateTransactionMarkerPath
+  updateTransactionMarkerPath,
+  verifyPatchCompatibilityTransactions,
+  type UpdateTransactionArtifact
 } from "../src/update/transaction.js";
 import { createTempProject } from "./test-utils.js";
 
@@ -144,6 +146,39 @@ describe("update transaction", () => {
     )).rejects.toThrow("free bytes");
     await expect(readActiveUpdateTransaction(root)).resolves.toBeNull();
   });
+
+  it("verifies an update, rollback, and reapply patch compatibility chain", () => {
+    const verification = verifyPatchCompatibilityTransactions(
+      "0.3.0",
+      "0.3.1",
+      {
+        update: completedTransaction(
+          "UTX-1001",
+          "apply",
+          "0.3.0",
+          "0.3.1"
+        ),
+        rollback: completedTransaction(
+          "UTX-1002",
+          "rollback",
+          "0.3.1",
+          "0.3.0"
+        ),
+        reapply: completedTransaction(
+          "UTX-1003",
+          "apply",
+          "0.3.0",
+          "0.3.1"
+        )
+      }
+    );
+
+    expect(verification).toEqual({
+      ok: true,
+      reasons: [],
+      transaction_ids: ["UTX-1001", "UTX-1002", "UTX-1003"]
+    });
+  });
 });
 
 function transactionInput() {
@@ -165,5 +200,38 @@ function transactionDependencies(root: string) {
       `kairon-transaction-staging-${path.basename(root)}`
     ),
     freeSpaceReader: async () => 1024 * 1024 * 1024
+  };
+}
+
+function completedTransaction(
+  transactionId: string,
+  action: "apply" | "rollback",
+  currentVersion: string,
+  targetVersion: string
+): UpdateTransactionArtifact {
+  return {
+    schema_version: "0.1",
+    artifact_kind: "update_transaction",
+    transaction_id: transactionId,
+    action,
+    status: "completed",
+    phase: "completed",
+    current_version: currentVersion,
+    target_version: targetVersion,
+    download_id: `UPD-${transactionId.slice(-4)}`,
+    package_sha256: "a".repeat(64),
+    package_size_bytes: 1024,
+    staging_path: path.join(os.tmpdir(), transactionId),
+    artifact_path: `.kairon/update/transactions/${transactionId}.json`,
+    timeline: [
+      {
+        phase: "post_check",
+        status: "passed",
+        code: "post_check_passed",
+        recorded_at: "2026-07-26T00:00:00.000Z"
+      }
+    ],
+    created_at: "2026-07-26T00:00:00.000Z",
+    updated_at: "2026-07-26T00:01:00.000Z"
   };
 }

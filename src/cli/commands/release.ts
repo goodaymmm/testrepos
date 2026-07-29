@@ -60,6 +60,18 @@ import {
   writePostReleaseHealthReport,
   type EvaluatePostReleaseHealthOptions
 } from "../../release/post-release-health.js";
+import {
+  createPatchReleasePlan,
+  formatPatchReleasePlan,
+  formatPatchReleasePrepare,
+  formatPatchReleaseVerification,
+  loadPreparedPatchReleasePlan,
+  preparePatchReleasePlan,
+  verifyPatchReleasePlan,
+  type CreatePatchReleasePlanOptions,
+  type PreparePatchReleasePlanOptions,
+  type VerifyPatchReleasePlanOptions
+} from "../../release/patch-plan.js";
 
 export type ReleaseCheckResult = {
   schema_version: string;
@@ -155,6 +167,7 @@ export type ReleaseVerifyCommandOptions = {
 export type ReleaseManifestCommandOptions = CreateReleaseManifestOptions & {
   package?: string;
   manifest?: string;
+  patchPlan?: string;
 };
 
 export type ReleaseSbomCommandOptions = CreateReleaseSbomOptions & {
@@ -192,6 +205,11 @@ export type ReleaseHealthReportCommandOptions = {
   format?: "json" | "markdown";
   output?: string;
 };
+export type ReleasePatchPlanCommandOptions = CreatePatchReleasePlanOptions;
+export type ReleasePatchPrepareCommandOptions =
+  PreparePatchReleasePlanOptions;
+export type ReleasePatchVerifyCommandOptions =
+  VerifyPatchReleasePlanOptions;
 
 type PackageJson = {
   version?: unknown;
@@ -326,12 +344,66 @@ export async function releaseManifestCommand(
         .join(", ")}`
     );
   }
+  const patchPlan =
+    options.patchPlan === undefined
+      ? undefined
+      : (await loadPreparedPatchReleasePlan(
+          projectRoot,
+          options.patchPlan
+        )).plan;
   return formatReleaseManifest(await createReleaseManifest(
     projectRoot,
     options.package,
     options.manifest,
-    options
+    {
+      ...options,
+      ...(patchPlan === undefined
+        ? {}
+        : {
+            patchBinding: {
+              release_type: "patch" as const,
+              plan_id: patchPlan.plan_id,
+              base_version: patchPlan.base_version,
+              target_version: patchPlan.target_version
+            }
+          })
+    }
   ));
+}
+
+export async function releasePatchPlanCommand(
+  projectRoot: string,
+  options: ReleasePatchPlanCommandOptions
+): Promise<string> {
+  return formatPatchReleasePlan(
+    await createPatchReleasePlan(projectRoot, options)
+  );
+}
+
+export async function releasePatchPrepareCommand(
+  projectRoot: string,
+  planId: string,
+  options: ReleasePatchPrepareCommandOptions
+): Promise<string> {
+  return formatPatchReleasePrepare(
+    await preparePatchReleasePlan(projectRoot, planId, options)
+  );
+}
+
+export async function releasePatchVerifyCommand(
+  projectRoot: string,
+  planId: string,
+  options: ReleasePatchVerifyCommandOptions
+): Promise<{ text: string; ok: boolean }> {
+  const execution = await verifyPatchReleasePlan(
+    projectRoot,
+    planId,
+    options
+  );
+  return {
+    text: formatPatchReleaseVerification(execution),
+    ok: execution.result.status === "PASS"
+  };
 }
 
 export async function releaseGitHubPlanCommand(

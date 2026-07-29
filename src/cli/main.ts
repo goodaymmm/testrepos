@@ -180,6 +180,9 @@ import {
   releaseManifestCommand,
   releaseNotesCommand,
   releasePackCommand,
+  releasePatchPlanCommand,
+  releasePatchPrepareCommand,
+  releasePatchVerifyCommand,
   releaseProvenanceCommand,
   releaseSbomCommand,
   releaseVerifyCommand,
@@ -2887,15 +2890,128 @@ export function createProgram(): Command {
     .requiredOption("--manifest <path>", "Path to the package checksum manifest.")
     .option("--sbom <path>", "Path to the verified CycloneDX SBOM.")
     .option("--provenance <path>", "Path to verified local build provenance.")
+    .option(
+      "--patch-plan <plan-id>",
+      "Bind the release manifest to one prepared patch release plan."
+    )
     .option("--output <path>", "Output path. Defaults to release-manifest.json beside the package.")
     .action(async (options: {
       package?: string;
       manifest?: string;
       sbom?: string;
       provenance?: string;
+      patchPlan?: string;
       output?: string;
     }) => {
       console.log(await releaseManifestCommand(process.cwd(), options));
+    });
+
+  const releasePatch = release
+    .command("patch")
+    .description(
+      "Plan, prepare, and verify one explicit 0.3.x-style patch release."
+    );
+
+  releasePatch
+    .command("plan")
+    .description(
+      "Create an expiring patch plan bound to clean source and version files."
+    )
+    .requiredOption(
+      "--version <version>",
+      "Next patch version, for example 0.3.1."
+    )
+    .option(
+      "--mode <mode>",
+      "Patch mode: rehearsal or release. Defaults to rehearsal.",
+      "rehearsal"
+    )
+    .option(
+      "--expires-in-minutes <minutes>",
+      "Plan lifetime in minutes. Defaults to 1440.",
+      (value: string) => Number(value)
+    )
+    .action(async (options: {
+      version: string;
+      mode?: string;
+      expiresInMinutes?: number;
+    }) => {
+      console.log(await releasePatchPlanCommand(process.cwd(), options));
+    });
+
+  releasePatch
+    .command("prepare")
+    .description(
+      "Apply one fresh patch plan to version files and release notes."
+    )
+    .argument("<plan-id>", "Patch release plan id.")
+    .requiredOption(
+      "--confirm <plan-id>",
+      "Exact patch release plan id confirmation."
+    )
+    .action(async (
+      planId: string,
+      options: { confirm?: string }
+    ) => {
+      console.log(
+        await releasePatchPrepareCommand(process.cwd(), planId, options)
+      );
+    });
+
+  releasePatch
+    .command("verify")
+    .description(
+      "Verify artifact, compatibility, canary, health, promotion, and cleanup evidence."
+    )
+    .argument("<plan-id>", "Patch release plan id.")
+    .requiredOption(
+      "--release-manifest <path>",
+      "Patch-bound release manifest."
+    )
+    .requiredOption("--canary <path>", "Stable canary final result.")
+    .requiredOption("--health <path>", "Post-release health result.")
+    .requiredOption(
+      "--update-transaction <path>",
+      "Previous Stable to patch update transaction."
+    )
+    .requiredOption(
+      "--rollback-transaction <path>",
+      "Patch to previous Stable rollback transaction."
+    )
+    .requiredOption(
+      "--reapply-transaction <path>",
+      "Previous Stable to patch reapply transaction."
+    )
+    .requiredOption(
+      "--promotion <path>",
+      "Approval-gated Stable promotion result."
+    )
+    .requiredOption(
+      "--cleanup <path>",
+      "Exact rehearsal cleanup or production retention evidence."
+    )
+    .action(async (
+      planId: string,
+      options: {
+        releaseManifest: string;
+        canary: string;
+        health: string;
+        updateTransaction: string;
+        rollbackTransaction: string;
+        reapplyTransaction: string;
+        promotion: string;
+        cleanup: string;
+      }
+    ) => {
+      const result = await releasePatchVerifyCommand(
+        process.cwd(),
+        planId,
+        options
+      );
+      console.log(result.text);
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
     });
 
   const releaseStable = release

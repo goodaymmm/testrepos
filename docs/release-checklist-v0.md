@@ -192,6 +192,60 @@ kairon release bump --version <next-version> --write
 `--write` はtracked worktreeがcleanな場合だけ実行できます。
 実行時は `.kairon/release/backups/<timestamp>/` に変更前の対象fileを保存します。
 
+## 0.3.x Patch Release Workflow
+
+<!-- kairon:patch-release-workflow -->
+
+Stable後のbug fixは、汎用`release bump`を直接writeするのではなく、patch planへ
+base / target version、base source commit、version file digest、release notes marker、
+required checks、有効期限を固定してから準備します。targetは同一major / minorの次の
+patchだけを受理します。
+
+```powershell
+kairon release patch plan --version 0.3.1 --mode rehearsal
+kairon release patch prepare PRP-<id> --confirm PRP-<id>
+```
+
+`prepare`はclean tracked worktree、plan期限、base commit、全input digest、exact confirmを
+再検証し、`.kairon/release/patch-plans/<plan-id>/backup/`へ変更前fileを保存してから
+`package.json`、`package-lock.json`、`src/index.ts`、release notes templateだけを更新します。
+prepare後はoperatorが差分をreviewしてcommitします。prepare自身はcommit、push、GitHub
+Release作成、Stable昇格、update applyを実行しません。
+
+commit後のrelease manifestにはplanを明示的にbindします。
+
+```powershell
+kairon release manifest `
+  --package <package.tgz> `
+  --manifest <checksum-manifest.json> `
+  --sbom <sbom.cdx.json> `
+  --provenance <provenance.json> `
+  --patch-plan PRP-<id>
+```
+
+patch verifyは、patch-bound release manifest、Clean Windows canary、post-release health、
+previous Stableからのupdate / rollback / reapply transaction、approval-gated Stable
+promotion result、exact cleanup evidenceをread-onlyで照合します。
+
+```powershell
+kairon release patch verify PRP-<id> `
+  --release-manifest <release-manifest.json> `
+  --canary <stable-canary-final-result.json> `
+  --health <post-release-health-result.json> `
+  --update-transaction <update.json> `
+  --rollback-transaction <rollback.json> `
+  --reapply-transaction <reapply.json> `
+  --promotion <stable-promotion-result.json> `
+  --cleanup <patch-release-cleanup-result.json>
+```
+
+- `rehearsal`ではtest release、tag、branchのexact IDが`deleted`または
+  `verified_absent`であることを要求する。
+- `release`ではproduction releaseを保持し、cleanupを`not_required`として明示する。
+- build、full test、security baseline、SBOM、provenance、manifest、canary、healthを
+  patch planから省略しない。
+- GitHub publish / promotionは既存のapproval-bound commandだけを使用する。
+
 ## Reproducible Stable Local Artifact
 
 version bumpをcommitしたclean tracked worktreeでpackageを生成し、そのpackage、checksum

@@ -1001,6 +1001,7 @@ describe("createProgram", () => {
       "manifest",
       "notes",
       "pack",
+      "patch",
       "provenance",
       "sbom",
       "stable",
@@ -1014,7 +1015,12 @@ describe("createProgram", () => {
       release?.commands
         .find((command) => command.name() === "manifest")
         ?.options.map((option) => option.long)
-    ).toEqual(expect.arrayContaining(["--package", "--manifest", "--output"]));
+    ).toEqual(expect.arrayContaining([
+      "--package",
+      "--manifest",
+      "--patch-plan",
+      "--output"
+    ]));
     expect(
       release?.commands
         .find((command) => command.name() === "verify")
@@ -1034,6 +1040,31 @@ describe("createProgram", () => {
         .find((command) => command.name() === "bump")
         ?.options.map((option) => option.long)
     ).toEqual(expect.arrayContaining(["--type", "--version", "--dry-run", "--write"]));
+    const patch = release?.commands.find((command) => command.name() === "patch");
+    expect(patch?.commands.map((command) => command.name())).toEqual([
+      "plan",
+      "prepare",
+      "verify"
+    ]);
+    expect(
+      patch?.commands
+        .find((command) => command.name() === "plan")
+        ?.options.map((option) => option.long)
+    ).toEqual(["--version", "--mode", "--expires-in-minutes"]);
+    expect(
+      patch?.commands
+        .find((command) => command.name() === "verify")
+        ?.options.map((option) => option.long)
+    ).toEqual([
+      "--release-manifest",
+      "--canary",
+      "--health",
+      "--update-transaction",
+      "--rollback-transaction",
+      "--reapply-transaction",
+      "--promotion",
+      "--cleanup"
+    ]);
     const stable = release?.commands.find((command) => command.name() === "stable");
     expect(stable?.commands.map((command) => command.name())).toEqual(["verify"]);
     expect(

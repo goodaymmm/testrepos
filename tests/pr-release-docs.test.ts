@@ -145,6 +145,30 @@ describe("PR and release documentation", () => {
     expect(prChecklist).toContain("docs/release-notes-v0.md");
   });
 
+  it("documents the explicit patch plan, prepare, and verification boundary", async () => {
+    const commands = await readUtf8("docs/cli-commands-v0.md");
+    const checklist = await readUtf8("docs/release-checklist-v0.md");
+    const installation = await readUtf8("docs/installation.md");
+    const notes = await readUtf8("docs/release-notes-v0.md");
+
+    expect(checklist).toContain("<!-- kairon:patch-release-workflow -->");
+    for (const command of [
+      "kairon release patch plan",
+      "kairon release patch prepare",
+      "kairon release patch verify"
+    ]) {
+      expect(commands).toContain(command);
+      expect(checklist).toContain(command);
+    }
+    expect(commands).toContain("--update-transaction");
+    expect(commands).toContain("--rollback-transaction");
+    expect(commands).toContain("--reapply-transaction");
+    expect(checklist).toContain("--patch-plan");
+    expect(checklist).toContain("自動");
+    expect(installation).toContain("release manifest --patch-plan");
+    expect(notes).toContain("T204");
+  });
+
   it("documents the Release Candidate readiness command and artifacts", async () => {
     const commands = await readUtf8("docs/cli-commands-v0.md");
     const checklist = await readUtf8("docs/release-checklist-v0.md");

@@ -35,6 +35,13 @@ export type ReleaseAttestationBinding = {
   size_bytes: number;
 };
 
+export type PatchReleaseManifestBinding = {
+  release_type: "patch";
+  plan_id: string;
+  base_version: string;
+  target_version: string;
+};
+
 export type ReleaseManifest = {
   schema_version: "0.1";
   artifact_kind: "kairon_release";
@@ -63,6 +70,7 @@ export type ReleaseManifest = {
     sha256: string;
     files: ReleaseInventoryEntry[];
   };
+  maintenance?: PatchReleaseManifestBinding;
   attestations?: {
     sbom: ReleaseAttestationBinding & {
       format: "cyclonedx-json";
@@ -87,6 +95,7 @@ export type ReleaseManifestCheck = {
     | "package_binding"
     | "checksum_manifest_binding"
     | "package_inventory_binding"
+    | "patch_release_binding"
     | "sbom_binding"
     | "provenance_binding";
   status: "pass" | "fail";
@@ -125,6 +134,7 @@ export type CreateReleaseManifestOptions = {
   output?: string;
   sbom?: string;
   provenance?: string;
+  patchBinding?: PatchReleaseManifestBinding;
   commandRunner?: CommandRunner;
   now?: () => Date;
 };
@@ -261,6 +271,14 @@ export async function createReleaseManifest(
       sha256: calculateReleaseInventorySha256(inventory),
       files: inventory
     },
+    ...(options.patchBinding === undefined
+      ? {}
+      : {
+          maintenance: validatePatchReleaseBinding(
+            options.patchBinding,
+            packageVersion
+          )
+        }),
     ...(attestations === undefined ? {} : { attestations }),
     created_at: (options.now?.() ?? new Date()).toISOString()
   };
@@ -440,6 +458,26 @@ export async function verifyReleaseManifest(
     inventoryBound
       ? "Sorted package inventory and inventory SHA-256 match."
       : "Package inventory or inventory SHA-256 does not match the checksum manifest."
+  ));
+
+  const patchReleaseBound =
+    manifest?.maintenance === undefined ||
+    (
+      manifest.maintenance.release_type === "patch" &&
+      manifest.maintenance.target_version === manifest.package_version &&
+      isPatchVersionPair(
+        manifest.maintenance.base_version,
+        manifest.maintenance.target_version
+      )
+    );
+  checks.push(resultCheck(
+    "patch_release_binding",
+    patchReleaseBound,
+    manifest?.maintenance === undefined
+      ? "Release manifest is not associated with a patch release plan."
+      : patchReleaseBound
+        ? `Patch release plan ${manifest.maintenance.plan_id} is bound to ${manifest.maintenance.base_version} -> ${manifest.maintenance.target_version}.`
+        : "Patch release plan binding does not match the package version or patch transition."
   ));
 
   let artifactSourceBound =
@@ -727,6 +765,8 @@ export function isReleaseManifest(value: unknown): value is ReleaseManifest {
       Number.isInteger(entry.size_bytes) &&
       (entry.type === "file" || entry.type === "directory")
     ) &&
+    (candidate.maintenance === undefined ||
+      isPatchReleaseBinding(candidate.maintenance)) &&
     (candidate.attestations === undefined ||
       isReleaseAttestations(candidate.attestations)) &&
     typeof candidate.created_at === "string" &&
@@ -810,6 +850,61 @@ function isReleaseAttestations(
     "kairon-local-build-provenance",
     "0.1"
   );
+}
+
+function validatePatchReleaseBinding(
+  binding: PatchReleaseManifestBinding,
+  packageVersion: string
+): PatchReleaseManifestBinding {
+  if (
+    !isPatchReleaseBinding(binding) ||
+    binding.target_version !== packageVersion ||
+    !isPatchVersionPair(binding.base_version, binding.target_version)
+  ) {
+    throw new Error(
+      "Patch release binding must match the package version and next patch transition."
+    );
+  }
+  return binding;
+}
+
+function isPatchReleaseBinding(
+  value: unknown
+): value is PatchReleaseManifestBinding {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return false;
+  }
+  const candidate = value as Partial<PatchReleaseManifestBinding>;
+  return (
+    candidate.release_type === "patch" &&
+    typeof candidate.plan_id === "string" &&
+    /^PRP-\d{14}-[a-f0-9]{12}$/u.test(candidate.plan_id) &&
+    typeof candidate.base_version === "string" &&
+    typeof candidate.target_version === "string"
+  );
+}
+
+function isPatchVersionPair(baseVersion: string, targetVersion: string): boolean {
+  const base = parseCoreVersion(baseVersion);
+  const target = parseCoreVersion(targetVersion);
+  return (
+    base !== null &&
+    target !== null &&
+    target[0] === base[0] &&
+    target[1] === base[1] &&
+    target[2] === base[2] + 1
+  );
+}
+
+function parseCoreVersion(value: string): [number, number, number] | null {
+  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/u.exec(value);
+  return match === null
+    ? null
+    : [Number(match[1]), Number(match[2]), Number(match[3])];
 }
 
 function isAttestationBinding(
