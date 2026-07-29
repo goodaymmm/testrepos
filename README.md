@@ -498,6 +498,26 @@ kairon projects rollout show <plan-id>
 
 registryへ保存するのはproject ID、root、登録・最終確認時刻、Kairon version、optional rollout group、query / credentialを除いたBoard URL、縮約doctor summaryだけです。token、approval detail、task本文、source、stdout / stderrは集約しません。rollout planはPASS済みStable verificationへbindし、canaryがtarget versionかつhealth PASSになるまでprimaryをblockします。planは手動`update download / apply` templateだけを提示し、自動更新・runtime操作・Task Scheduler変更は行いません。詳細は[docs/multi-project-operations-v0.md](docs/multi-project-operations-v0.md)を参照してください。
 
+### Stable Soak Certification
+
+```powershell
+$start = kairon daemon soak start `
+  --release-verification .kairon\release\stable-verifications\<verification-id>.json `
+  --minimum-hours 168
+$SOAK_ID = [regex]::Match(($start -join "`n"), "soak_id=(SSK-[0-9]{14}-[a-f0-9]{12})").Groups[1].Value
+
+kairon daemon soak status $SOAK_ID --format json
+kairon daemon soak certify $SOAK_ID --format json
+kairon daemon soak report $SOAK_ID
+```
+
+Stable verificationのrelease / source / digestへbindした同一soakを168実時間以上継続し、
+daemon coverage、再起動、SLO、Incident、release driftを日次rollupで判定します。短縮または
+clock injection fixtureは`SETUP_REQUIRED`のままで、PASS証跡にはなりません。計画停止は
+`daemon soak mark`で事前記録し、`planned_reboot`は実際のhost rebootと一致した場合だけ
+許可します。詳細は[docs/windows-daemon-ops-v0.md](docs/windows-daemon-ops-v0.md)を
+参照してください。
+
 ### Runtime Watchdog
 
 ```powershell

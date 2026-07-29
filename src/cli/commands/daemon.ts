@@ -15,6 +15,15 @@ import {
   formatDaemonSoakCertification,
   writeDaemonSoakCertification
 } from "../../runtime/daemon-certification.js";
+import {
+  certifyStableSoak,
+  evaluateStableSoak,
+  formatStableSoak,
+  markStableSoakWindow,
+  readStableSoakCertificate,
+  startStableSoak,
+  type StableSoakMarkerKind
+} from "../../runtime/stable-soak.js";
 import { writeJsonFileAtomic } from "../../core/fs/json-file.js";
 import { getKaironPaths } from "../../core/fs/paths.js";
 
@@ -34,6 +43,26 @@ export type DaemonCertifyCommandOptions = {
   maxRestartGapMs?: string;
   maxFatalErrors?: string;
   minimumTicks?: string;
+};
+
+export type DaemonSoakStartCommandOptions = {
+  releaseVerification: string;
+  minimumHours?: string;
+  expectedIntervalMs?: string;
+  maxHeartbeatGapMs?: string;
+  maxRestartGapMs?: string;
+  minimumCoverageRatio?: string;
+};
+
+export type DaemonSoakOutputOptions = {
+  format?: string;
+};
+
+export type DaemonSoakMarkCommandOptions = {
+  kind: string;
+  from: string;
+  until: string;
+  reason: string;
 };
 
 export type DaemonTaskAction = "status" | "install" | "uninstall" | "restart";
@@ -140,6 +169,102 @@ export async function daemonCertifyCommand(
   }
 
   return formatDaemonSoakCertification(certification, format);
+}
+
+export async function daemonSoakStartCommand(
+  projectRoot: string,
+  options: DaemonSoakStartCommandOptions
+): Promise<string> {
+  const result = await startStableSoak(projectRoot, {
+    releaseVerification: options.releaseVerification,
+    minimumHours: parseOptionalInteger(options.minimumHours, "minimum-hours"),
+    expectedIntervalMs: parseOptionalPositiveNumber(
+      options.expectedIntervalMs,
+      "expected-interval-ms"
+    ),
+    maxHeartbeatGapMs: parseOptionalPositiveNumber(
+      options.maxHeartbeatGapMs,
+      "max-heartbeat-gap-ms"
+    ),
+    maxRestartGapMs: parseOptionalPositiveNumber(
+      options.maxRestartGapMs,
+      "max-restart-gap-ms"
+    ),
+    minimumCoverageRatio: parseOptionalRatio(
+      options.minimumCoverageRatio,
+      "minimum-coverage-ratio"
+    )
+  });
+  return [
+    "Kairon Stable soak started.",
+    `soak_id=${result.manifest.soak_id}`,
+    `status=${result.manifest.status}`,
+    `evidence_mode=${result.manifest.evidence_mode}`,
+    `release_version=${result.manifest.release.version}`,
+    `minimum_hours=${result.manifest.profile.minimum_hours}`,
+    `manifest=${result.manifest_path}`
+  ].join("\n");
+}
+
+export async function daemonSoakStatusCommand(
+  projectRoot: string,
+  soakId: string,
+  options: DaemonSoakOutputOptions = {}
+): Promise<string> {
+  const evaluation = await evaluateStableSoak(projectRoot, soakId);
+  return formatStableSoak(evaluation, parseDaemonReportFormat(options.format));
+}
+
+export async function daemonSoakCertifyCommand(
+  projectRoot: string,
+  soakId: string,
+  options: DaemonSoakOutputOptions = {}
+): Promise<string> {
+  const result = await certifyStableSoak(projectRoot, soakId);
+  const format = parseDaemonReportFormat(options.format);
+  const formatted = formatStableSoak(result.certificate, format);
+  if (format === "json") {
+    return formatted;
+  }
+  return [
+    formatted.trimEnd(),
+    "",
+    `certificate=${result.certificate_path}`
+  ].join("\n");
+}
+
+export async function daemonSoakReportCommand(
+  projectRoot: string,
+  soakId: string,
+  options: DaemonSoakOutputOptions = {}
+): Promise<string> {
+  const certificate = await readStableSoakCertificate(projectRoot, soakId);
+  const artifact =
+    certificate ?? await evaluateStableSoak(projectRoot, soakId);
+  return formatStableSoak(artifact, parseDaemonReportFormat(options.format));
+}
+
+export async function daemonSoakMarkCommand(
+  projectRoot: string,
+  soakId: string,
+  options: DaemonSoakMarkCommandOptions
+): Promise<string> {
+  const kind = parseStableSoakMarkerKind(options.kind);
+  const result = await markStableSoakWindow(projectRoot, soakId, {
+    kind,
+    from: options.from,
+    until: options.until,
+    reason: options.reason
+  });
+  return [
+    "Kairon Stable soak marker recorded.",
+    `soak_id=${soakId}`,
+    `marker_id=${result.marker.marker_id}`,
+    `kind=${result.marker.kind}`,
+    `from=${result.marker.from}`,
+    `until=${result.marker.until}`,
+    `marker=${result.marker_path}`
+  ].join("\n");
 }
 
 export async function daemonTaskCommand(
@@ -361,6 +486,41 @@ function parseOptionalNonNegativeNumber(
   }
 
   throw new Error(`Invalid ${optionName}: ${value}`);
+}
+
+function parseOptionalInteger(
+  value: string | undefined,
+  optionName: string
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (Number.isInteger(parsed) && parsed > 0) {
+    return parsed;
+  }
+  throw new Error(`Invalid ${optionName}: ${value}`);
+}
+
+function parseOptionalRatio(
+  value: string | undefined,
+  optionName: string
+): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  if (Number.isFinite(parsed) && parsed > 0 && parsed <= 1) {
+    return parsed;
+  }
+  throw new Error(`Invalid ${optionName}: ${value}`);
+}
+
+function parseStableSoakMarkerKind(value: string): StableSoakMarkerKind {
+  if (value === "planned_reboot" || value === "maintenance") {
+    return value;
+  }
+  throw new Error(`Invalid Stable soak marker kind: ${value}`);
 }
 
 function redactDaemonTaskOutput(value: string): string {

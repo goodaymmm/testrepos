@@ -402,6 +402,44 @@ const profiles: OperationTestCommandProfile[] = [
       "execution_performed=false and automatic_update=false",
       "no credential value, task body, approval body, package download, apply, or restart is recorded"
     ]
+  },
+  {
+    id: "stable-soak-certification",
+    title: "T199 Release-bound Stable soak certification",
+    task_ids: ["T199"],
+    description:
+      "Start and inspect one release-bound 168-hour Stable soak without shortening the real-time gate.",
+    required_env: ["KAIRON_T199_STABLE_VERIFICATION"],
+    setup: [
+      "Set KAIRON_T199_STABLE_VERIFICATION to a current PASS Stable release verification artifact in the target project.",
+      "Keep the production daemon and observability metrics running for at least 168 real-time hours.",
+      "Record planned maintenance or an OS reboot before the window with kairon daemon soak mark.",
+      "Clock-injected fixtures remain SETUP_REQUIRED and are not accepted as real-time evidence."
+    ],
+    commands: [
+      {
+        kind: "powershell",
+        lines: [
+          "$T199_START = kairon daemon soak start `",
+          "  --release-verification $env:KAIRON_T199_STABLE_VERIFICATION `",
+          "  --minimum-hours 168",
+          "$T199_START",
+          "$T199_SOAK_ID = [regex]::Match(($T199_START -join \"`n\"), \"soak_id=(SSK-[0-9]{14}-[a-f0-9]{12})\").Groups[1].Value",
+          "if ([string]::IsNullOrWhiteSpace($T199_SOAK_ID)) { throw \"T199 soak id was not emitted.\" }",
+          "kairon daemon soak status $T199_SOAK_ID --format json",
+          "kairon daemon soak report $T199_SOAK_ID --format markdown",
+          "Write-Host \"After 168 real-time hours, run: kairon daemon soak certify $T199_SOAK_ID --format json\""
+        ]
+      }
+    ],
+    expected_evidence: [
+      "manifest binds the Stable verification id, version, release id, target commit, state digest, and artifact digest",
+      "elapsed_hours, coverage_ratio, daily rollup digests, SLO statuses, restart classification, and incident counts are reported",
+      "less than 168 hours or simulated clock evidence is SETUP_REQUIRED",
+      "release drift, unexplained gaps, fatal errors, critical incidents, or incomplete SLO evidence prevent PASS",
+      "a PASS certificate is possible only after at least 168 real-time hours",
+      "artifacts contain no host name, user name, raw task content, or credential value"
+    ]
   }
 ];
 

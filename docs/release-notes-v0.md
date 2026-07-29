@@ -14,6 +14,9 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 - T198: user-local registryのoptional rollout group、Stable verificationにbindした
   canary-first multi-project rollout plan、project / state drift拒否を追加。planから
   download、apply、runtime、Task Schedulerを変更しない。
+- T199: PASS Stable verificationへbindした168時間以上のStable soak certification、
+  日次daemon / SLO / Incident rollup、計画停止marker、release drift検知、Doctor /
+  operation test profileを追加。短縮・clock injection fixtureはPASSにしない。
 
 各PR本文とmerge履歴を一次記録とし、local operation resultやgenerated evidenceはrelease
 notesへ埋め込まず、再実行方法と判定結果だけを記録します。

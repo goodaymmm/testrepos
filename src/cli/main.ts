@@ -54,6 +54,11 @@ import {
 import {
   daemonCertifyCommand,
   daemonReportCommand,
+  daemonSoakCertifyCommand,
+  daemonSoakMarkCommand,
+  daemonSoakReportCommand,
+  daemonSoakStartCommand,
+  daemonSoakStatusCommand,
   daemonTaskCommand
 } from "./commands/daemon.js";
 import {
@@ -1327,6 +1332,71 @@ export function createProgram(): Command {
       minimumTicks?: string;
     }) => {
       console.log(await daemonCertifyCommand(process.cwd(), options));
+    });
+
+  const daemonSoak = daemon
+    .command("soak")
+    .description("Manage release-bound Stable soak certification.");
+
+  daemonSoak
+    .command("start")
+    .description("Start a release-bound Stable soak requiring at least 168 real-time hours.")
+    .requiredOption(
+      "--release-verification <path>",
+      "Current PASS Stable release verification artifact."
+    )
+    .option("--minimum-hours <hours>", "Minimum real-time soak duration.", "168")
+    .option("--expected-interval-ms <ms>", "Expected daemon tick interval.", "60000")
+    .option("--max-heartbeat-gap-ms <ms>", "Maximum heartbeat gap.")
+    .option("--max-restart-gap-ms <ms>", "Maximum scheduled restart or reboot gap.")
+    .option("--minimum-coverage-ratio <ratio>", "Required runtime coverage ratio.", "0.99")
+    .action(async (options: {
+      releaseVerification: string;
+      minimumHours?: string;
+      expectedIntervalMs?: string;
+      maxHeartbeatGapMs?: string;
+      maxRestartGapMs?: string;
+      minimumCoverageRatio?: string;
+    }) => {
+      console.log(await daemonSoakStartCommand(process.cwd(), options));
+    });
+
+  daemonSoak
+    .command("status <soak-id>")
+    .description("Evaluate the current Stable soak without issuing a certificate.")
+    .option("--format <format>", "Output format: markdown or json.", "markdown")
+    .action(async (soakId: string, options: { format?: string }) => {
+      console.log(await daemonSoakStatusCommand(process.cwd(), soakId, options));
+    });
+
+  daemonSoak
+    .command("certify <soak-id>")
+    .description("Issue a PASS, FAIL, or SETUP_REQUIRED Stable soak certificate.")
+    .option("--format <format>", "Output format: markdown or json.", "markdown")
+    .action(async (soakId: string, options: { format?: string }) => {
+      console.log(await daemonSoakCertifyCommand(process.cwd(), soakId, options));
+    });
+
+  daemonSoak
+    .command("report <soak-id>")
+    .description("Show the current evaluation or issued Stable soak certificate.")
+    .option("--format <format>", "Output format: markdown or json.", "markdown")
+    .action(async (soakId: string, options: { format?: string }) => {
+      console.log(await daemonSoakReportCommand(process.cwd(), soakId, options));
+    });
+
+  daemonSoak
+    .command("mark <soak-id>")
+    .description("Record a planned reboot or maintenance window for one Stable soak.")
+    .requiredOption("--kind <kind>", "Marker kind: planned_reboot or maintenance.")
+    .requiredOption("--from <timestamp>", "Window start as an ISO timestamp.")
+    .requiredOption("--until <timestamp>", "Window end as an ISO timestamp.")
+    .requiredOption("--reason <text>", "Sanitized operator reason.")
+    .action(async (
+      soakId: string,
+      options: { kind: string; from: string; until: string; reason: string }
+    ) => {
+      console.log(await daemonSoakMarkCommand(process.cwd(), soakId, options));
     });
 
   const daemonTask = daemon

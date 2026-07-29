@@ -154,6 +154,26 @@ operatorがcanaryで手動download / applyとhealth確認を完了した後、�
 commandを再提示しません。profile自体はupdate、runtime、Task Schedulerを変更せず、
 `execution_performed=false`と`automatic_update=false`を確認します。
 
+## T199 Stable soak certification
+
+`stable-soak-certification` profileは、current PASS Stable verificationへbindした新しい
+168時間soakを開始し、最初のmanifestと`SETUP_REQUIRED`状態を確認します。
+
+```powershell
+$env:KAIRON_T199_STABLE_VERIFICATION = ".kairon\release\stable-verifications\<verification-id>.json"
+kairon test commands --profile stable-soak-certification
+```
+
+開始後はproduction daemonとruntime metricsを168実時間以上継続し、OS再起動後も同じ
+`SSK-*` IDを使用します。計画メンテナンスまたは再起動は事前に
+`kairon daemon soak mark`で記録します。168時間経過後に
+`kairon daemon soak certify <soak-id> --format json`を実行し、release driftなし、
+coverage threshold充足、説明不能gap 0件、fatal error / unexpected restart /
+High・Critical incident 0件、SLO PASS/WARNINGを確認します。
+
+unit testのclock injectionや短縮fixtureは実時間operation testを代替しません。
+`evidence_mode=simulated`は常に`SETUP_REQUIRED`で、PASSへ更新しないでください。
+
 ## 実行対象
 
 デフォルトでは次をすべて実行します。

@@ -335,6 +335,26 @@ kairon release health report --format markdown
 - health判定はrollbackを実行せず、approvalを自動作成・承認しない。
 - 判定前後でproject config / stateとinstalled registry digestが変化していない。
 
+### Stable Soak Certification
+
+Stable verification後の長期運用は、release-bound soakを168実時間以上継続して認証します。
+
+```powershell
+kairon daemon soak start `
+  --release-verification .kairon\release\stable-verifications\<STV>.json `
+  --minimum-hours 168
+kairon daemon soak status <soak-id> --format json
+kairon daemon soak certify <soak-id> --format json
+```
+
+- manifestのverification ID、version、release ID、source commit、state digest、artifact digestが対象releaseと一致する。
+- 168実時間以上が経過し、clock injectionを使ったfixtureではない。
+- daemon coverageがthreshold以上で、説明不能heartbeat gap、fatal error、unexpected restartがない。
+- 日次SLO証跡が不足・破損・Criticalではなく、High / Critical incidentがない。
+- 計画停止markerはwindow前に記録し、planned rebootは実際のhost reboot証跡と一致する。
+- certificateと日次rollupにhostname、username、raw task、raw log、credential値がない。
+- release verificationまたはsourceが変化した場合は既存soakを再利用せず、新しいsoakを開始する。
+
 ## Verified Update And Rollback
 
 release利用側では`stable | beta | pinned`のmanual channelを明示設定し、check / download / applyを分離します。
@@ -398,5 +418,6 @@ kairon release notes --since <ref> --write
   `release verify`で相互bindingが通っている。
 - GitHub配布を行う場合は`release github verify`が`status=verified`を返している。
 - Stable昇格後は`release stable verify`がintegrity / currentnessともに`PASS`を返している。
+- 長期運用認証を要求するreleaseでは`daemon soak certify`が168実時間以上の証跡で`PASS`を返している。
 - canary後は`release health check`がrelease / transactionへbindされ、`continue`または
   operatorが明示的に受理した`hold` / approved rollback decisionを記録している。
