@@ -1142,9 +1142,13 @@ kairon state backup dr plan <backup-id> --destination <directory>
 kairon state backup dr copy <plan-id> --confirm <plan-id>
 kairon state backup dr verify <backup-id>
 kairon state backup dr rehearse <backup-id>
+kairon state backup dr schedule install --interval-hours 24 --rehearsal-interval-days 30 --timeout-ms 600000 --minimum-generations 2
+kairon state backup dr schedule status
+kairon state backup dr schedule run
+kairon state backup dr schedule uninstall
 ```
 
-`state check`はevent、materialized task / approval / queue、snapshot targetの参照整合性を検査する。snapshot restore、event compaction、backup restoreはdry-runまたはexact confirmationを要求し、実行前にrollback可能なartifactを作る。backupはmanifest、payload set、size、SHA-256を検証し、`rehearse`は隔離したtemporary projectへ展開するため元projectを変更しない。`backup dr`はproject外の既存directoryへ`.partial` copy、再検証、atomic renameを行い、user-local catalogとretentionを管理する。詳細は [disaster-recovery-v0.md](disaster-recovery-v0.md) を参照する。
+`state check`はevent、materialized task / approval / queue、snapshot targetの参照整合性を検査する。snapshot restore、event compaction、backup restoreはdry-runまたはexact confirmationを要求し、実行前にrollback可能なartifactを作る。backupはmanifest、payload set、size、SHA-256を検証し、`rehearse`は隔離したtemporary projectへ展開するため元projectを変更しない。`backup dr`はproject外の既存directoryへ`.partial` copy、再検証、atomic renameを行い、user-local catalogとretentionを管理する。`backup dr schedule`はWindows Task Schedulerへsecret-freeな検証Taskを明示登録し、最新verified世代を定期verify、期限到来時だけ隔離rehearsalする。保存先未接続とbackup破損を区別し、restoreやretention cleanupは自動実行しない。詳細は [disaster-recovery-v0.md](disaster-recovery-v0.md) を参照する。
 
 ## kairon test
 

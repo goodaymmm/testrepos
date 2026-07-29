@@ -130,6 +130,16 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
             severity: "warning",
             threshold: 1
           },
+          dr_verification_failed: {
+            enabled: true,
+            severity: "high",
+            threshold: 1
+          },
+          dr_verification_stale: {
+            enabled: true,
+            severity: "warning",
+            threshold: 1
+          },
           remote_external_unreachable: {
             enabled: true,
             severity: "high",

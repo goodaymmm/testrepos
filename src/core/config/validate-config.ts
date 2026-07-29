@@ -151,6 +151,8 @@ const runtimeConfigSchema = schemaVersion
           failed_notifications: watchdogRuleSchema,
           provider_suspended: watchdogRuleSchema,
           task_scheduler_missing: watchdogRuleSchema,
+          dr_verification_failed: watchdogRuleSchema.optional(),
+          dr_verification_stale: watchdogRuleSchema.optional(),
           remote_external_unreachable: watchdogRuleSchema.optional(),
           remote_identity_bypass: watchdogRuleSchema.optional(),
           remote_url_drift: watchdogRuleSchema.optional(),

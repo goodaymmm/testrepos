@@ -158,6 +158,48 @@ describe("kairon-daemon-task.ps1", () => {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
   });
+
+  it("keeps scheduled DR verification secret-free and non-restoring", async () => {
+    const script = await readFile(
+      path.resolve("scripts", "kairon-dr-verify-task.ps1"),
+      "utf8"
+    );
+
+    expect(script).toContain("Register-ScheduledTask");
+    expect(script).toContain("Unregister-ScheduledTask");
+    expect(script).toContain("state backup dr schedule run");
+    expect(script).toContain("Test-KaironManagedTask");
+    expect(script).toContain("Refusing to remove a task");
+    expect(script).toContain("-MultipleInstances IgnoreNew");
+    expect(script).toContain("-MinimumGenerations");
+    expect(script).not.toContain("state backup restore");
+    expect(script).not.toContain("GH_TOKEN");
+    expect(script).not.toContain("GITHUB_TOKEN");
+    expect(script).not.toContain("KAIRON_DISCORD");
+  });
+
+  runIfPowerShell("parses the scheduled DR verification helper", async () => {
+    const scriptPath = path.resolve(
+      "scripts",
+      "kairon-dr-verify-task.ps1"
+    );
+    const result = spawnSync(
+      powershell!,
+      [
+        "-NoProfile",
+        "-Command",
+        `[scriptblock]::Create((Get-Content -LiteralPath '${scriptPath.replaceAll("'", "''")}' -Raw)) | Out-Null`
+      ],
+      {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        timeout: 10_000
+      }
+    );
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+  });
 });
 
 async function readScript(): Promise<string> {

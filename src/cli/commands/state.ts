@@ -38,6 +38,15 @@ import {
   rehearseDisasterRecoveryBackup,
   verifyDisasterRecoveryBackup
 } from "../../state/disaster-recovery.js";
+import {
+  formatScheduledDrStatus,
+  formatScheduledDrVerification,
+  getScheduledDrVerificationStatus,
+  installScheduledDrVerification,
+  runScheduledDrVerification,
+  uninstallScheduledDrVerification,
+  verifyScheduledDrTask
+} from "../../state/dr-scheduled-verification.js";
 
 export type StateCheckCommandOptions = {
   format?: string;
@@ -103,6 +112,29 @@ export type StateBackupDrCatalogCommandOptions = {
   packagePath?: string;
   catalogPath?: string;
   format?: string;
+};
+
+export type StateBackupDrScheduleInstallCommandOptions = {
+  taskName?: string;
+  catalogPath?: string;
+  intervalHours?: string;
+  rehearsalIntervalDays?: string;
+  timeoutMs?: string;
+  minimumGenerations?: string;
+  kaironCommand?: string;
+};
+
+export type StateBackupDrScheduleTaskCommandOptions = {
+  taskName?: string;
+  catalogPath?: string;
+  kaironCommand?: string;
+};
+
+export type StateBackupDrScheduleRunCommandOptions = {
+  catalogPath?: string;
+  rehearsalIntervalDays?: string;
+  timeoutMs?: string;
+  minimumGenerations?: string;
 };
 
 export async function stateCheckCommand(
@@ -361,6 +393,63 @@ export async function stateBackupDrRehearseCommand(
     `workflow_replay=${result.workflow_replay.status}`,
     `cleaned_up=${result.cleaned_up}`
   ].join("\n");
+}
+
+export async function stateBackupDrScheduleInstallCommand(
+  projectRoot: string,
+  options: StateBackupDrScheduleInstallCommandOptions = {}
+): Promise<string> {
+  return installScheduledDrVerification(projectRoot, {
+    taskName: options.taskName,
+    catalogPath: options.catalogPath,
+    intervalHours: parseOptionalInteger(options.intervalHours, "interval-hours"),
+    rehearsalIntervalDays: parseOptionalInteger(
+      options.rehearsalIntervalDays,
+      "rehearsal-interval-days"
+    ),
+    timeoutMs: parseOptionalInteger(options.timeoutMs, "timeout-ms"),
+    minimumGenerations: parseOptionalInteger(
+      options.minimumGenerations,
+      "minimum-generations"
+    ),
+    kaironCommand: options.kaironCommand
+  });
+}
+
+export async function stateBackupDrScheduleStatusCommand(
+  projectRoot: string,
+  options: StateBackupDrScheduleTaskCommandOptions = {}
+): Promise<string> {
+  const taskOutput = await verifyScheduledDrTask(projectRoot, options);
+  const status = await getScheduledDrVerificationStatus(projectRoot);
+  return `${taskOutput}\n${formatScheduledDrStatus(status)}`;
+}
+
+export async function stateBackupDrScheduleRunCommand(
+  projectRoot: string,
+  options: StateBackupDrScheduleRunCommandOptions = {}
+): Promise<string> {
+  return formatScheduledDrVerification(
+    await runScheduledDrVerification(projectRoot, {
+      catalogPath: options.catalogPath,
+      rehearsalIntervalDays: parseOptionalInteger(
+        options.rehearsalIntervalDays,
+        "rehearsal-interval-days"
+      ),
+      timeoutMs: parseOptionalInteger(options.timeoutMs, "timeout-ms"),
+      minimumGenerations: parseOptionalInteger(
+        options.minimumGenerations,
+        "minimum-generations"
+      )
+    })
+  );
+}
+
+export async function stateBackupDrScheduleUninstallCommand(
+  projectRoot: string,
+  options: StateBackupDrScheduleTaskCommandOptions = {}
+): Promise<string> {
+  return uninstallScheduledDrVerification(projectRoot, options);
 }
 
 function parseStateOutputFormat(value: string | undefined): "text" | "json" {

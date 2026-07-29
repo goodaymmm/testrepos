@@ -10,6 +10,8 @@ export type WatchdogRuleId =
   | "failed_notifications"
   | "provider_suspended"
   | "task_scheduler_missing"
+  | "dr_verification_failed"
+  | "dr_verification_stale"
   | "remote_external_unreachable"
   | "remote_identity_bypass"
   | "remote_url_drift"
@@ -54,6 +56,12 @@ export type WatchdogRuleInput = {
   }>;
   task_scheduler?: {
     status: "registered" | "missing" | "disabled" | "error" | "unknown";
+  };
+  dr_backup?: {
+    status: "PASS" | "FAIL" | "SETUP_REQUIRED" | "BUSY";
+    classification: string;
+    checked_at: string | null;
+    stale: boolean;
   };
   remote?: {
     configured: boolean;
@@ -121,6 +129,16 @@ export const defaultWatchdogPolicy: WatchdogPolicy = {
       threshold: 1
     },
     task_scheduler_missing: {
+      enabled: true,
+      severity: "warning",
+      threshold: 1
+    },
+    dr_verification_failed: {
+      enabled: true,
+      severity: "high",
+      threshold: 1
+    },
+    dr_verification_stale: {
       enabled: true,
       severity: "warning",
       threshold: 1
@@ -303,6 +321,48 @@ export function evaluateWatchdogRules(
         summary: "Task Scheduler registration health is separate from daemon process health.",
         evidence: {
           scheduler_status: input.task_scheduler.status
+        }
+      })
+    );
+  }
+
+  const drBackup = input.dr_backup;
+  const drFailurePolicy = policy.rules.dr_verification_failed;
+  if (
+    drFailurePolicy.enabled &&
+    drBackup?.status === "FAIL"
+  ) {
+    findings.push(
+      finding(input, policy, "dr_verification_failed", "backup:off-device", {
+        title: "Scheduled off-device backup verification failed",
+        summary:
+          "The latest scheduled backup integrity check or isolated rehearsal failed.",
+        evidence: {
+          status: drBackup.status,
+          classification: drBackup.classification,
+          checked_at: drBackup.checked_at
+        }
+      })
+    );
+  }
+
+  const drStalePolicy = policy.rules.dr_verification_stale;
+  if (
+    drStalePolicy.enabled &&
+    drBackup !== undefined &&
+    drBackup.status !== "FAIL" &&
+    (drBackup.stale || drBackup.status === "SETUP_REQUIRED")
+  ) {
+    findings.push(
+      finding(input, policy, "dr_verification_stale", "backup:off-device", {
+        title: "Scheduled off-device backup verification is stale",
+        summary:
+          "The periodic verification is overdue or its configured destination is unavailable.",
+        evidence: {
+          status: drBackup.status,
+          classification: drBackup.classification,
+          checked_at: drBackup.checked_at,
+          stale: drBackup.stale
         }
       })
     );

@@ -20,6 +20,10 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 - T200: 複数世代のoperation resultをTask / test ID / status / source commit /
   freshnessで検索できるmetadata-only evidence catalogを追加。最新verified PASS、唯一の
   PASS世代、readiness参照証跡をcleanupから保護し、catalog異常時はfail-closedにする。
+- T201: Windows Task Schedulerへsecret-freeなoff-device backup定期検証を追加。
+  最新verified世代をverifyし、期限到来時だけ隔離rehearsalする。保存先未接続と
+  backup破損を区別し、失敗・期限超過をWatchdog / Incidentへ同期する。自動restoreと
+  retention cleanupは行わない。
 
 各PR本文とmerge履歴を一次記録とし、local operation resultやgenerated evidenceはrelease
 notesへ埋め込まず、再実行方法と判定結果だけを記録します。
