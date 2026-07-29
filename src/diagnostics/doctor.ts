@@ -103,6 +103,7 @@ export type DoctorOptions = {
   env?: NodeJS.ProcessEnv;
   githubBranchProtectionClient?: GitHubBranchProtectionClient;
   secretResolver?: SecretResolver;
+  now?: () => Date;
 };
 
 type AgentsConfig = {
@@ -239,13 +240,14 @@ export type GitHubBranchProtectionClient = (
 export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   const env = options.env ?? process.env;
   const commandAvailability = options.commandAvailability ?? isCommandAvailable;
+  const now = (options.now ?? (() => new Date()))().getTime();
   const checks: DoctorCheck[] = [];
 
   checks.push(await checkGitRepository(options.projectRoot));
   checks.push(await checkGitignore(options.projectRoot));
   checks.push(await checkConfigValidation(options.projectRoot));
   checks.push(await checkProjectsRegistry(options.projectRoot, env));
-  checks.push(await checkScheduledProjectsHealth(env));
+  checks.push(await checkScheduledProjectsHealth(env, now));
   checks.push(await checkWorkflowRuntimeConfig(options.projectRoot, env));
   checks.push(await checkAgentConfig(options.projectRoot));
   checks.push(await checkCapabilityTrustPolicy(options.projectRoot));
@@ -263,18 +265,18 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
     )
   );
   checks.push(await checkBoardSecretScan(options.projectRoot));
-  checks.push(await checkBoardRemoteProfile(options.projectRoot));
+  checks.push(await checkBoardRemoteProfile(options.projectRoot, now));
   checks.push(await checkStableRemoteProfile(options.projectRoot));
   checks.push(await checkCorrelationIntegrity(options.projectRoot));
   checks.push(await checkConfigBackups(options.projectRoot));
-  checks.push(await checkDisasterRecoveryCatalog(options.projectRoot, env));
+  checks.push(await checkDisasterRecoveryCatalog(options.projectRoot, env, now));
   checks.push(await checkRuntimeRecovery(options.projectRoot));
   checks.push(await checkDaemonHealth(options.projectRoot));
   checks.push(await checkWatchdogAlerts(options.projectRoot));
   checks.push(await checkRuntimeObservability(options.projectRoot));
   checks.push(await checkRagStatus(options.projectRoot));
-  checks.push(await checkPublishedStableVerification(options.projectRoot));
-  checks.push(await checkPostReleaseHealth(options.projectRoot));
+  checks.push(await checkPublishedStableVerification(options.projectRoot, now));
+  checks.push(await checkPostReleaseHealth(options.projectRoot, now));
   checks.push(await checkScheduledUpdate(
     options.projectRoot,
     env,
@@ -510,7 +512,8 @@ async function checkProjectsRegistry(
 }
 
 async function checkScheduledProjectsHealth(
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  now: number
 ): Promise<DoctorCheck> {
   const registryPath = getProjectsRegistryPath(env);
   const [latest, task] = await Promise.all([
@@ -526,7 +529,7 @@ async function checkScheduledProjectsHealth(
 
   const ageMinutes = Math.max(
     0,
-    Math.floor((Date.now() - Date.parse(latest.generated_at)) / 60_000)
+    Math.floor((now - Date.parse(latest.generated_at)) / 60_000)
   );
   const details = [
     `status=${latest.status}`,
@@ -1204,7 +1207,8 @@ async function checkConfigBackups(projectRoot: string): Promise<DoctorCheck> {
 
 async function checkDisasterRecoveryCatalog(
   projectRoot: string,
-  env: NodeJS.ProcessEnv
+  env: NodeJS.ProcessEnv,
+  now: number
 ): Promise<DoctorCheck> {
   const id = "state.disaster_recovery";
   const title = "Off-device disaster recovery backups";
@@ -1229,7 +1233,6 @@ async function checkDisasterRecoveryCatalog(
     let failedVerifications = 0;
     let staleVerifications = 0;
     let failedRehearsals = 0;
-    const now = Date.now();
     for (const entry of entries) {
       try {
         await access(entry.package_path, constants.R_OK);
@@ -1377,7 +1380,10 @@ async function checkBoardSecretScan(projectRoot: string): Promise<DoctorCheck> {
   return pass("board.secret_scan", "Board secret scan", details);
 }
 
-async function checkBoardRemoteProfile(projectRoot: string): Promise<DoctorCheck> {
+async function checkBoardRemoteProfile(
+  projectRoot: string,
+  now: number
+): Promise<DoctorCheck> {
   const notifications = await loadConfigFile<NotificationsConfig>(
     projectRoot,
     "notifications.json"
@@ -1391,7 +1397,6 @@ async function checkBoardRemoteProfile(projectRoot: string): Promise<DoctorCheck
   }
 
   const records = await listBoardAccessRecords(projectRoot);
-  const now = Date.now();
   const activeAccess = records.filter(
     (record) =>
       record.status === "active" &&
@@ -2278,7 +2283,8 @@ async function checkStableReadiness(
 }
 
 async function checkPublishedStableVerification(
-  projectRoot: string
+  projectRoot: string,
+  now: number
 ): Promise<DoctorCheck> {
   const id = "release.stable_verification";
   const title = "Published Stable release verification";
@@ -2300,7 +2306,7 @@ async function checkPublishedStableVerification(
     );
   }
   const result = latest.result;
-  const expired = Date.parse(result.expires_at) <= Date.now();
+  const expired = Date.parse(result.expires_at) <= now;
   const details = [
     `status=${result.status}`,
     `integrity_status=${result.integrity_status}`,
@@ -2326,7 +2332,8 @@ async function checkPublishedStableVerification(
 }
 
 async function checkPostReleaseHealth(
-  projectRoot: string
+  projectRoot: string,
+  now: number
 ): Promise<DoctorCheck> {
   const id = "release.post_release_health";
   const title = "Post-release health decision";
@@ -2348,7 +2355,7 @@ async function checkPostReleaseHealth(
     );
   }
   const result = latest.result;
-  const expired = Date.parse(result.expires_at) <= Date.now();
+  const expired = Date.parse(result.expires_at) <= now;
   const details = [
     `decision=${result.decision}`,
     `health_id=${result.health_id}`,

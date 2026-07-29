@@ -5,6 +5,7 @@ import {
   doctorProjectsCommand,
   listProjectsCommand,
   registerProjectCommand,
+  setProjectRolloutGroupCommand,
   showProjectCommand,
   unregisterProjectCommand
 } from "../src/cli/commands/projects.js";
@@ -38,8 +39,14 @@ describe("projects commands", () => {
       await registerProjectCommand(projectRoot, options)
     ) as { status: string; project: { project_id: string } };
     const listed = JSON.parse(await listProjectsCommand(options)) as {
-      projects: { project_id: string }[];
+      projects: { project_id: string; rollout_group: string }[];
     };
+    const grouped = JSON.parse(
+      await setProjectRolloutGroupCommand("command-project", {
+        ...options,
+        set: "canary"
+      })
+    ) as { project: { rollout_group: string } };
     const shown = JSON.parse(
       await showProjectCommand("command-project", options)
     ) as { project: { root: string } };
@@ -56,6 +63,8 @@ describe("projects commands", () => {
     expect(listed.projects.map((project) => project.project_id)).toEqual([
       "command-project"
     ]);
+    expect(listed.projects[0]?.rollout_group).toBe("deferred");
+    expect(grouped.project.rollout_group).toBe("canary");
     expect(shown.project.root).toBe(await realpath(projectRoot));
     expect(doctor.ok).toBe(true);
     expect(doctor.projects[0].project_id).toBe("command-project");
@@ -69,5 +78,14 @@ describe("projects commands", () => {
         format: "yaml"
       })
     ).rejects.toThrow("Invalid projects output format");
+  });
+
+  it("rejects unsupported rollout groups", async () => {
+    await expect(
+      setProjectRolloutGroupCommand("missing", {
+        registryPath: path.join(await createTempProject(), "projects.json"),
+        set: "all-at-once"
+      })
+    ).rejects.toThrow("Invalid rollout group");
   });
 });

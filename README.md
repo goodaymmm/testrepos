@@ -489,11 +489,14 @@ kairon projects register C:\work\AnotherProject
 kairon projects list
 kairon projects show englishapp
 kairon projects doctor
+kairon projects rollout group englishapp --set canary
+kairon projects rollout plan --target-version 0.3.1
+kairon projects rollout show <plan-id>
 ```
 
 `projects.json`は各projectの`.kairon/`外にあるuser-local registryです。既定ではWindowsの`%LOCALAPPDATA%\Kairon\projects.json`を使い、test時は`KAIRON_PROJECTS_REGISTRY_PATH`または`KAIRON_USER_DATA_DIR`で差し替えられます。`projects doctor`は各projectのconfig、runtime縮約summary、Board / Discord HTTP endpointをread-onlyで確認し、project ID / root / version差、missing root、port / external URL衝突を報告します。一括start / stop、queue変更、task移送、provider limit自動配分は行いません。
 
-registryへ保存するのはproject ID、root、登録・最終確認時刻、Kairon version、query / credentialを除いたBoard URL、縮約doctor summaryだけです。token、approval detail、task本文、source、stdout / stderrは集約しません。詳細は[docs/multi-project-operations-v0.md](docs/multi-project-operations-v0.md)を参照してください。
+registryへ保存するのはproject ID、root、登録・最終確認時刻、Kairon version、optional rollout group、query / credentialを除いたBoard URL、縮約doctor summaryだけです。token、approval detail、task本文、source、stdout / stderrは集約しません。rollout planはPASS済みStable verificationへbindし、canaryがtarget versionかつhealth PASSになるまでprimaryをblockします。planは手動`update download / apply` templateだけを提示し、自動更新・runtime操作・Task Scheduler変更は行いません。詳細は[docs/multi-project-operations-v0.md](docs/multi-project-operations-v0.md)を参照してください。
 
 ### Runtime Watchdog
 

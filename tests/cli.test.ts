@@ -123,11 +123,12 @@ describe("createProgram", () => {
       "health",
       "list",
       "register",
+      "rollout",
       "show",
       "unregister"
     ]);
     for (const command of (projects?.commands ?? []).filter(
-      (command) => command.name() !== "health"
+      (command) => !["health", "rollout"].includes(command.name())
     )) {
       expect(command.options.map((option) => option.long)).toContain("--format");
     }
@@ -153,6 +154,24 @@ describe("createProgram", () => {
         .find((command) => command.name() === "register")
         ?.options.map((option) => option.long)
     ).toContain("--confirm");
+    const rollout = projects?.commands.find(
+      (command) => command.name() === "rollout"
+    );
+    expect(rollout?.commands.map((command) => command.name()).sort()).toEqual([
+      "group",
+      "plan",
+      "show"
+    ]);
+    expect(
+      rollout?.commands
+        .find((command) => command.name() === "group")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--set", "--registry-path", "--format"]));
+    expect(
+      rollout?.commands
+        .find((command) => command.name() === "plan")
+        ?.options.map((option) => option.long)
+    ).toContain("--target-version");
   });
 
   it("registers capability evaluate and explain commands", () => {

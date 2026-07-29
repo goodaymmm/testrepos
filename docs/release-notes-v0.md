@@ -11,6 +11,9 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 
 - T197: opt-inのWindows scheduled update check、release通知deduplicate、read-only guard、
   Doctor / operation test profileを追加。自動download、apply、restartは行わない。
+- T198: user-local registryのoptional rollout group、Stable verificationにbindした
+  canary-first multi-project rollout plan、project / state drift拒否を追加。planから
+  download、apply、runtime、Task Schedulerを変更しない。
 
 各PR本文とmerge履歴を一次記録とし、local operation resultやgenerated evidenceはrelease
 notesへ埋め込まず、再実行方法と判定結果だけを記録します。

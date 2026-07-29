@@ -104,7 +104,8 @@ describe("published Stable release verification", () => {
     const doctor = await runDoctor({
       projectRoot: fixture.root,
       commandAvailability: async () => true,
-      env: {}
+      env: {},
+      now: () => new Date("2026-07-28T00:05:00.000Z")
     });
     expect(doctor.checks).toContainEqual(expect.objectContaining({
       id: "release.stable_verification",

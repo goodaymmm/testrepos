@@ -130,6 +130,7 @@ import {
   validateRemoteProfileCommand
 } from "./commands/remote.js";
 import {
+  createProjectsRolloutPlanCommand,
   doctorProjectsCommand,
   listProjectsCommand,
   planProjectsHealthScheduleCommand,
@@ -137,7 +138,9 @@ import {
   reportProjectsHealthCommand,
   runProjectsHealthScheduleCommand,
   scanProjectsHealthCommand,
+  setProjectRolloutGroupCommand,
   showProjectCommand,
+  showProjectsRolloutPlanCommand,
   unregisterProjectCommand
 } from "./commands/projects.js";
 import {
@@ -491,6 +494,47 @@ export function createProgram(): Command {
       console.log(
         await runProjectsHealthScheduleCommand("unregister", planId, options)
       );
+    });
+
+  const projectsRollout = projects
+    .command("rollout")
+    .description("Plan a read-only canary-first multi-project rollout.");
+
+  projectsRollout
+    .command("group")
+    .description("Assign a project to a rollout group.")
+    .argument("<projectId>", "Registered project id.")
+    .requiredOption("--set <group>", "Rollout group: canary, primary, or deferred.")
+    .option("--registry-path <path>", "Override the user-local projects registry.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (projectId: string, options) => {
+      console.log(await setProjectRolloutGroupCommand(projectId, options));
+    });
+
+  projectsRollout
+    .command("plan")
+    .description("Create a read-only rollout plan for a verified Stable version.")
+    .requiredOption("--target-version <version>", "Verified Stable target version.")
+    .option("--registry-path <path>", "Override the user-local projects registry.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options) => {
+      console.log(
+        await createProjectsRolloutPlanCommand(
+          process.cwd(),
+          options.targetVersion,
+          options
+        )
+      );
+    });
+
+  projectsRollout
+    .command("show")
+    .description("Show a rollout plan and reject stale inputs.")
+    .argument("<planId>", "Rollout plan id.")
+    .option("--registry-path <path>", "Override the user-local projects registry.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (planId: string, options) => {
+      console.log(await showProjectsRolloutPlanCommand(planId, options));
     });
 
   const capability = program
