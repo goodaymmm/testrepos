@@ -16,6 +16,7 @@ import { attachIncidentResource } from "../incidents/store.js";
 import { readRuntimeLockStatus } from "./runtime-lock.js";
 import { getStoredStableRemoteStatus } from "../remote/status.js";
 import { readLatestSloSummary } from "../observability/slo.js";
+import { getScheduledDrVerificationStatus } from "../state/dr-scheduled-verification.js";
 import { recordAlertPolicyDecision } from "../observability/runtime-metrics.js";
 import type {
   AlertPolicyDecisionKind,
@@ -551,6 +552,7 @@ async function collectWatchdogRuleInput(
     daemonEvents,
     notificationRecords,
     scheduler,
+    drBackup,
     remoteStatus,
     sloSummary
   ] =
@@ -562,6 +564,7 @@ async function collectWatchdogRuleInput(
       readRecentDaemonEvents(projectRoot),
       readNotificationRecords(projectRoot),
       readTaskSchedulerStatus(projectRoot),
+      readScheduledDrWatchdogInput(projectRoot),
       getStoredStableRemoteStatus(projectRoot),
       readLatestSloSummary(projectRoot)
     ]);
@@ -615,6 +618,7 @@ async function collectWatchdogRuleInput(
       reason: provider.suspended_reason ?? provider.last_reason ?? undefined
     })),
     task_scheduler: scheduler,
+    dr_backup: drBackup,
     remote:
       remoteStatus === undefined
         ? undefined
@@ -636,6 +640,38 @@ async function collectWatchdogRuleInput(
             evaluated_at: sloSummary.evaluated_at
           }
   };
+}
+
+async function readScheduledDrWatchdogInput(
+  projectRoot: string
+): Promise<WatchdogRuleInput["dr_backup"] | undefined> {
+  try {
+    const status = await getScheduledDrVerificationStatus(projectRoot);
+    if (!status.enabled) {
+      return undefined;
+    }
+    if (status.latest === null) {
+      return {
+        status: "SETUP_REQUIRED",
+        classification: "not_run",
+        checked_at: null,
+        stale: true
+      };
+    }
+    return {
+      status: status.latest.status,
+      classification: status.latest.classification,
+      checked_at: status.latest.checked_at,
+      stale: status.stale
+    };
+  } catch {
+    return {
+      status: "FAIL",
+      classification: "verification_artifact_corrupt",
+      checked_at: null,
+      stale: true
+    };
+  }
 }
 
 async function applyWatchdogFindings(

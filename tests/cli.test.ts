@@ -105,6 +105,7 @@ describe("createProgram", () => {
       "copy",
       "plan",
       "rehearse",
+      "schedule",
       "verify"
     ]);
     expect(plan?.options.map((option) => option.long)).toContain(
@@ -434,6 +435,12 @@ describe("createProgram", () => {
     const backupRestore = backup?.commands.find(
       (command) => command.name() === "restore"
     );
+    const backupDr = backup?.commands.find(
+      (command) => command.name() === "dr"
+    );
+    const drSchedule = backupDr?.commands.find(
+      (command) => command.name() === "schedule"
+    );
 
     expect(state?.description()).toContain("file-based state integrity");
     expect(state?.commands.map((command) => command.name()).sort()).toEqual([
@@ -472,6 +479,42 @@ describe("createProgram", () => {
     expect(backupRestore?.options.map((option) => option.long)).toEqual(
       expect.arrayContaining(["--confirm", "--source", "--format"])
     );
+    expect(backupDr?.commands.map((command) => command.name()).sort()).toEqual([
+      "copy",
+      "plan",
+      "rehearse",
+      "schedule",
+      "verify"
+    ]);
+    expect(drSchedule?.commands.map((command) => command.name()).sort()).toEqual([
+      "install",
+      "run",
+      "status",
+      "uninstall"
+    ]);
+    expect(
+      drSchedule?.commands
+        .find((command) => command.name() === "install")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining([
+      "--catalog-path",
+      "--interval-hours",
+      "--rehearsal-interval-days",
+      "--timeout-ms",
+      "--minimum-generations",
+      "--task-name",
+      "--kairon-command"
+    ]));
+    expect(
+      drSchedule?.commands
+        .find((command) => command.name() === "run")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining([
+      "--catalog-path",
+      "--rehearsal-interval-days",
+      "--timeout-ms",
+      "--minimum-generations"
+    ]));
   });
 
   it("routes nested snapshot restore options to the restore action", async () => {

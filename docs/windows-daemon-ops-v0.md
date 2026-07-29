@@ -100,6 +100,32 @@ kairon daemon task uninstall --task-name "Kairon Runtime EnglishApp" --project-r
 
 Windows以外ではTask Schedulerを操作せず、`status=setup_required`とWindows上で再実行するためのguidanceを返します。
 
+## Off-device backup定期検証Task
+
+runtime daemonとは別に、off-device backupのintegrity verifyと隔離rehearsalを定期実行できます。Task actionは`scripts/kairon-dr-verify-task.ps1`を呼び、credentialを引数へ含めません。既定の実行timeoutは10分、同時実行は`IgnoreNew`です。
+
+```powershell
+$CATALOG = "$env:LOCALAPPDATA\Kairon\backup-catalog.json"
+
+cd M:\EnglishApp
+kairon state backup dr schedule install `
+  --catalog-path $CATALOG `
+  --interval-hours 24 `
+  --rehearsal-interval-days 30 `
+  --timeout-ms 600000 `
+  --minimum-generations 2
+
+kairon state backup dr schedule status
+```
+
+`task_status=foreign`の場合、同名の非Kairon Taskを上書きまたは削除しません。別の`--task-name`を指定するか、既存Taskをoperatorが確認してください。`task_scheduler_permission_denied`の場合だけ管理者PowerShellで再実行します。
+
+保存媒体の切断は`SETUP_REQUIRED / destination_unavailable`、catalogまたはbackupの改ざんは`FAIL`です。Taskはrestoreやretention cleanupを実行しません。解除時も説明とactionが完全一致するKairon管理Taskだけを対象にします。
+
+```powershell
+kairon state backup dr schedule uninstall
+```
+
 ## Task Scheduler登録
 
 helperを直接使う場合はKairon repository側で実行します。

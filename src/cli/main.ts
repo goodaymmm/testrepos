@@ -189,6 +189,10 @@ import {
   stateBackupDrCopyCommand,
   stateBackupDrPlanCommand,
   stateBackupDrRehearseCommand,
+  stateBackupDrScheduleInstallCommand,
+  stateBackupDrScheduleRunCommand,
+  stateBackupDrScheduleStatusCommand,
+  stateBackupDrScheduleUninstallCommand,
   stateBackupDrVerifyCommand,
   stateBackupRehearseCommand,
   stateBackupRestoreCommand,
@@ -1669,6 +1673,61 @@ export function createProgram(): Command {
         catalogPath: options.catalogPath,
         format: options.format
       }));
+    });
+
+  const stateBackupDrSchedule = stateBackupDr
+    .command("schedule")
+    .description("Schedule and inspect off-device backup verification.");
+
+  stateBackupDrSchedule
+    .command("install")
+    .description("Register the managed Windows off-device backup verification task.")
+    .option("--task-name <name>", "Override the managed Windows task name.")
+    .option("--catalog-path <path>", "Override the user-local backup catalog path.")
+    .option("--interval-hours <hours>", "Verification interval in hours.", "24")
+    .option("--rehearsal-interval-days <days>", "Isolated rehearsal interval in days.", "30")
+    .option("--timeout-ms <milliseconds>", "Per-run verification timeout.", "600000")
+    .option("--minimum-generations <count>", "Required retained generations.", "2")
+    .option("--kairon-command <path>", "Kairon executable used by Task Scheduler.", "kairon")
+    .action(async (options) => {
+      console.log(
+        await stateBackupDrScheduleInstallCommand(process.cwd(), options)
+      );
+    });
+
+  stateBackupDrSchedule
+    .command("status")
+    .description("Inspect the managed task and latest scheduled verification.")
+    .option("--task-name <name>", "Override the managed Windows task name.")
+    .option("--catalog-path <path>", "Override the user-local backup catalog path.")
+    .option("--kairon-command <path>", "Kairon executable used by Task Scheduler.", "kairon")
+    .action(async (options) => {
+      console.log(
+        await stateBackupDrScheduleStatusCommand(process.cwd(), options)
+      );
+    });
+
+  stateBackupDrSchedule
+    .command("run")
+    .description("Verify the latest cataloged backup and run an isolated rehearsal when due.")
+    .option("--catalog-path <path>", "Installed user-local backup catalog path.")
+    .option("--rehearsal-interval-days <days>", "Installed rehearsal interval in days.")
+    .option("--timeout-ms <milliseconds>", "Installed per-run verification timeout.")
+    .option("--minimum-generations <count>", "Installed minimum retained generations.")
+    .action(async (options) => {
+      console.log(await stateBackupDrScheduleRunCommand(process.cwd(), options));
+    });
+
+  stateBackupDrSchedule
+    .command("uninstall")
+    .description("Remove only the matching Kairon-managed verification task.")
+    .option("--task-name <name>", "Override the managed Windows task name.")
+    .option("--catalog-path <path>", "Override the user-local backup catalog path.")
+    .option("--kairon-command <path>", "Kairon executable used by Task Scheduler.", "kairon")
+    .action(async (options) => {
+      console.log(
+        await stateBackupDrScheduleUninstallCommand(process.cwd(), options)
+      );
     });
 
   const git = program

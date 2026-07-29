@@ -77,6 +77,53 @@ kairon doctor |
 
 同じbackup IDが複数保存先にある場合は`--package <absolute-package-path>`でcatalog entryを選択します。`doctor`は保存先pathを表示せず、切断件数、検証失敗件数、期限超過件数を表示します。
 
+### Windows定期検証
+
+T201以降は、最新の検証済みoff-device backupをWindows Task Schedulerから定期検証できます。既定は24時間ごとのintegrity verify、30日ごとの隔離rehearsal、最低2世代です。catalogはproject外に置き、Task Schedulerへtokenやcredentialを保存しません。
+
+```powershell
+$TARGET = "M:\EnglishApp"
+$CATALOG = "$env:LOCALAPPDATA\Kairon\backup-catalog.json"
+
+cd $TARGET
+kairon state backup dr schedule install `
+  --catalog-path $CATALOG `
+  --interval-hours 24 `
+  --rehearsal-interval-days 30 `
+  --timeout-ms 600000 `
+  --minimum-generations 2
+
+kairon state backup dr schedule status
+```
+
+Task登録に権限がない場合は、Windows PowerShellを「管理者として実行」で開き直します。登録後のTaskは、project root、catalog path、数値profile、Kairon commandだけを保持します。
+
+手動で同じ検証を実行する場合は、登録済みprofileと完全一致する値を指定します。
+
+```powershell
+kairon state backup dr schedule run `
+  --catalog-path $CATALOG `
+  --rehearsal-interval-days 30 `
+  --timeout-ms 600000 `
+  --minimum-generations 2
+```
+
+結果は`.kairon/state/dr-schedule/latest.json`と`.kairon/state/dr-schedule/results/`へ保存されます。artifactはcatalog SHA-256、世代数、検証・rehearsal時刻、次回予定、operator向けrestore commandを含みますが、保存先pathそのものをdestination IDとして公開しません。
+
+- `PASS / verified`: integrity verifyまたは期限到来済みの隔離rehearsalが成功し、最低世代数を満たした。
+- `SETUP_REQUIRED / destination_unavailable`: 外付け媒体やmountが利用できない。接続を復旧して再実行する。
+- `FAIL / backup_corrupt`: manifest、payload、size、SHA-256、schemaの検証に失敗した。packageを隔離し、別世代を検証する。
+- `FAIL / generation_shortfall`: 最低世代数を満たさない。唯一の検証済み世代を削除せず、新しいcopyを追加する。
+- `FAIL / rehearsal_failed`: 隔離projectでconfig、state、workflow replay readinessを再現できなかった。
+
+定期検証は本番projectへrestoreせず、retention cleanupも実行しません。`operator_restore_command`は参考情報であり、operatorがruntime停止、対象世代、完全一致確認を再確認して別途実行します。失敗または期限超過は次回Watchdog checkでalertとIncidentへ同期されます。
+
+登録解除はKaironが説明とactionを完全一致で管理しているTaskだけを削除します。
+
+```powershell
+kairon state backup dr schedule uninstall
+```
+
 ## 隔離rehearsal
 
 rehearsalはsource projectを変更せず、off-device packageだけでconfig、state integrity、workflow replay readinessを検証します。
@@ -124,3 +171,6 @@ restore失敗時は再試行前に`kairon recovery list`と`.kairon/runtime/stat
 | `destination_tampered` | packageを隔離し、正常な別世代をverifyする。唯一の検証済み世代は削除しない |
 | `backup_schema_unsupported` | 対応versionのKaironでverifyし、migration手順を確認する |
 | `catalog_corrupt` | catalogのbackupを復旧する。外部packageを推測で削除しない |
+| `destination_unavailable` | 定期検証の保存媒体を接続し、`schedule run`を再実行する。backup破損とは扱わない |
+| `generation_shortfall` | 新しい検証済みcopyを追加する。唯一の検証済み世代を削除しない |
+| `rehearsal_failed` | resultとWatchdog Incidentを確認し、対象packageを隔離した環境で手動rehearsalする |
