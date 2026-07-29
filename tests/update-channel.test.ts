@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   compareCoreVersions,
+  isPatchVersionTransition,
   isVersionAllowedByChannel,
   selectReleaseForChannel,
   setUpdateChannel,
@@ -16,6 +17,13 @@ import {
 import { createTempProject } from "./test-utils.js";
 
 describe("update channel", () => {
+  it("recognizes only the immediate same-line patch transition", () => {
+    expect(isPatchVersionTransition("0.3.0", "0.3.1")).toBe(true);
+    expect(isPatchVersionTransition("0.3.0", "0.3.2")).toBe(false);
+    expect(isPatchVersionTransition("0.3.0", "0.4.0")).toBe(false);
+    expect(isPatchVersionTransition("0.3.0", "1.0.0")).toBe(false);
+  });
+
   it("defaults to an unconfigured manual channel and keeps dry runs non-mutating", async () => {
     const root = await createTempProject();
     await expect(showUpdateChannel(root)).resolves.toMatchObject({

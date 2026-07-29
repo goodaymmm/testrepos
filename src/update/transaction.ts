@@ -80,6 +80,18 @@ export type UpdateTransactionLifecycleOutcome = {
   errorCode?: string;
 };
 
+export type PatchCompatibilityTransactions = {
+  update: UpdateTransactionArtifact;
+  rollback: UpdateTransactionArtifact;
+  reapply: UpdateTransactionArtifact;
+};
+
+export type PatchCompatibilityVerification = {
+  ok: boolean;
+  reasons: string[];
+  transaction_ids: [string, string, string];
+};
+
 export async function beginUpdateTransaction(
   projectRoot: string,
   input: BeginUpdateTransactionInput,
@@ -323,6 +335,51 @@ export async function readActiveUpdateTransaction(
   return value;
 }
 
+export function verifyPatchCompatibilityTransactions(
+  baseVersion: string,
+  targetVersion: string,
+  transactions: PatchCompatibilityTransactions
+): PatchCompatibilityVerification {
+  const reasons: string[] = [];
+  verifyCompatibilityStep(
+    transactions.update,
+    "apply",
+    baseVersion,
+    targetVersion,
+    "update",
+    reasons
+  );
+  verifyCompatibilityStep(
+    transactions.rollback,
+    "rollback",
+    targetVersion,
+    baseVersion,
+    "rollback",
+    reasons
+  );
+  verifyCompatibilityStep(
+    transactions.reapply,
+    "apply",
+    baseVersion,
+    targetVersion,
+    "reapply",
+    reasons
+  );
+  const transactionIds: [string, string, string] = [
+    transactions.update.transaction_id,
+    transactions.rollback.transaction_id,
+    transactions.reapply.transaction_id
+  ];
+  if (new Set(transactionIds).size !== transactionIds.length) {
+    reasons.push("patch_transaction_ids_not_unique");
+  }
+  return {
+    ok: reasons.length === 0,
+    reasons,
+    transaction_ids: transactionIds
+  };
+}
+
 export function updateTransactionArtifactPath(
   projectRoot: string,
   transactionId: string
@@ -365,6 +422,40 @@ function resolveStagingRoot(override?: string): string {
     return path.join(process.env.LOCALAPPDATA, "Kairon", "update-staging");
   }
   return path.join(os.homedir(), ".kairon", "update-staging");
+}
+
+function verifyCompatibilityStep(
+  transaction: UpdateTransactionArtifact,
+  action: UpdateTransactionAction,
+  currentVersion: string,
+  targetVersion: string,
+  label: string,
+  reasons: string[]
+): void {
+  if (transaction.action !== action) {
+    reasons.push(`${label}_action_mismatch`);
+  }
+  if (transaction.status !== "completed") {
+    reasons.push(`${label}_transaction_not_completed`);
+  }
+  if (transaction.phase !== "completed") {
+    reasons.push(`${label}_phase_not_completed`);
+  }
+  if (transaction.current_version !== currentVersion) {
+    reasons.push(`${label}_current_version_mismatch`);
+  }
+  if (transaction.target_version !== targetVersion) {
+    reasons.push(`${label}_target_version_mismatch`);
+  }
+  if (
+    !transaction.timeline.some(
+      (entry) =>
+        entry.phase === "post_check" &&
+        entry.status === "passed"
+    )
+  ) {
+    reasons.push(`${label}_post_check_missing`);
+  }
 }
 
 function isUpdateTransactionArtifact(

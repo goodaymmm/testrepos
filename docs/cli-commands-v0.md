@@ -2,7 +2,7 @@
 
 ## 目的
 
-この文書はT203時点の`0.3.0` Stable Local Releaseで実装済みの`kairon` CLI command仕様を
+この文書はT204時点の`0.3.0` Stable Local Releaseで実装済みの`kairon` CLI command仕様を
 定義する。歴史的なMVP / RC判断は該当節に残すが、Command Listと各command節は
 現行実装を基準とする。
 
@@ -105,7 +105,10 @@ kairon release validate
 kairon release pack [--output <path>]
 kairon release sbom --manifest <manifest.json> [--output <sbom.cdx.json>]
 kairon release provenance --package <package.tgz> --manifest <manifest.json> --sbom <sbom.cdx.json> [--output <provenance.json>]
-kairon release manifest --package <package.tgz> --manifest <manifest.json> [--sbom <sbom.cdx.json> --provenance <provenance.json>] [--output <path>]
+kairon release manifest --package <package.tgz> --manifest <manifest.json> [--sbom <sbom.cdx.json> --provenance <provenance.json>] [--patch-plan <plan-id>] [--output <path>]
+kairon release patch plan --version <next-patch> [--mode rehearsal|release] [--expires-in-minutes <minutes>]
+kairon release patch prepare <plan-id> --confirm <plan-id>
+kairon release patch verify <plan-id> --release-manifest <path> --canary <path> --health <path> --update-transaction <path> --rollback-transaction <path> --reapply-transaction <path> --promotion <path> --cleanup <path>
 kairon release verify <package.tgz> [--manifest <manifest.json>] [--release-manifest <release-manifest.json>] [--verification-context source|consumer]
 kairon release stable verify --version <version> --repository <owner/repo> [--base-branch <branch>] [--token-env <envName>] [--format text|json]
 kairon release health check --release-verification <path> --canary <path> --transaction <id-or-path> [--slo <path>] [--security <path>] [--observation-minutes <minutes>]
@@ -1252,6 +1255,9 @@ kairon release notes --since v0.1.0 --write
 kairon release bump --version 0.3.0
 kairon release bump --version 0.3.0 --write
 kairon release bump --type patch
+kairon release patch plan --version 0.3.1 --mode rehearsal
+kairon release patch prepare PRP-<id> --confirm PRP-<id>
+kairon release patch verify PRP-<id> --release-manifest <path> --canary <path> --health <path> --update-transaction <path> --rollback-transaction <path> --reapply-transaction <path> --promotion <path> --cleanup <path>
 kairon release github plan --version 0.2.0 --repository owner/repo
 kairon release github publish REL-0001 --approval-id APR-0001 --confirm REL-0001
 kairon release github verify --version 0.2.0 --repository owner/repo
@@ -1282,6 +1288,22 @@ package/checksum/SBOM digestをlocal build provenanceへ保存する。`release 
 resultは`source_tree_check`と`artifact_source_binding`を分けて表示する。
 旧manifestの`attestations`省略は後方互換として許可する。
 public npm registryへのpublishは行わない。詳細は`docs/release-provenance-v0.md`を参照する。
+
+`release patch plan`はclean tracked sourceのcommit、現在version、次の同一major / minor
+patch version、version fileとrelease notesのSHA-256、required check、有効期限を
+`.kairon/release/patch-plans/<plan-id>/plan.json`へ固定する。既定の`rehearsal`はtest
+release / tag / branchのexact cleanupを要求し、`release`はproduction release保持を
+明示する。minor / major、patch番号の飛び越し、dirty source、既存target headingは拒否する。
+
+`release patch prepare`はplan IDのexact confirm、期限、base commit、全file digestを
+再検証し、plan専用backupを作成してからpackage / lockfile / CLI versionとrelease notes
+templateだけを更新する。commitはoperatorが行う。`release manifest --patch-plan`は
+prepare済みplanのbase / target versionとplan IDをmanifestへbindする。
+
+`release patch verify`はcommit後のclean sourceに対してpatch-bound manifest、Stable
+canary、post-release health、update / rollback / reapply transaction、approval-gated
+Stable promotionのtag / release ID / asset digest、cleanup evidenceをread-onlyで照合する。
+verify自身がpublish、promotion、update、rollback、cleanupを実行することはない。
 
 `release github plan`は検証済みの`release-artifacts/<version>/`、cleanなlocal HEAD、remote base branch SHA、既存tag / release / assetを照合し、高risk approvalへbindした`.kairon/release/github/plans/<plan-id>.json`を作る。既定はprereleaseで、まだprereleaseとして公開していない新規Stable releaseだけ`--stable`を明示できる。既存prereleaseの昇格には専用の`release github promote`を使う。tokenは`--token-env`、`GH_TOKEN`、`GITHUB_TOKEN`、明示設定したWindows Credential Manager参照の順で解決し、値はartifactやCLI出力へ保存しない。
 

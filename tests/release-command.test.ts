@@ -14,6 +14,7 @@ import {
   formatReleaseNotes,
   formatReleaseValidation,
   planReleaseBump,
+  releasePatchPlanCommand,
   validateRelease
 } from "../src/cli/commands/release.js";
 import { createTempProject } from "./test-utils.js";
@@ -119,6 +120,24 @@ describe("release commands", () => {
     await expect(readFile(path.join(root, "src", "index.ts"), "utf8")).resolves.toContain(
       'KAIRON_VERSION = "0.1.0"'
     );
+  });
+
+  it("exposes an expiring patch plan through the release command boundary", async () => {
+    const root = await createReleaseProject("0.1.0");
+    const output = await releasePatchPlanCommand(root, {
+      version: "0.1.1",
+      commandRunner: async (invocation) =>
+        invocation.args[0] === "rev-parse"
+          ? commandResult(invocation, { stdout: `${"a".repeat(40)}\n` })
+          : commandResult(invocation),
+      now: () => new Date("2026-07-30T00:00:00.000Z")
+    });
+
+    expect(output).toContain("Kairon patch release plan created.");
+    expect(output).toContain("base_version=0.1.0");
+    expect(output).toContain("target_version=0.1.1");
+    expect(output).toContain("external_publish_performed=false");
+    expect(output).toContain("next_command=kairon release patch prepare");
   });
 
   it("plans an explicit dry-run version bump without mutating files", async () => {

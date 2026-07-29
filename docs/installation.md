@@ -16,6 +16,15 @@ source commitとartifactを結び付けます。
 backgroundで自動適用せず、`check`、`download`、`apply`を分離し、applyにはexact confirmと
 transactional health gateを要求します。
 
+0.3.x patchを準備する場合は、`kairon release patch plan --version <next-patch>`で
+clean sourceとversion file digestを固定し、表示されたplan IDを
+`kairon release patch prepare <plan-id> --confirm <plan-id>`へ完全一致で渡します。
+prepare後は変更をreviewしてcommitし、artifact / SBOM / provenanceを生成してから
+`release manifest --patch-plan <plan-id>`でpatch planへbindします。配布後はprevious
+Stableからのupdate、rollback、reapply、Clean Windows canary、post-release health、
+Stable promotion、resource cleanupの証跡を`release patch verify`へ渡します。
+patch commandはGitHub publish、Stable昇格、update applyを自動実行しません。
+
 ## Requirements
 
 - Windows 10 / 11またはWindows Server

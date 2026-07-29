@@ -28,6 +28,10 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
   outbox、same-day session、PTY、分類契約を認証するAgent compatibility certificationを
   追加。version変更はtargeted smoke成功時に即unsupportedとせずDoctor warningとし、
   certification artifactへprompt本文、stdout / stderr本文、credentialを保存しない。
+- T204: Stable後のbug fixを次のpatch versionへ固定するexpiring patch plan、clean
+  source / exact confirm / backup付きprepare、release manifest binding、previous Stableの
+  update / rollback / reapply、canary、health、Stable promotion、exact cleanupを束ねる
+  read-only verificationを追加。自動commit、publish、promotion、updateは行わない。
 
 各PR本文とmerge履歴を一次記録とし、local operation resultやgenerated evidenceはrelease
 notesへ埋め込まず、再実行方法と判定結果だけを記録します。
