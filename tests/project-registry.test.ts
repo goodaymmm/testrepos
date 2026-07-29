@@ -46,6 +46,9 @@ describe("ProjectRegistry", () => {
     expect(first.status).toBe("registered");
     expect(idempotent.status).toBe("already_registered");
     expect(second.entry.project_id).toBe("beta");
+    expect(first.entry.rollout_group).toBe("deferred");
+    await registry.setRolloutGroup("alpha", "canary");
+    expect((await registry.show("alpha"))?.rollout_group).toBe("canary");
     expect((await registry.list()).map((entry) => entry.project_id)).toEqual([
       "alpha",
       "beta"
@@ -117,6 +120,28 @@ describe("ProjectRegistry", () => {
     expect(stored.projects[0].project_id).toBe("migrated");
   });
 
+  it("reads a legacy project entry without a rollout group as deferred", async () => {
+    const registryRoot = await createTempProject();
+    const registryPath = path.join(registryRoot, "projects.json");
+    await writeJsonFileAtomic(registryPath, {
+      schema_version: "0.1",
+      updated_at: "2026-07-25T00:00:00.000Z",
+      projects: [
+        {
+          project_id: "legacy",
+          root: path.join(registryRoot, "legacy"),
+          registered_at: "2026-07-25T00:00:00.000Z",
+          last_seen_at: "2026-07-25T00:00:00.000Z",
+          kairon_version: "0.3.0"
+        }
+      ]
+    });
+
+    await expect(
+      new ProjectRegistry({ registryPath }).show("legacy")
+    ).resolves.toMatchObject({ rollout_group: "deferred" });
+  });
+
   it("rejects duplicate ids and roots already present in the registry document", async () => {
     const registryRoot = await createTempProject();
     const registryPath = path.join(registryRoot, "projects.json");
@@ -130,14 +155,16 @@ describe("ProjectRegistry", () => {
           root: path.join(registryRoot, "one"),
           registered_at: "2026-07-25T00:00:00.000Z",
           last_seen_at: "2026-07-25T00:00:00.000Z",
-          kairon_version: "0.2.0"
+          kairon_version: "0.2.0",
+          rollout_group: "deferred"
         },
         {
           project_id: "same",
           root: path.join(registryRoot, "two"),
           registered_at: "2026-07-25T00:00:00.000Z",
           last_seen_at: "2026-07-25T00:00:00.000Z",
-          kairon_version: "0.2.0"
+          kairon_version: "0.2.0",
+          rollout_group: "deferred"
         }
       ]
     };

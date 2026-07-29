@@ -136,6 +136,24 @@ Credential Managerが必要です。Discord live通知を確認する場合だ�
 `automatic_download=false`、`automatic_apply=false`、`automatic_restart=false`を確認します。
 外部条件不足は`SETUP_REQUIRED`であり、foreign Taskは置換・削除しません。
 
+## T198 Multi-project rollout
+
+`multi-project-rollout` profileは、2つのfixture projectをcanary / primaryへ割り当て、
+current PASS Stable verificationにbindしたread-only planを確認します。
+
+```powershell
+$env:KAIRON_T198_CANARY_ROOT = "C:\tmp\kairon-canary"
+$env:KAIRON_T198_PRIMARY_ROOT = "C:\tmp\kairon-primary"
+$env:KAIRON_T198_TARGET_VERSION = "0.3.1"
+kairon test commands --profile multi-project-rollout
+```
+
+初回planではcanaryだけが`ready`、primaryは`canary_not_completed`で`blocked`になります。
+operatorがcanaryで手動download / applyとhealth確認を完了した後、新しいplanではcanaryが
+`completed`、primaryが`ready`になります。古いplanは`rollout_input_drift`で`stale`となり、
+commandを再提示しません。profile自体はupdate、runtime、Task Schedulerを変更せず、
+`execution_performed=false`と`automatic_update=false`を確認します。
+
 ## 実行対象
 
 デフォルトでは次をすべて実行します。

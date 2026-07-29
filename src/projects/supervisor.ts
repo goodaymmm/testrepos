@@ -14,6 +14,8 @@ import {
   type RuntimeStatusSummary
 } from "../runtime/status.js";
 import { isReadableConfigSchemaVersion } from "../migration/schema-registry.js";
+import { checkStateIntegrity } from "../state/integrity-check.js";
+import { loadUpdateRegistry } from "../update/registry.js";
 import {
   ProjectRegistry,
   type ProjectDoctorSummary,
@@ -41,8 +43,13 @@ export type ProjectHealth = {
   observed_version?: string;
   config: {
     valid: boolean;
+    schema_version?: string;
     warnings: number;
     errors: number;
+  };
+  state_integrity: {
+    errors: number;
+    warnings: number;
   };
   runtime?: RuntimeStatusSummary;
   endpoints: ProjectEndpoint[];
@@ -243,6 +250,10 @@ async function inspectProject(entry: ProjectRegistryEntry): Promise<ProjectHealt
       warnings: 0,
       errors: 0
     },
+    state_integrity: {
+      errors: 0,
+      warnings: 0
+    },
     endpoints: [],
     provider_limits: {},
     last_seen_at: entry.last_seen_at
@@ -278,6 +289,9 @@ async function inspectProject(entry: ProjectRegistryEntry): Promise<ProjectHealt
   ) {
     health.issues.push("project_identity_mismatch");
   }
+  if (typeof projectConfig.schema_version === "string") {
+    health.config.schema_version = projectConfig.schema_version;
+  }
   if (
     typeof projectConfig.root === "string" &&
     normalizeRootKey(projectConfig.root) !== normalizeRootKey(entry.root)
@@ -309,6 +323,21 @@ async function inspectProject(entry: ProjectRegistryEntry): Promise<ProjectHealt
     }
   } catch {
     health.issues.push("runtime_status_unavailable");
+  }
+
+  try {
+    const integrity = await checkStateIntegrity(entry.root);
+    health.state_integrity = {
+      errors: integrity.summary.errors,
+      warnings: integrity.summary.warnings
+    };
+    if (integrity.summary.errors > 0) {
+      health.issues.push("state_integrity_error");
+    } else if (integrity.summary.warnings > 0) {
+      health.issues.push("state_integrity_warning");
+    }
+  } catch {
+    health.issues.push("state_integrity_unavailable");
   }
 
   const paths = getKaironPaths(entry.root);
@@ -349,8 +378,15 @@ async function inspectProject(entry: ProjectRegistryEntry): Promise<ProjectHealt
     health.issues.push("provider_limits_unavailable");
   }
 
-  health.observed_version = KAIRON_VERSION;
-  if (entry.kairon_version !== KAIRON_VERSION) {
+  try {
+    health.observed_version = (
+      await loadUpdateRegistry(entry.root, KAIRON_VERSION)
+    ).installed.version;
+  } catch {
+    health.observed_version = KAIRON_VERSION;
+    health.issues.push("update_registry_unavailable");
+  }
+  if (entry.kairon_version !== health.observed_version) {
     health.issues.push("kairon_version_changed");
   }
   health.status = statusFromIssues(health.issues);
@@ -544,6 +580,7 @@ function statusFromIssues(issues: string[]): ProjectHealthStatus {
         "project_config_unreadable",
         "project_identity_mismatch",
         "config_invalid",
+        "state_integrity_error",
         "project_inspection_timeout",
         "project_inspection_failed"
       ].includes(issue)
@@ -661,6 +698,10 @@ function failedProjectHealth(
       valid: false,
       warnings: 0,
       errors: 1
+    },
+    state_integrity: {
+      errors: 1,
+      warnings: 0
     },
     endpoints: [],
     provider_limits: {},

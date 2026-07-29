@@ -317,6 +317,10 @@ function health(
       warnings: status === "warning" ? 1 : 0,
       errors: status === "error" ? 1 : 0
     },
+    state_integrity: {
+      errors: status === "error" ? 1 : 0,
+      warnings: status === "warning" ? 1 : 0
+    },
     endpoints: [],
     provider_limits: {},
     last_seen_at: "2026-07-26T00:00:00.000Z"

@@ -127,6 +127,23 @@ describe("operation test command profiles", () => {
     expect(output).not.toContain("github_pat_");
   });
 
+  it("generates the T198 rollout profile without automatic update execution", () => {
+    const output = generateOperationTestCommandsCommand({
+      profile: ["multi-project-rollout"]
+    });
+
+    expect(output).toContain("# Profile: multi-project-rollout");
+    expect(output).toContain("Tasks: T198");
+    expect(output).toContain("projects rollout group");
+    expect(output).toContain("projects rollout plan");
+    expect(output).toContain("projects rollout show");
+    expect(output).toContain("execution_performed=false");
+    expect(output).toContain("automatic_update=false");
+    expect(output).not.toContain("kairon update apply");
+    expect(output).not.toContain("kairon update rollback");
+    expect(output).not.toContain("GH_TOKEN=");
+  });
+
   it("rejects invalid output formats at the CLI command boundary", () => {
     expect(() =>
       generateOperationTestCommandsCommand({ format: "yaml" })

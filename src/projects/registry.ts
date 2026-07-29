@@ -19,12 +19,15 @@ export type ProjectDoctorSummary = {
   error: number;
 };
 
+export type ProjectRolloutGroup = "canary" | "primary" | "deferred";
+
 export type ProjectRegistryEntry = {
   project_id: string;
   root: string;
   registered_at: string;
   last_seen_at: string;
   kairon_version: string;
+  rollout_group: ProjectRolloutGroup;
   board_url?: string;
   previous_root?: string;
   last_doctor_summary?: ProjectDoctorSummary;
@@ -182,7 +185,8 @@ export class ProjectRegistry {
         root: project.root,
         registered_at: now,
         last_seen_at: now,
-        kairon_version: KAIRON_VERSION
+        kairon_version: KAIRON_VERSION,
+        rollout_group: "deferred"
       };
       registry.projects.push(entry);
       registry.projects.sort(compareEntries);
@@ -207,6 +211,27 @@ export class ProjectRegistry {
       registry.updated_at = this.now().toISOString();
       await this.write(registry);
       return copyEntry(removed);
+    });
+  }
+
+  async setRolloutGroup(
+    projectId: string,
+    rolloutGroup: ProjectRolloutGroup
+  ): Promise<ProjectRegistryEntry> {
+    const normalizedId = normalizeProjectId(projectId);
+    const normalizedGroup = normalizeRolloutGroup(rolloutGroup);
+    return this.withLock(async () => {
+      const registry = await this.read();
+      const entry = registry.projects.find(
+        (candidate) => candidate.project_id === normalizedId
+      );
+      if (entry === undefined) {
+        throw new Error(`Project is not registered: ${normalizedId}`);
+      }
+      entry.rollout_group = normalizedGroup;
+      registry.updated_at = this.now().toISOString();
+      await this.write(registry);
+      return copyEntry(entry);
     });
   }
 
@@ -396,7 +421,11 @@ function validateRegistryEntry(
     root: normalizeProjectRoot(value.root),
     registered_at: value.registered_at,
     last_seen_at: value.last_seen_at,
-    kairon_version: value.kairon_version
+    kairon_version: value.kairon_version,
+    rollout_group:
+      value.rollout_group === undefined
+        ? "deferred"
+        : normalizeRolloutGroup(value.rollout_group)
   };
   if (typeof value.board_url === "string") {
     entry.board_url = value.board_url;
@@ -437,6 +466,17 @@ function normalizeProjectId(value: string): string {
     throw new Error(`Invalid project id: ${value}`);
   }
   return normalized;
+}
+
+function normalizeRolloutGroup(value: unknown): ProjectRolloutGroup {
+  if (
+    value !== "canary" &&
+    value !== "primary" &&
+    value !== "deferred"
+  ) {
+    throw new Error(`Invalid rollout group: ${String(value)}`);
+  }
+  return value;
 }
 
 function normalizeRootKey(root: string): string {

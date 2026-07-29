@@ -40,6 +40,9 @@ export type ScheduledProjectHealth = {
   issues: string[];
   registered_version: string;
   observed_version?: string;
+  config_schema_version?: string;
+  state_integrity_errors: number;
+  state_integrity_warnings: number;
   runtime: {
     locked?: boolean;
     stale?: boolean;
@@ -334,6 +337,9 @@ function toScheduledProject(
     issues: [...project.issues],
     registered_version: project.registered_version,
     observed_version: project.observed_version,
+    config_schema_version: project.config.schema_version,
+    state_integrity_errors: project.state_integrity.errors,
+    state_integrity_warnings: project.state_integrity.warnings,
     runtime: {
       locked: project.runtime?.locked,
       stale: project.runtime?.stale,

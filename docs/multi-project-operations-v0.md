@@ -28,6 +28,7 @@ registryは次だけを保持する。
 - observed Kairon version
 - credential、query、fragmentを除去したBoard URL
 - pass / warning / error件数だけのlast doctor summary
+- optional rollout group（`canary` / `primary` / `deferred`）
 
 token、cookie、Authorization、approval detail、task本文、project source、raw diff、stdout / stderr、raw environment valueは保存しない。
 
@@ -65,6 +66,8 @@ kairon projects doctor --format json
 - Board server runtime status
 - Discord HTTP Interactions server runtime status
 - provider policyの`max_concurrent`
+- installed Kairon version、project config schema version
+- state integrity error / warning件数
 
 複数project間では次を確認する。
 
@@ -120,6 +123,41 @@ snapshotはproject ID、health状態、縮約runtime、endpoint状態、provider
 
 `kairon doctor`の`projects.scheduled_health` checkはこのuser-local artifactだけを読む。scheduled health未実行は導入前互換としてPASS、failed snapshot、stale snapshot、task error / disabledはWARNINGになる。
 
+## Canary-first rollout plan
+
+T198ではprojectをoptional rollout groupへ割り当てる。既存entryにfieldがない場合は
+`deferred`として読み、次回の明示的なgroup変更まで一括更新対象にしない。
+
+```powershell
+kairon projects rollout group englishapp-canary --set canary
+kairon projects rollout group englishapp-primary --set primary
+kairon projects rollout group archived-project --set deferred
+
+cd M:\EnglishApp
+kairon projects rollout plan --target-version 0.3.1
+kairon projects rollout show <plan-id>
+```
+
+planはcurrent PASS Stable verification、registry、各projectの次の縮約summaryへbindする。
+
+- project ID / root / rollout group
+- installed / registered Kairon version
+- config schema version
+- health statusとlast health timestamp
+- runtime active / stopped
+- state integrity error / warning件数
+
+runtime active、state integrity error、targetより新しいinstalled version、missing root、
+health error、Stable verificationのmissing / invalid / expiry / version mismatchはblockerである。
+canaryが1件以上必要で、全canaryがtarget versionかつhealth PASSになるまでprimaryは
+`canary_not_completed`となる。canary成功後は新しいplanを作成し、primary向けに
+`update download`とexact confirmation付き`update apply`の手動templateを表示する。
+
+planはregistry隣接の`rollout-plans/`へatomic writeし、input digestとplan digestを持つ。
+`rollout show`はcurrent inputを再収集し、project / state / Stable verificationの変更または
+期限切れを`stale`としてcommandを非表示にする。plan内にcredential、approval本文、task本文、
+raw doctor output、project source本文を保存しない。
+
 ## 安全境界
 
 - 全project一括start / stopは行わない。
@@ -128,3 +166,5 @@ snapshotはproject ID、health状態、縮約runtime、endpoint状態、provider
 - registryは各projectのcanonical stateの所有者にならない。
 - `projects doctor`は通常の`kairon doctor`を内部実行しない。通常doctorにはartifact更新を伴うcheckがあるため、横断診断はread-only helperだけで構成する。
 - `projects health scan`も通常doctor、runtime start / stop、queue claim、approval decisionを実行しない。
+- `projects rollout plan / show`はpackage download / apply、runtime start / stop、
+  Task Scheduler登録、approval decisionを実行しない。

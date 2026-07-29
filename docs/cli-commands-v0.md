@@ -19,6 +19,9 @@ kairon projects unregister <project-id> [--format text|json]
 kairon projects list [--format text|json]
 kairon projects show <project-id> [--format text|json]
 kairon projects doctor [--format text|json]
+kairon projects rollout group <project-id> --set canary|primary|deferred
+kairon projects rollout plan --target-version <version> [--format text|json]
+kairon projects rollout show <plan-id> [--format text|json]
 kairon support bundle [--dry-run] [--output <directory>]
 kairon support verify <bundle.zip>
 kairon agent smoke --agent codex|claude|gemini
@@ -160,6 +163,9 @@ kairon projects unregister <project-id> [--format text|json]
 kairon projects list [--format text|json]
 kairon projects show <project-id> [--format text|json]
 kairon projects doctor [--format text|json]
+kairon projects rollout group <project-id> --set canary|primary|deferred
+kairon projects rollout plan --target-version <version> [--format text|json]
+kairon projects rollout show <plan-id> [--format text|json]
 ```
 
 registry pathは次の優先順で解決する。
@@ -175,6 +181,24 @@ registry pathは次の優先順で解決する。
 `projects doctor`はproject config validation、runtime縮約summary、Board / Discord HTTP runtime endpoint、provider policy上限を順次readする。portとexternal URLを複数projectで比較し、衝突をwarningとして出す。診断結果はregistryの`last_doctor_summary`へ保存するが、各projectの`.kairon/`へは書かない。aggregate provider limitは表示だけで、自動配分やAgent切替は行わない。
 
 registryにtoken、cookie、approval detail、task本文、raw environment、source、stdout / stderrを保存しない。Board URLはuserinfo、query、fragmentを除去してから保存する。
+
+`projects rollout group`はregistry entryへoptionalな`canary`、`primary`、`deferred`を
+割り当てる。旧entryは`deferred`として読み、project canonical stateは変更しない。
+`projects rollout plan`はcurrent PASS Stable verificationとtarget versionをbindし、
+各projectのinstalled version、config schema、縮約health、runtime lock、state integrityを
+read-onlyで収集する。runtime active、state error、version ahead、missing rootはblockerである。
+
+canaryがtarget versionかつhealth PASSになるまではprimary commandを提示しない。canary完了後に
+新しいplanを作るとprimaryへ次の手動command templateを提示する。
+
+```text
+kairon update download <target-version>
+kairon update apply <download-id> --confirm <download-id>
+```
+
+planはregistryとproject summaryのinput digestを持つ。`projects rollout show`は再収集した
+digestが異なるplanや期限切れplanを`stale`として扱い、commandを表示しない。planの作成・表示から
+package download / apply、runtime start / stop、Task Scheduler変更は実行しない。
 
 ## kairon migrate
 

@@ -17,6 +17,12 @@ import {
   createScheduledHealthTaskPlan,
   runScheduledHealthTaskAction
 } from "../../projects/scheduled-health-task.js";
+import {
+  createProjectRolloutPlan,
+  formatProjectRolloutPlan,
+  showProjectRolloutPlan
+} from "../../projects/rollout-plan.js";
+import type { ProjectRolloutGroup } from "../../projects/registry.js";
 
 export type ProjectsCommandOptions = {
   format?: string;
@@ -36,6 +42,10 @@ export type ProjectsHealthScheduleOptions = ProjectsHealthCommandOptions & {
   kaironCommand?: string;
   intervalMinutes?: string;
   confirm?: string;
+};
+
+export type ProjectsRolloutCommandOptions = ProjectsCommandOptions & {
+  set?: string;
 };
 
 export async function registerProjectCommand(
@@ -143,6 +153,60 @@ export async function doctorProjectsCommand(
   const registry = createRegistry(options);
   const report = await new ProjectSupervisor({ registry }).inspect();
   return formatProjectSupervisorReport(report, parseFormat(options.format));
+}
+
+export async function setProjectRolloutGroupCommand(
+  projectId: string,
+  options: ProjectsRolloutCommandOptions
+): Promise<string> {
+  const registry = createRegistry(options);
+  const group = parseRolloutGroup(options.set);
+  const project = await registry.setRolloutGroup(projectId, group);
+  if (parseFormat(options.format) === "json") {
+    return `${JSON.stringify(
+      {
+        schema_version: "0.1",
+        status: "updated",
+        registry_path: registry.registryPath,
+        project
+      },
+      null,
+      2
+    )}\n`;
+  }
+  return [
+    "Kairon project rollout group updated.",
+    "status=updated",
+    `project_id=${project.project_id}`,
+    `rollout_group=${project.rollout_group}`,
+    `registry_path=${registry.registryPath}`
+  ].join("\n");
+}
+
+export async function createProjectsRolloutPlanCommand(
+  projectRoot: string,
+  targetVersion: string,
+  options: ProjectsCommandOptions = {}
+): Promise<string> {
+  const result = await createProjectRolloutPlan({
+    projectRoot,
+    targetVersion,
+    registryPath: options.registryPath
+  });
+  return formatProjectRolloutPlan(
+    { plan: result.plan, plan_path: result.plan_path },
+    parseFormat(options.format)
+  );
+}
+
+export async function showProjectsRolloutPlanCommand(
+  planId: string,
+  options: ProjectsCommandOptions = {}
+): Promise<string> {
+  const result = await showProjectRolloutPlan(planId, {
+    registryPath: options.registryPath
+  });
+  return formatProjectRolloutPlan(result, parseFormat(options.format));
 }
 
 export async function scanProjectsHealthCommand(
@@ -319,6 +383,15 @@ function parseAlertThreshold(
   throw new Error(`Invalid alert-threshold: ${value}`);
 }
 
+function parseRolloutGroup(value: string | undefined): ProjectRolloutGroup {
+  if (value === "canary" || value === "primary" || value === "deferred") {
+    return value;
+  }
+  throw new Error(
+    "Invalid rollout group. Expected canary, primary, or deferred."
+  );
+}
+
 function formatScheduledHealthSnapshot(
   snapshot: ScheduledHealthSnapshot
 ): string {
@@ -355,6 +428,7 @@ function formatProjectsList(
   for (const project of projects) {
     lines.push(
       `project_id=${project.project_id} root=${project.root} version=${project.kairon_version} doctor=${project.last_doctor_summary?.status ?? "not_run"}`
+        + ` rollout_group=${project.rollout_group}`
     );
   }
   return lines.join("\n");
@@ -372,6 +446,7 @@ function formatProject(
     `registered_at=${project.registered_at}`,
     `last_seen_at=${project.last_seen_at}`,
     `kairon_version=${project.kairon_version}`,
+    `rollout_group=${project.rollout_group}`,
     `board_url=${project.board_url ?? "none"}`,
     `previous_root=${project.previous_root ?? "none"}`,
     `doctor_status=${project.last_doctor_summary?.status ?? "not_run"}`,

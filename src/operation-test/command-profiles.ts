@@ -356,6 +356,52 @@ const profiles: OperationTestCommandProfile[] = [
       "mutation_detected=false",
       "automatic_download=false, automatic_apply=false, and automatic_restart=false"
     ]
+  },
+  {
+    id: "multi-project-rollout",
+    title: "T198 Canary-first multi-project rollout planning",
+    task_ids: ["T198"],
+    description:
+      "Create and revalidate a read-only rollout plan for two registered projects without applying an update.",
+    required_env: [
+      "KAIRON_T198_CANARY_ROOT",
+      "KAIRON_T198_PRIMARY_ROOT",
+      "KAIRON_T198_TARGET_VERSION"
+    ],
+    setup: [
+      "Prepare two initialized Kairon projects and a current PASS Stable verification in KAIRON_TARGET_ROOT.",
+      "Use disposable project fixtures because rollout groups are stored in the user-local registry.",
+      "The profile creates plans only; run update download/apply manually when testing canary completion."
+    ],
+    commands: [
+      {
+        kind: "powershell",
+        lines: [
+          "$T198_REGISTRY = Join-Path $RESULT_ROOT \"t198-user-state\\projects.json\"",
+          "$env:KAIRON_PROJECTS_REGISTRY_PATH = $T198_REGISTRY",
+          "$T198_CANARY_ID = (Get-Content (Join-Path $env:KAIRON_T198_CANARY_ROOT \".kairon\\config\\project.json\") -Raw -Encoding UTF8 | ConvertFrom-Json).project_id",
+          "$T198_PRIMARY_ID = (Get-Content (Join-Path $env:KAIRON_T198_PRIMARY_ROOT \".kairon\\config\\project.json\") -Raw -Encoding UTF8 | ConvertFrom-Json).project_id",
+          "kairon projects register $env:KAIRON_T198_CANARY_ROOT",
+          "kairon projects register $env:KAIRON_T198_PRIMARY_ROOT",
+          "kairon projects rollout group $T198_CANARY_ID --set canary",
+          "kairon projects rollout group $T198_PRIMARY_ID --set primary",
+          "cd $TARGET",
+          "$T198_PLAN_OUTPUT = kairon projects rollout plan --target-version $env:KAIRON_T198_TARGET_VERSION",
+          "$T198_PLAN_OUTPUT",
+          "$T198_PLAN_ID = [regex]::Match(($T198_PLAN_OUTPUT -join \"`n\"), \"plan_id=(RLP-[0-9]{14}-[a-f0-9]{12})\").Groups[1].Value",
+          "if ([string]::IsNullOrWhiteSpace($T198_PLAN_ID)) { throw \"T198 rollout plan id was not emitted.\" }",
+          "kairon projects rollout show $T198_PLAN_ID"
+        ]
+      }
+    ],
+    expected_evidence: [
+      "canary is ready before the target update while primary is blocked by canary_not_completed",
+      "after a manual canary update and passing health, a new plan marks canary completed and primary ready",
+      "an old plan reports rollout_input_drift after project state changes",
+      "runtime_active, state_integrity_error, installed_version_ahead, and project_root_unavailable block a project",
+      "execution_performed=false and automatic_update=false",
+      "no credential value, task body, approval body, package download, apply, or restart is recorded"
+    ]
   }
 ];
 
