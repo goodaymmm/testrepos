@@ -144,6 +144,25 @@ describe("operation test command profiles", () => {
     expect(output).not.toContain("GH_TOKEN=");
   });
 
+  it("generates the T199 Stable soak profile without weakening the real-time gate", () => {
+    const output = generateOperationTestCommandsCommand({
+      profile: ["stable-soak-certification"]
+    });
+
+    expect(output).toContain("# Profile: stable-soak-certification");
+    expect(output).toContain("Tasks: T199");
+    expect(output).toContain("daemon soak start");
+    expect(output).toContain("--minimum-hours 168");
+    expect(output).toContain("daemon soak status");
+    expect(output).toContain("daemon soak report");
+    expect(output).toContain("After 168 real-time hours");
+    expect(output).toContain("simulated clock evidence is SETUP_REQUIRED");
+    expect(output).not.toMatch(
+      /--minimum-hours (?:[1-9]|[1-9]\d|1[0-5]\d|16[0-7])(?:\r?\n|$)/u
+    );
+    expect(output).not.toContain("GH_TOKEN=");
+  });
+
   it("rejects invalid output formats at the CLI command boundary", () => {
     expect(() =>
       generateOperationTestCommandsCommand({ format: "yaml" })

@@ -2,7 +2,7 @@
 
 ## 目的
 
-この文書はT191時点の`0.3.0` Stable Local Releaseで実装済みの`kairon` CLI command仕様を
+この文書はT199時点の`0.3.0` Stable Local Releaseで実装済みの`kairon` CLI command仕様を
 定義する。歴史的なMVP / RC判断は該当節に残すが、Command Listと各command節は
 現行実装を基準とする。
 
@@ -59,6 +59,13 @@ kairon discord http start [--profile loopback|reverse-proxy] [--host 127.0.0.1] 
 kairon discord http status
 kairon start
 kairon start --daemon [--interval-ms <ms>] [--max-ticks <count>] [--max-idle-ticks <count>]
+kairon daemon report [--since <duration>] [--format markdown|json]
+kairon daemon certify [--since <duration>] [--format markdown|json]
+kairon daemon soak start --release-verification <path> [--minimum-hours 168]
+kairon daemon soak status <soak-id> [--format markdown|json]
+kairon daemon soak certify <soak-id> [--format markdown|json]
+kairon daemon soak report <soak-id> [--format markdown|json]
+kairon daemon soak mark <soak-id> --kind planned_reboot|maintenance --from <timestamp> --until <timestamp> --reason <text>
 kairon daemon task status [--task-name <name>] [--project-root <path>]
 kairon daemon task install [--dry-run] [--task-name <name>] [--project-root <path>]
 kairon daemon task uninstall [--dry-run] [--task-name <name>] [--project-root <path>]
@@ -765,6 +772,37 @@ kairon watchdog resolve <alert-id> --reason <text>
 `check`はdaemon heartbeat、fatal error、restart loop、queue backlog、Discord通知失敗、provider suspend、Task Scheduler登録状態を評価する。alertは`.kairon/watchdog/alerts/ALT-*.json`、集計状態は`.kairon/watchdog/state.json`へ保存する。同じruleとresourceはdeterministic fingerprintでまとめ、severity escalation、cooldown後のreminder、回復時のresolved通知だけを新しい通知対象にする。
 
 `resolve`はoperator reasonを必須とする。原因が残った状態で次回`check`を実行すると、同じalertをopenへ戻す。Watchdogは自動再起動、queue mutation、provider切替を行わない。詳細は`docs/runtime-watchdog-v0.md`を参照する。
+
+## kairon daemon soak
+
+PASS済みStable release verificationへbindした168時間以上の実時間daemon soakを管理する。
+
+```text
+kairon daemon soak start --release-verification <path> --minimum-hours 168
+kairon daemon soak status <soak-id> --format json
+kairon daemon soak certify <soak-id> --format json
+kairon daemon soak report <soak-id> --format markdown
+kairon daemon soak mark <soak-id> --kind planned_reboot --from <ISO> --until <ISO> --reason <text>
+kairon daemon soak mark <soak-id> --kind maintenance --from <ISO> --until <ISO> --reason <text>
+```
+
+`start`はverification ID、version、release ID、source commit、state digest、verification
+artifact SHA-256とthresholdをmanifestへ固定する。既定のminimumは168時間で、CLIから
+168未満へ短縮できない。時計注入したunit fixtureは`simulated`となり、時間条件を満たしても
+certificateは`SETUP_REQUIRED`である。
+
+`status`は同じsoak IDについてdaemon heartbeat、coverage、restart、SLO、Incident、
+release driftを再評価し、`daily/YYYY-MM-DD.json`へbounded rollupを保存する。OS再起動後も
+同じIDを使う。`planned_reboot` markerは実際のhost reboot証跡と一致する場合だけgapを
+説明し、markerだけで任意の停止を許可しない。
+
+`certify`は`.kairon/runtime/soak/<soak-id>/certificate.json`を作る。168実時間、
+coverage、SLO、incident、restart、release bindingをすべて満たす場合だけ`PASS`となる。
+未経過またはsimulated fixtureは`SETUP_REQUIRED`、release drift、説明不能gap、
+fatal error、unexpected restart、High/Critical incident、SLO不備は`FAIL`となる。
+
+artifactは日次集約とsource log digestだけを保持し、hostname、username、raw task、
+raw daemon log、credential値を保存しない。詳細は`docs/windows-daemon-ops-v0.md`を参照する。
 
 ## kairon daemon task
 

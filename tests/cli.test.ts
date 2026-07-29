@@ -319,14 +319,16 @@ describe("createProgram", () => {
     );
   });
 
-  it("registers daemon evidence, certification, and Windows task commands", () => {
+  it("registers daemon evidence, Stable soak, and Windows task commands", () => {
     const daemon = createProgram().commands.find(
       (command) => command.name() === "daemon"
     );
     const report = daemon?.commands.find((command) => command.name() === "report");
     const certify = daemon?.commands.find((command) => command.name() === "certify");
+    const soak = daemon?.commands.find((command) => command.name() === "soak");
     const task = daemon?.commands.find((command) => command.name() === "task");
     const taskCommands = task?.commands.map((command) => command.name());
+    const soakCommands = soak?.commands.map((command) => command.name());
 
     expect(daemon?.description()).toContain("daemon evidence");
     expect(report?.description()).toContain("long-run evidence report");
@@ -351,6 +353,24 @@ describe("createProgram", () => {
         "--minimum-ticks"
       ])
     );
+    expect(soak?.description()).toContain("Stable soak certification");
+    expect(soakCommands).toEqual(
+      expect.arrayContaining(["start", "status", "certify", "report", "mark"])
+    );
+    expect(
+      soak?.commands
+        .find((command) => command.name() === "start")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining([
+      "--release-verification",
+      "--minimum-hours",
+      "--minimum-coverage-ratio"
+    ]));
+    expect(
+      soak?.commands
+        .find((command) => command.name() === "mark")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--kind", "--from", "--until", "--reason"]));
     expect(task?.description()).toContain("Windows Task Scheduler");
     expect(taskCommands).toEqual(
       expect.arrayContaining(["status", "install", "uninstall", "restart"])

@@ -216,6 +216,63 @@ certification statusは次の意味です。
 
 artifactには評価window、全threshold、個別check、restart分類、参照daemon log pathとSHA-256を保存します。raw daemon event、token、環境変数値は保存しません。短縮fixtureはunit test専用であり、実時間24時間のoperation test証跡の代替にはなりません。
 
+## Stable release 168時間soak certification
+
+`daemon certify --since 24h`はdaemon単体の診断です。Stable releaseの最終長期認証では、
+currentなPASS Stable verificationへbindした同一soakを168時間以上継続します。
+
+```powershell
+cd M:\EnglishApp
+
+$start = kairon daemon soak start `
+  --release-verification .kairon\release\stable-verifications\<verification-id>.json `
+  --minimum-hours 168
+$start
+$SOAK_ID = [regex]::Match(($start -join "`n"), "soak_id=(SSK-[0-9]{14}-[a-f0-9]{12})").Groups[1].Value
+
+kairon daemon soak status $SOAK_ID --format json
+kairon doctor
+```
+
+OS再起動または計画メンテナンスの前にwindowを記録します。
+
+```powershell
+kairon daemon soak mark $SOAK_ID `
+  --kind planned_reboot `
+  --from 2026-08-01T09:00:00.000Z `
+  --until 2026-08-01T09:30:00.000Z `
+  --reason "planned Windows reboot"
+
+kairon daemon soak mark $SOAK_ID `
+  --kind maintenance `
+  --from 2026-08-02T03:00:00.000Z `
+  --until 2026-08-02T04:00:00.000Z `
+  --reason "scheduled project maintenance"
+```
+
+Windows再起動後も新しいsoakを開始せず、同じ`SOAK_ID`の`status`を確認します。
+`planned_reboot`はmarkerだけでは許可されず、daemon logの`host_boot_at`が変化した実際の
+host rebootと一致する場合だけ説明済みgapになります。計画外停止、同一bootのrestart、
+marker外のgapはFAIL要因です。
+
+168実時間経過後にだけcertificateを発行します。
+
+```powershell
+kairon daemon soak status $SOAK_ID --format json
+kairon daemon soak certify $SOAK_ID --format json
+kairon daemon soak report $SOAK_ID --format markdown
+```
+
+manifest、日次rollup、certificateは
+`.kairon/runtime/soak/<soak-id>/`に保存します。release verification ID、version、
+release ID、source commit、state digest、artifact SHA-256、thresholdを固定し、日次単位の
+daemon coverage、SLO、incident、restartを集約します。raw task、raw log、hostname、
+username、credential値はcertificateへ保存しません。
+
+168時間未満またはclock injectionを使ったfixtureは`SETUP_REQUIRED`です。release drift、
+unexplained gap、fatal error、unexpected restart、High/Critical incident、SLO failureまたは
+SLO証跡不足がある場合は`FAIL`となり、既存soakをPASSへ上書きせず新しいsoakを開始します。
+
 ## stale lock復旧
 
 daemonを停止した後もlockが残る場合は、次の順で確認します。

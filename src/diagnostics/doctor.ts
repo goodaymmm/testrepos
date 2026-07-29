@@ -26,6 +26,7 @@ import { validateDiscordEnvValues } from "../discord/env-validation.js";
 import { prepareDiscordHttpProfile } from "../discord/http-profile.js";
 import { inspectRuntimeRecoveryTargets } from "../recovery/runtime-recovery.js";
 import { getRuntimeStatus } from "../runtime/status.js";
+import { inspectLatestStableSoak } from "../runtime/stable-soak.js";
 import {
   inspectBoardProjectionSecrets,
   type BoardSecretScanSummary
@@ -272,6 +273,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkDisasterRecoveryCatalog(options.projectRoot, env, now));
   checks.push(await checkRuntimeRecovery(options.projectRoot));
   checks.push(await checkDaemonHealth(options.projectRoot));
+  checks.push(await checkStableSoak(options.projectRoot, new Date(now)));
   checks.push(await checkWatchdogAlerts(options.projectRoot));
   checks.push(await checkRuntimeObservability(options.projectRoot));
   checks.push(await checkRagStatus(options.projectRoot));
@@ -1564,6 +1566,68 @@ async function checkDaemonHealth(projectRoot: string): Promise<DoctorCheck> {
       "Run kairon status and kairon recovery run, then retry kairon doctor. Guide: docs/windows-daemon-ops-v0.md."
     );
   }
+}
+
+async function checkStableSoak(
+  projectRoot: string,
+  now: Date
+): Promise<DoctorCheck> {
+  const title = "Stable soak certification";
+  const inspection = await inspectLatestStableSoak(projectRoot, now);
+  if (inspection.status === "not_run") {
+    return pass("daemon.stable_soak", title, [
+      "status=not_run",
+      "next_action=start after a PASS Stable release verification"
+    ]);
+  }
+  if (inspection.status === "corrupt") {
+    return error(
+      "daemon.stable_soak",
+      title,
+      [
+        "status=corrupt",
+        `reason=${inspection.reason}`
+      ],
+      "Inspect .kairon/runtime/soak and start a new Stable soak after repairing the artifact store."
+    );
+  }
+
+  const details = [
+    `status=${inspection.status}`,
+    `soak_id=${inspection.soak_id}`,
+    `evidence_mode=${inspection.evidence_mode}`,
+    `release_version=${inspection.release_version}`,
+    `elapsed_hours=${inspection.elapsed_hours}`,
+    `minimum_hours=${inspection.minimum_hours}`,
+    `coverage_ratio=${inspection.coverage_ratio ?? "pending"}`,
+    `result=${inspection.result ?? "pending"}`,
+    `next_action=${inspection.next_action}`
+  ];
+  if (inspection.status === "active") {
+    return warning(
+      "daemon.stable_soak",
+      title,
+      details,
+      inspection.next_action
+    );
+  }
+  if (inspection.result === "PASS") {
+    return pass("daemon.stable_soak", title, details);
+  }
+  if (inspection.result === "FAIL") {
+    return error(
+      "daemon.stable_soak",
+      title,
+      details,
+      inspection.next_action
+    );
+  }
+  return warning(
+    "daemon.stable_soak",
+    title,
+    details,
+    inspection.next_action
+  );
 }
 
 async function checkWatchdogAlerts(projectRoot: string): Promise<DoctorCheck> {
