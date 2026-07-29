@@ -32,6 +32,10 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
   source / exact confirm / backup付きprepare、release manifest binding、previous Stableの
   update / rollback / reapply、canary、health、Stable promotion、exact cleanupを束ねる
   read-only verificationを追加。自動commit、publish、promotion、updateは行わない。
+- T205: T192-T204とcurrent build / security / cleanup証跡を15 gateへ集約する
+  Operational Stable Readinessを追加。current commit、freshness、SHA-256、artifact kind、
+  Published Stable identity、incident / security / rollback / cleanup blockerを再検証し、
+  全件PASS時だけ`operational_stable_ready=true`とする。判定からexternal writeは行わない。
 
 各PR本文とmerge履歴を一次記録とし、local operation resultやgenerated evidenceはrelease
 notesへ埋め込まず、再実行方法と判定結果だけを記録します。

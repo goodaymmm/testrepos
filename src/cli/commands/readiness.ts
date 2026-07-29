@@ -6,6 +6,13 @@ import {
 } from "../../readiness/beta-readiness.js";
 import { createReadinessEvidenceManifest } from "../../readiness/evidence-manifest.js";
 import {
+  createOperationalStableManifest,
+  evaluateOperationalStableReadiness,
+  formatOperationalStableResult,
+  parseOperationalStableFormat,
+  writeOperationalStableResult
+} from "../../readiness/operational-stable-readiness.js";
+import {
   createRcReadinessManifest,
   evaluateRcReadiness,
   formatRcReadinessResult,
@@ -41,6 +48,12 @@ export type StableReadinessManifestCommandOptions =
   ReadinessManifestCommandOptions;
 export type StableReadinessCheckCommandOptions = ReadinessCheckCommandOptions;
 export type StableReadinessReportCommandOptions =
+  ReadinessReportCommandOptions;
+export type OperationalStableManifestCommandOptions =
+  ReadinessManifestCommandOptions;
+export type OperationalStableCheckCommandOptions =
+  ReadinessCheckCommandOptions;
+export type OperationalStableReportCommandOptions =
   ReadinessReportCommandOptions;
 
 export async function readinessManifestCommand(
@@ -268,5 +281,99 @@ export async function stableReadinessReportCommand(
         : ""
     ].filter((line) => line.length > 0).join("\n"),
     ready: result.stable_ready
+  };
+}
+
+export async function operationalStableManifestCommand(
+  projectRoot: string,
+  options: OperationalStableManifestCommandOptions
+): Promise<string> {
+  const result = await createOperationalStableManifest(projectRoot, {
+    evidence: options.evidence ?? [],
+    output: options.output
+  });
+  return [
+    "Kairon Operational Stable readiness evidence manifest created.",
+    `manifest=${result.output_path}`,
+    `source_commit=${result.manifest.source_commit}`,
+    `evidence=${result.manifest.evidence.length}`,
+    ...result.manifest.evidence.map((entry) =>
+      `gate=${entry.gate_id} status=${entry.detected_status} path=${entry.path}`
+    )
+  ].join("\n");
+}
+
+export async function operationalStableCheckCommand(
+  projectRoot: string,
+  options: OperationalStableCheckCommandOptions = {}
+): Promise<{ text: string; ready: boolean }> {
+  const result = await evaluateOperationalStableReadiness(
+    projectRoot,
+    options
+  );
+  const outputPath = await writeOperationalStableResult(
+    projectRoot,
+    result,
+    "json"
+  );
+  return {
+    text: [
+      "Kairon Operational Stable readiness check.",
+      `status=${result.status}`,
+      `operational_stable_ready=${result.operational_stable_ready}`,
+      `source_commit=${result.source_commit}`,
+      `manifest=${result.manifest.path}`,
+      `manifest_status=${result.manifest.status}`,
+      `manifest_sha256=${result.manifest.sha256 ?? "unknown"}`,
+      `result=${outputPath}`,
+      `blockers=${result.blockers.length}`,
+      `rollback_status=${result.rollback.status}`,
+      `cleanup_status=${result.cleanup.status}`,
+      `security_high=${result.security.high}`,
+      `security_critical=${result.security.critical}`,
+      `secret_exposures=${result.security.secret_exposures}`,
+      "external_write_performed=false",
+      ...result.gates.map((gate) =>
+        `gate=${gate.id} class=${gate.classification} status=${gate.status} evidence=${gate.evidence.length}`
+      )
+    ].join("\n"),
+    ready: result.operational_stable_ready
+  };
+}
+
+export async function operationalStableReportCommand(
+  projectRoot: string,
+  options: OperationalStableReportCommandOptions = {}
+): Promise<{ text: string; ready: boolean }> {
+  const format = parseOperationalStableFormat(options.format);
+  const result = await evaluateOperationalStableReadiness(
+    projectRoot,
+    options
+  );
+  const outputPath = await writeOperationalStableResult(
+    projectRoot,
+    result,
+    format,
+    options.output
+  );
+  return {
+    text: [
+      "Kairon Operational Stable readiness report created.",
+      `status=${result.status}`,
+      `operational_stable_ready=${result.operational_stable_ready}`,
+      `format=${format}`,
+      `output=${outputPath}`,
+      `manifest_status=${result.manifest.status}`,
+      `manifest_sha256=${result.manifest.sha256 ?? "unknown"}`,
+      `blockers=${result.blockers.length}`,
+      `rollback_status=${result.rollback.status}`,
+      `cleanup_status=${result.cleanup.status}`,
+      `secret_scan=${result.secret_scan.status}`,
+      "external_write_performed=false",
+      format === "json"
+        ? formatOperationalStableResult(result, "json").trim()
+        : ""
+    ].filter((line) => line.length > 0).join("\n"),
+    ready: result.operational_stable_ready
   };
 }

@@ -49,6 +49,10 @@ import {
   stableReadinessManifestExists
 } from "../readiness/stable-readiness.js";
 import {
+  evaluateOperationalStableReadiness,
+  operationalStableManifestExists
+} from "../readiness/operational-stable-readiness.js";
+import {
   inspectLatestStableReleaseVerification
 } from "../release/stable-verification.js";
 import {
@@ -294,6 +298,9 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   }
   if (await stableReadinessManifestExists(options.projectRoot)) {
     checks.push(await checkStableReadiness(options.projectRoot));
+  }
+  if (await operationalStableManifestExists(options.projectRoot)) {
+    checks.push(await checkOperationalStableReadiness(options.projectRoot));
   }
 
   const sanitizedChecks = checks.map(sanitizeDoctorCheck);
@@ -2378,6 +2385,48 @@ async function checkStableReadiness(
       title,
       ["status=UNKNOWN", "stable_ready=false"],
       "Repair the Stable readiness manifest and run kairon readiness stable check."
+    );
+  }
+}
+
+async function checkOperationalStableReadiness(
+  projectRoot: string
+): Promise<DoctorCheck> {
+  const id = "readiness.operational_stable";
+  const title = "Operational Stable readiness gate";
+  try {
+    const result = await evaluateOperationalStableReadiness(projectRoot);
+    const details = [
+      `status=${result.status}`,
+      `operational_stable_ready=${result.operational_stable_ready}`,
+      `manifest_status=${result.manifest.status}`,
+      `pass=${result.counts.PASS}`,
+      `unpassed=${result.counts.UNPASSED}`,
+      `setup_required=${result.counts.SETUP_REQUIRED}`,
+      `unknown=${result.counts.UNKNOWN}`,
+      `blockers=${result.blockers.length}`,
+      `rollback_status=${result.rollback.status}`,
+      `cleanup_status=${result.cleanup.status}`,
+      `security_high=${result.security.high}`,
+      `security_critical=${result.security.critical}`,
+      `secret_exposures=${result.security.secret_exposures}`,
+      `unresolved_high_incidents=${result.incidents.unresolved_high}`,
+      `unresolved_critical_incidents=${result.incidents.unresolved_critical}`
+    ];
+    return result.operational_stable_ready
+      ? pass(id, title, details)
+      : warning(
+          id,
+          title,
+          details,
+          "Refresh Operational Stable evidence and run kairon readiness operational check."
+        );
+  } catch {
+    return warning(
+      id,
+      title,
+      ["status=UNKNOWN", "operational_stable_ready=false"],
+      "Repair the Operational Stable readiness manifest and run kairon readiness operational check."
     );
   }
 }

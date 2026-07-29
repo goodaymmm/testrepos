@@ -202,6 +202,38 @@ describe("PR and release documentation", () => {
     expect(notes).toContain("global blocker");
   });
 
+  it("documents the Operational Stable readiness aggregation boundary", async () => {
+    const readme = await readUtf8("README.md");
+    const commands = await readUtf8("docs/cli-commands-v0.md");
+    const checklist = await readUtf8("docs/release-checklist-v0.md");
+    const notes = await readUtf8("docs/release-notes-v0.md");
+    const guide = await readUtf8(
+      "docs/operational-stable-readiness-v0.md"
+    );
+
+    for (const command of ["manifest", "check", "report"]) {
+      expect(commands).toContain(
+        `kairon readiness operational ${command}`
+      );
+      expect(checklist).toContain(
+        `kairon readiness operational ${command}`
+      );
+    }
+    expect(readme).toContain(
+      "<!-- kairon:t205-operational-stable-readiness -->"
+    );
+    expect(guide).toContain("15 gate");
+    expect(guide).toContain("operational_stable_ready=true");
+    expect(guide).toContain("external_write_performed");
+    expect(commands).toContain(
+      "operational-stable-evidence-manifest.json"
+    );
+    expect(commands).toContain("operational-stable-result.json");
+    expect(commands).toContain("operational-stable-report.md");
+    expect(checklist).toContain("Published Stable");
+    expect(notes).toContain("T205");
+  });
+
   it("documents Discord HTTP Interactions signature verification", async () => {
     const approval = await readUtf8("docs/discord-approval-v0.md");
 

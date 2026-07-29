@@ -1497,6 +1497,36 @@ SHA-256、exact-ID cleanup完了を再検証する。`check`と`report`はStable
 昇格は別途approvalとexact confirmを伴う
 `kairon release github promote apply`を明示実行する。
 
+## kairon readiness operational
+
+T192-T204のStable後運用証跡を15 gateへ集約する。T190の
+`kairon readiness stable`を置き換えず、その上位の運用継続判定として扱う。
+
+```text
+kairon readiness operational manifest --evidence <GATE_ID=path> [--evidence <GATE_ID=path>...] [--output <path>]
+kairon readiness operational check [--manifest <path>]
+kairon readiness operational report [--manifest <path>] [--format json|markdown] [--output <path>]
+```
+
+既定artifact:
+
+```text
+.kairon/readiness/operational-stable-evidence-manifest.json
+.kairon/readiness/operational-stable-result.json
+.kairon/readiness/operational-stable-report.md
+```
+
+`BUILD_UNIT_SECURITY`はbuild/full-testとsecurity baselineの両方、
+`STATE_SECRET_CLEANUP`はstate/secretとexact cleanupの両方を要求する。
+external証跡不足は`SETUP_REQUIRED`、required不足とtampered / stale /
+wrong commit / wrong releaseは`UNKNOWN`となる。全15 gateが`PASS`でglobal blockerが
+0件の場合だけ`operational_stable_ready=true`を返す。
+
+check / reportはread-only判定であり、表示するrelease / update / restore commandは
+referenceに限る。GitHub promotion、update apply、restoreを呼ばず、
+`external_write_performed=false`を維持する。詳細は
+[operational-stable-readiness-v0.md](operational-stable-readiness-v0.md)を参照する。
+
 ## kairon workflow
 
 task、approval、queue item、resource lockを永続workflow状態として管理する。production実行は正式config配下で行い、run artifactと遷移ごとのcheckpointから再起動後に継続できる。
