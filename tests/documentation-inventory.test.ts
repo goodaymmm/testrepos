@@ -118,7 +118,8 @@ describe("T192 documentation inventory", () => {
       security: await readUtf8("docs/security-baseline-v0.md"),
       threatModel: await readUtf8("docs/threat-model-v0.md"),
       stableAcceptance: await readUtf8("docs/stable-acceptance-v0.md"),
-      agentSession: await readUtf8("docs/agent-session-v0.md")
+      agentSession: await readUtf8("docs/agent-session-v0.md"),
+      diagnosticsTriage: await readUtf8("docs/diagnostics-triage-v0.md")
     };
     const inventory = [
       {
@@ -295,6 +296,11 @@ describe("T192 documentation inventory", () => {
         source: "src/agents/compatibility-certification.ts",
         document: documents.agentSession,
         marker: "<!-- kairon:agent-cli-compatibility-certification -->"
+      },
+      {
+        source: "src/diagnostics/triage.ts",
+        document: documents.diagnosticsTriage,
+        marker: "<!-- kairon:diagnostics-triage -->"
       }
     ];
 

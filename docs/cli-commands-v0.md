@@ -2,7 +2,7 @@
 
 ## 目的
 
-この文書はT199時点の`0.3.0` Stable Local Releaseで実装済みの`kairon` CLI command仕様を
+この文書はT203時点の`0.3.0` Stable Local Releaseで実装済みの`kairon` CLI command仕様を
 定義する。歴史的なMVP / RC判断は該当節に残すが、Command Listと各command節は
 現行実装を基準とする。
 
@@ -14,6 +14,7 @@ kairon migrate
 kairon migrate plan
 kairon migrate apply <plan-id> --confirm <plan-id>
 kairon doctor
+kairon diagnostics triage [--format text|json|markdown] [--output <path>]
 kairon projects register <root> [--format text|json]
 kairon projects unregister <project-id> [--format text|json]
 kairon projects list [--format text|json]
@@ -297,6 +298,26 @@ PASS git.repository Git repository
 `warning` は運用前に確認すべき注意、`error` は通常運用前に解消すべき問題を示す。外部設定が不足するcheckはdetailに`status=setup_required`を含み、`next_action`に再実行するCLI commandと関連guide pathを表示する。`--format json`でも同じ`next_action`をsnake_case fieldとして返す。secret値はtext/JSONのどちらにも含めない。
 
 GitHub branch protection診断は、remote repository、default branch、branch protection API、required pull request reviews、required status checksを確認する。API tokenは `GH_TOKEN` を優先し、未設定時に `GITHUB_TOKEN` を参照する。GitHub Freeのprivate repositoryなど、外部プラン制約でbranch protection APIが403になる場合は `api_status=plan_or_permission_error` として扱い、Kairon実装不具合ではなく外部条件としてpublic sandbox repositoryでlive API確認を代替する。
+
+## kairon diagnostics triage
+
+Doctor、Watchdog、Incident、correlation、Stable readiness、update transaction、
+Agent CLI certification、support bundle planをread-onlyで相関し、root cause候補ごとに
+次のoperator actionを提示する。
+
+```text
+kairon diagnostics triage
+kairon diagnostics triage --format json
+kairon diagnostics triage --format markdown
+kairon diagnostics triage --output <path>
+```
+
+correlation ID、transaction ID、release ID、Watchdog fingerprint、root cause categoryの
+順で重複症状をgroup化する。actionは`read_only`、`approval_required`、
+`external_manual`を明示し、triage自身はrestart、restore、update、recoveryを実行しない。
+`--output`は同一base pathのJSONとMarkdownをsecret scan後にatomic writeする。
+raw stack、token、prompt、stdout / stderr、project外absolute pathは出力しない。
+詳細は`docs/diagnostics-triage-v0.md`を参照する。
 
 ## kairon support
 
