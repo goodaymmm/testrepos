@@ -2,6 +2,7 @@ import { access, readFile, readdir } from "node:fs/promises";
 import { constants } from "node:fs";
 import path from "node:path";
 import { defaultAgentAdapters } from "../agents/adapters/index.js";
+import { inspectAgentCertifications } from "../agents/compatibility-certification.js";
 import { agentDisplayName } from "../agents/display.js";
 import { listProviderPolicyHealth } from "../agents/provider-policy.js";
 import {
@@ -254,6 +255,7 @@ export async function runDoctor(options: DoctorOptions): Promise<DoctorResult> {
   checks.push(await checkCapabilityTrustPolicy(options.projectRoot));
   checks.push(await checkProviderPolicyHealth(options.projectRoot));
   checks.push(await checkAgentCliAvailability(options.projectRoot, commandAvailability));
+  checks.push(await checkAgentCompatibilityCertifications(options.projectRoot, new Date(now)));
   checks.push(checkApiKeyContamination(env));
   checks.push(await checkDiscordConfig(options.projectRoot, env, options.secretResolver));
   checks.push(await checkGitPolicy(options.projectRoot));
@@ -815,6 +817,40 @@ async function checkAgentCliAvailability(
   }
 
   return pass("cli.availability", "Official CLI availability", details);
+}
+
+async function checkAgentCompatibilityCertifications(
+  projectRoot: string,
+  now: Date
+): Promise<DoctorCheck> {
+  const inspections = await inspectAgentCertifications(projectRoot, { now });
+  const details = inspections.map((inspection) => {
+    const certification = inspection.certification;
+    return [
+      `${agentDisplayName(inspection.agent)}: status=${inspection.status}`,
+      `reason=${inspection.reason}`,
+      `version=${certification?.version ?? "unknown"}`,
+      `executed_at=${certification?.executed_at ?? "none"}`,
+      `expires_at=${certification?.expires_at ?? "none"}`,
+      `rerun=${inspection.rerun_command}`
+    ].join(", ");
+  });
+  const actionable = inspections.filter(
+    (inspection) => inspection.status !== "current"
+  );
+  if (actionable.length > 0) {
+    return warning(
+      "agent.compatibility",
+      "Agent CLI compatibility certification",
+      details,
+      "Run the listed kairon agent certify command after official CLI installation, login, or version changes."
+    );
+  }
+  return pass(
+    "agent.compatibility",
+    "Agent CLI compatibility certification",
+    details
+  );
 }
 
 function checkApiKeyContamination(env: NodeJS.ProcessEnv): DoctorCheck {

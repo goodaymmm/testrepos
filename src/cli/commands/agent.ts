@@ -2,6 +2,14 @@ import {
   formatAgentSmokeResult,
   runAgentSmoke
 } from "../../agents/smoke-runner.js";
+import {
+  certifyAgentCompatibility,
+  certifyAllAgentCompatibility,
+  formatAgentCertification,
+  formatAgentCertificationInspections,
+  formatAgentCertificationSummary,
+  inspectAgentCertifications
+} from "../../agents/compatibility-certification.js";
 import { agentCliIdHint } from "../../agents/display.js";
 import { createAntigravityPtySessionRunner } from "../../agents/pty-session-runner.js";
 import { isAgentSessionRetryReady } from "../../agents/session-health.js";
@@ -39,6 +47,16 @@ import path from "node:path";
 export type AgentSmokeCommandOptions = {
   agent?: string;
   timeoutMs?: string;
+};
+
+export type AgentCertifyCommandOptions = {
+  agent?: string;
+  all?: boolean;
+  timeoutMs?: string;
+};
+
+export type AgentCertificationShowCommandOptions = {
+  agent?: string;
 };
 
 export type AgentSessionCommandOptions = {
@@ -94,6 +112,44 @@ export async function runAgentSmokeCommand(
         interactiveSessionRunner: createAntigravityPtySessionRunner()
       }
     )
+  );
+}
+
+export async function certifyAgentCommand(
+  projectRoot: string,
+  options: AgentCertifyCommandOptions
+): Promise<string> {
+  if (options.all === true && options.agent !== undefined) {
+    throw new Error("Use either --all or --agent, not both.");
+  }
+  if (options.all !== true && options.agent === undefined) {
+    throw new Error(`Missing --agent or --all. Agent ids: ${agentCliIdHint()}.`);
+  }
+  const timeoutMs =
+    options.timeoutMs === undefined ? undefined : parsePositiveInteger(options.timeoutMs);
+  if (options.all === true) {
+    return formatAgentCertificationSummary(
+      await certifyAllAgentCompatibility(projectRoot, { timeoutMs })
+    );
+  }
+  return formatAgentCertification(
+    await certifyAgentCompatibility(projectRoot, parseAgentId(options.agent!), {
+      timeoutMs
+    })
+  );
+}
+
+export async function showAgentCertificationCommand(
+  projectRoot: string,
+  options: AgentCertificationShowCommandOptions = {}
+): Promise<string> {
+  const inspections = await inspectAgentCertifications(projectRoot);
+  if (options.agent === undefined) {
+    return formatAgentCertificationInspections(inspections);
+  }
+  const agent = parseAgentId(options.agent);
+  return formatAgentCertificationInspections(
+    inspections.filter((inspection) => inspection.agent === agent)
   );
 }
 

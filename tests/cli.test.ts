@@ -114,6 +114,28 @@ describe("createProgram", () => {
     expect(copy?.options.map((option) => option.long)).toContain("--confirm");
   });
 
+  it("registers Agent CLI compatibility certification commands", () => {
+    const agent = createProgram().commands.find(
+      (command) => command.name() === "agent"
+    );
+    const certify = agent?.commands.find(
+      (command) => command.name() === "certify"
+    );
+    const certification = agent?.commands.find(
+      (command) => command.name() === "certification"
+    );
+
+    expect(agent?.commands.map((command) => command.name()).sort()).toContain(
+      "certify"
+    );
+    expect(certify?.options.map((option) => option.long)).toEqual(
+      expect.arrayContaining(["--agent", "--all", "--timeout-ms"])
+    );
+    expect(
+      certification?.commands.map((command) => command.name())
+    ).toEqual(["show"]);
+  });
+
   it("registers multi-project registry commands", () => {
     const projects = createProgram().commands.find(
       (command) => command.name() === "projects"
@@ -604,6 +626,8 @@ describe("createProgram", () => {
     const session = agent?.commands.find((command) => command.name() === "session");
 
     expect(agent?.commands.map((command) => command.name()).sort()).toEqual([
+      "certification",
+      "certify",
       "health",
       "resume",
       "session",
