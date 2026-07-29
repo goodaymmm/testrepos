@@ -23,6 +23,7 @@ describe("createProgram", () => {
       "config",
       "daemon",
       "deploy",
+      "diagnostics",
       "discord",
       "docking",
       "doctor",

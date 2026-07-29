@@ -91,6 +91,9 @@ readiness判定から分離します。version変更時は `package.json`、
 - T189-T190で18 scenarioのStable Acceptanceと16 gateのStable Readinessを追加し、
   判定とGitHub promotionを分離。
 - T191でStable再テスト時のSBOM、security、acceptance、CI blockerを修正。
+- T202でCodex、Claude、AntigravityCLIの公式CLI互換性認証を追加。
+- T203でDoctor、Watchdog、Incident、readiness、update、Agent certification、
+  support bundleをread-onlyで相関するDiagnostics Triageを追加。
 
 ### Migration / Upgrade
 

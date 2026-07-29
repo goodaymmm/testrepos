@@ -71,6 +71,7 @@ import {
   mergeDryRunCommand
 } from "./commands/deploy.js";
 import { runDoctorCommand } from "./commands/doctor.js";
+import { diagnosticsTriageCommand } from "./commands/diagnostics.js";
 import {
   createGitPrCommand,
   listGitPrCandidatesCommand,
@@ -337,6 +338,19 @@ export function createProgram(): Command {
     .option("--format <format>", "Output format: text or json.", "text")
     .action(async (options: { format?: string }) => {
       console.log(await runDoctorCommand(process.cwd(), options));
+    });
+
+  const diagnostics = program
+    .command("diagnostics")
+    .description("Correlate read-only diagnostic evidence and prioritize safe actions.");
+
+  diagnostics
+    .command("triage")
+    .description("Create a read-only root-cause-oriented diagnostics report.")
+    .option("--format <format>", "Output format: text, json, or markdown.", "text")
+    .option("--output <path>", "Atomically write companion JSON and Markdown reports.")
+    .action(async (options: { format?: string; output?: string }) => {
+      console.log(await diagnosticsTriageCommand(process.cwd(), options));
     });
 
   const remote = program
