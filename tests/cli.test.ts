@@ -294,7 +294,11 @@ describe("createProgram", () => {
 
     expect(retention?.description()).toContain("retention");
     expect(plan?.options.map((option) => option.long)).toEqual(
-      expect.arrayContaining(["--dry-run", "--write-proposal"])
+      expect.arrayContaining([
+        "--dry-run",
+        "--write-proposal",
+        "--include-evidence-catalog"
+      ])
     );
     expect(plan?.description()).toContain("without deleting");
   });
@@ -656,6 +660,7 @@ describe("createProgram", () => {
     const summarize = test?.commands.find((command) => command.name() === "summarize");
     const commands = test?.commands.find((command) => command.name() === "commands");
     const docs = test?.commands.find((command) => command.name() === "docs");
+    const evidence = test?.commands.find((command) => command.name() === "evidence");
     const stableCanary = test?.commands.find(
       (command) => command.name() === "stable-canary"
     );
@@ -664,6 +669,7 @@ describe("createProgram", () => {
     expect(test?.commands.map((command) => command.name()).sort()).toEqual([
       "commands",
       "docs",
+      "evidence",
       "stable-canary",
       "summarize"
     ]);
@@ -695,6 +701,43 @@ describe("createProgram", () => {
         "--apply-pass"
       ])
     );
+    expect(evidence?.commands.map((command) => command.name()).sort()).toEqual([
+      "catalog",
+      "list",
+      "verify"
+    ]);
+    expect(
+      evidence?.commands
+        .find((command) => command.name() === "catalog")
+        ?.options.map((option) => option.long)
+    ).toEqual(
+      expect.arrayContaining([
+        "--result-root",
+        "--test-list",
+        "--output",
+        "--freshness-hours",
+        "--format"
+      ])
+    );
+    expect(
+      evidence?.commands
+        .find((command) => command.name() === "list")
+        ?.options.map((option) => option.long)
+    ).toEqual(
+      expect.arrayContaining([
+        "--catalog",
+        "--task",
+        "--test-id",
+        "--status",
+        "--integrity",
+        "--format"
+      ])
+    );
+    expect(
+      evidence?.commands
+        .find((command) => command.name() === "verify")
+        ?.options.map((option) => option.long)
+    ).toEqual(["--format"]);
     expect(stableCanary?.description()).toContain("Windows Sandbox");
     expect(stableCanary?.commands.map((command) => command.name())).toEqual([
       "prepare",

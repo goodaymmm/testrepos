@@ -7,6 +7,14 @@ import {
   writeOperationTestDocs
 } from "../../operation-test/test-doc-generator.js";
 import { summarizeOperationTestResults } from "../../operation-test/result-summary.js";
+import {
+  createOperationEvidenceCatalog,
+  formatOperationEvidenceCatalog,
+  formatOperationEvidenceList,
+  formatOperationEvidenceVerification,
+  listOperationEvidence,
+  verifyOperationEvidenceCatalog
+} from "../../operation-test/evidence-catalog.js";
 import { spawnCommandRunner } from "../../agents/command-runner.js";
 import {
   finalizeStableCanary,
@@ -48,6 +56,28 @@ export type PrepareStableCanaryCommandOptions = {
 
 export type FinalizeStableCanaryCommandOptions = {
   input?: string;
+  format?: string;
+};
+
+export type OperationEvidenceCatalogCommandOptions = {
+  resultRoot?: string[];
+  testList?: string[];
+  output?: string;
+  freshnessHours?: string;
+  format?: string;
+};
+
+export type OperationEvidenceListCommandOptions = {
+  catalog?: string;
+  task?: string;
+  testId?: string;
+  status?: string;
+  integrity?: string;
+  format?: string;
+};
+
+export type OperationEvidenceVerifyCommandOptions = {
+  catalog?: string;
   format?: string;
 };
 
@@ -160,6 +190,56 @@ export async function finalizeStableCanaryCommand(
   return {
     text: formatStableCanaryFinalization(finalization, projectRoot, format),
     ok: finalization.result.status === "PASS"
+  };
+}
+
+export async function createOperationEvidenceCatalogCommand(
+  projectRoot: string,
+  options: OperationEvidenceCatalogCommandOptions
+): Promise<string> {
+  const result = await createOperationEvidenceCatalog(projectRoot, {
+    resultRoots: options.resultRoot ?? [],
+    testLists: options.testList,
+    output: options.output,
+    freshnessHours: parseOptionalInteger(
+      options.freshnessHours,
+      "--freshness-hours"
+    )
+  });
+  return normalizeTextJsonFormat(options.format) === "json"
+    ? JSON.stringify(result, null, 2)
+    : formatOperationEvidenceCatalog(result);
+}
+
+export async function listOperationEvidenceCommand(
+  projectRoot: string,
+  options: OperationEvidenceListCommandOptions = {}
+): Promise<string> {
+  const entries = await listOperationEvidence(
+    projectRoot,
+    options.catalog,
+    options
+  );
+  return normalizeTextJsonFormat(options.format) === "json"
+    ? JSON.stringify(entries, null, 2)
+    : formatOperationEvidenceList(entries);
+}
+
+export async function verifyOperationEvidenceCatalogCommand(
+  projectRoot: string,
+  catalogPath: string,
+  options: OperationEvidenceVerifyCommandOptions = {}
+): Promise<{ text: string; ok: boolean }> {
+  const verification = await verifyOperationEvidenceCatalog(
+    projectRoot,
+    catalogPath
+  );
+  return {
+    text:
+      normalizeTextJsonFormat(options.format) === "json"
+        ? JSON.stringify(verification, null, 2)
+        : formatOperationEvidenceVerification(verification),
+    ok: verification.status === "PASS"
   };
 }
 

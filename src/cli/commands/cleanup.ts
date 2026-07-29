@@ -18,6 +18,7 @@ export type CleanupApplyCommandOptions = {
 export type CleanupRetentionPlanCommandOptions = {
   dryRun?: boolean;
   writeProposal?: boolean;
+  includeEvidenceCatalog?: boolean;
 };
 
 export async function listCleanupCommand(projectRoot: string): Promise<string> {
@@ -66,7 +67,8 @@ export async function planCleanupRetentionCommand(
   }
   return formatCleanupRetentionPlan(
     await planCleanupRetention(projectRoot, {
-      writeProposal: options.writeProposal === true
+      writeProposal: options.writeProposal === true,
+      includeEvidenceCatalog: options.includeEvidenceCatalog === true
     })
   );
 }
@@ -131,6 +133,15 @@ export function formatCleanupRetentionPlan(
     `retention.candidates=${summary?.candidates ?? 0}`,
     `retention.candidate_bytes=${summary?.candidate_bytes ?? 0}`,
     `retention.skipped_symbolic_links=${summary?.skipped_symbolic_links ?? 0}`,
+    ...(summary?.evidence_catalog === undefined
+      ? []
+      : [
+          `evidence_catalog.status=${summary.evidence_catalog.status}`,
+          `evidence_catalog.path=${summary.evidence_catalog.path}`,
+          `evidence_catalog.protected=${summary.evidence_catalog.protected_paths.length}`,
+          `evidence_catalog.candidates=${summary.evidence_catalog.candidate_paths.length}`,
+          `evidence_catalog.reasons=${summary.evidence_catalog.reasons.join(",") || "none"}`
+        ]),
     ...proposal.candidates.map(
       (candidate) =>
         `- ${candidate.id} category=${candidate.category} path=${candidate.path} age_days=${candidate.age_days} size_bytes=${candidate.size_bytes} reason=${candidate.reason}`

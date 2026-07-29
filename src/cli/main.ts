@@ -223,10 +223,13 @@ import {
   updateScheduleUninstallCommand
 } from "./commands/update.js";
 import {
+  createOperationEvidenceCatalogCommand,
   finalizeStableCanaryCommand,
   generateOperationTestCommandsCommand,
   generateOperationTestDocsCommand,
-  prepareStableCanaryCommand
+  listOperationEvidenceCommand,
+  prepareStableCanaryCommand,
+  verifyOperationEvidenceCatalogCommand
 } from "./commands/test-commands.js";
 import { summarizeOperationTestsCommand } from "./commands/test-summary.js";
 import {
@@ -1008,7 +1011,15 @@ export function createProgram(): Command {
     .description("Inspect retention limits without deleting artifacts.")
     .option("--dry-run", "Show candidates without writing a proposal. This is the default.")
     .option("--write-proposal", "Write the retention proposal for operator review.")
-    .action(async (options: { dryRun?: boolean; writeProposal?: boolean }) => {
+    .option(
+      "--include-evidence-catalog",
+      "Use the verified operation evidence catalog for protected and candidate result roots."
+    )
+    .action(async (options: {
+      dryRun?: boolean;
+      writeProposal?: boolean;
+      includeEvidenceCatalog?: boolean;
+    }) => {
       console.log(await planCleanupRetentionCommand(process.cwd(), options));
     });
 
@@ -2119,6 +2130,89 @@ export function createProgram(): Command {
       console.log(
         await summarizeOperationTestsCommand(process.cwd(), logFile, options)
       );
+    });
+
+  const operationEvidence = operationTest
+    .command("evidence")
+    .description("Create, inspect, and verify derived operation evidence catalogs.");
+
+  operationEvidence
+    .command("catalog")
+    .description("Create a metadata-only catalog from one or more operation result roots.")
+    .requiredOption(
+      "--result-root <path>",
+      "Operation result root. Repeatable.",
+      collectOption,
+      []
+    )
+    .option(
+      "--test-list <path>",
+      "Operation test list containing alias declarations. Repeatable.",
+      collectOption,
+      []
+    )
+    .option(
+      "--output <path>",
+      "Catalog output path. Defaults to .kairon/runtime/operation-test/evidence-catalog.json."
+    )
+    .option(
+      "--freshness-hours <hours>",
+      "Default evidence freshness in hours. Defaults to 168."
+    )
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: {
+      resultRoot?: string[];
+      testList?: string[];
+      output?: string;
+      freshnessHours?: string;
+      format?: string;
+    }) => {
+      console.log(
+        await createOperationEvidenceCatalogCommand(process.cwd(), options)
+      );
+    });
+
+  operationEvidence
+    .command("list")
+    .description("List catalog entries by Task, test ID, status, or integrity.")
+    .option(
+      "--catalog <path>",
+      "Catalog path. Defaults to the latest local operation evidence catalog."
+    )
+    .option("--task <task-id>", "Filter by Task ID, for example T199.")
+    .option("--test-id <test-id>", "Filter by canonical operation test ID.")
+    .option("--status <status>", "Filter by PASS, FAIL, SETUP_REQUIRED, OPTIONAL, or UNKNOWN.")
+    .option(
+      "--integrity <integrity>",
+      "Filter by verified, stale, tampered, missing, or wrong_commit."
+    )
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (options: {
+      catalog?: string;
+      task?: string;
+      testId?: string;
+      status?: string;
+      integrity?: string;
+      format?: string;
+    }) => {
+      console.log(await listOperationEvidenceCommand(process.cwd(), options));
+    });
+
+  operationEvidence
+    .command("verify")
+    .description("Recompute catalog and evidence digests without modifying evidence.")
+    .argument("<catalog-path>", "Operation evidence catalog path.")
+    .option("--format <format>", "Output format: text or json.", "text")
+    .action(async (catalogPath: string, options: { format?: string }) => {
+      const result = await verifyOperationEvidenceCatalogCommand(
+        process.cwd(),
+        catalogPath,
+        options
+      );
+      console.log(result.text);
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
     });
 
   const stableCanary = operationTest

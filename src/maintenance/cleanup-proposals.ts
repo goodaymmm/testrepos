@@ -21,7 +21,7 @@ export type CleanupCandidate = {
   proposed_action: "move_to_kairon_tmp";
   destination: string;
   size_bytes: number;
-  category?: CleanupRetentionCategory;
+  category?: CleanupRetentionCategory | "operation_evidence";
   modified_at?: string;
   age_days?: number;
   retention_rule?: CleanupRetentionRule;
@@ -82,7 +82,8 @@ export type CleanupCandidateApplyResult = {
     | "blocked_invalid_action"
     | "blocked_invalid_destination"
     | "blocked_symbolic_link"
-    | "blocked_retention_changed";
+    | "blocked_retention_changed"
+    | "blocked_evidence_catalog";
   reason?: string;
 };
 
@@ -114,6 +115,7 @@ export type CreateCleanupProposalsRequest = {
 export type CleanupRetentionPlanOptions = {
   now?: Date;
   writeProposal?: boolean;
+  includeEvidenceCatalog?: boolean;
 };
 
 export type CleanupRetentionPlanResult = {
@@ -153,7 +155,10 @@ export async function createCleanupProposals(
     "proposals",
     `${proposalId}.json`
   );
-  const retention = await scanCleanupRetention(projectRoot, { now });
+  const retention = await scanCleanupRetention(projectRoot, {
+    now,
+    includeEvidenceCatalog: true
+  });
   const candidateRoots = await resolveCandidateRoots(projectRoot, request, retention);
   const proposal = await buildCleanupProposal({
     projectRoot,
@@ -182,7 +187,10 @@ export async function planCleanupRetention(
     "proposals",
     `${proposalId}.json`
   );
-  const retention = await scanCleanupRetention(projectRoot, { now });
+  const retention = await scanCleanupRetention(projectRoot, {
+    now,
+    includeEvidenceCatalog: options.includeEvidenceCatalog === true
+  });
   const candidateRoots = retention.candidates.map((candidate) => ({
     absolutePath: candidate.absolutePath,
     reason: candidate.reason,
@@ -266,7 +274,10 @@ export async function applyCleanupProposal(
 
   const paths = getKaironPaths(projectRoot);
   const protectedPatterns = await loadProtectedPatterns(projectRoot);
-  const currentRetention = await scanCleanupRetention(projectRoot, { now });
+  const currentRetention = await scanCleanupRetention(projectRoot, {
+    now,
+    includeEvidenceCatalog: true
+  });
   const currentRetentionPaths = new Set(
     currentRetention.candidates.map((candidate) => candidate.path)
   );
@@ -278,7 +289,10 @@ export async function applyCleanupProposal(
         candidate,
         dryRun,
         protectedPatterns,
-        currentRetentionPaths
+        currentRetentionPaths,
+        evidenceProtectedPaths: new Set(
+          currentRetention.evidence_catalog?.protected_paths ?? []
+        )
       })
     )
   );
@@ -425,7 +439,10 @@ async function resolveCandidateRoots(
       absolutePath,
       reason: "configured generated path exists after the work day"
     }));
-  const internalCandidates = await resolveOperationalArtifactCandidates(paths);
+  const internalCandidates = await resolveOperationalArtifactCandidates(
+    paths,
+    retention
+  );
   const retentionCandidates = retention.candidates.map((candidate) => ({
     absolutePath: candidate.absolutePath,
     reason: candidate.reason,
@@ -457,16 +474,20 @@ async function resolveCandidateRoots(
 }
 
 async function resolveOperationalArtifactCandidates(
-  paths: ReturnType<typeof getKaironPaths>
+  paths: ReturnType<typeof getKaironPaths>,
+  retention: CleanupRetentionScanResult
 ): Promise<CandidateRoot[]> {
   return [
     ...(await resolveConfigBackupCandidates(paths.configDir)),
-    ...(await resolveExistingCandidate(
-      paths.root,
-      "operation-test-results",
-      "operation test result directory is local-only evidence",
-      true
-    )),
+    ...(retention.evidence_catalog === undefined ||
+    retention.evidence_catalog.status === "missing"
+      ? await resolveExistingCandidate(
+          paths.root,
+          "operation-test-results",
+          "operation test result directory is local-only evidence",
+          true
+        )
+      : []),
     ...(await resolveExistingCandidate(
       paths.kaironDir,
       "worktrees",
@@ -663,6 +684,7 @@ async function evaluateCleanupCandidate(options: {
   dryRun: boolean;
   protectedPatterns: string[];
   currentRetentionPaths: Set<string>;
+  evidenceProtectedPaths: Set<string>;
 }): Promise<CleanupCandidateApplyResult> {
   const candidate = options.candidate;
   const baseResult = {
@@ -684,6 +706,18 @@ async function evaluateCleanupCandidate(options: {
       ...baseResult,
       status: "blocked_protected_path",
       reason: "candidate path matches protected path policy"
+    };
+  }
+
+  if (
+    [...options.evidenceProtectedPaths].some((protectedPath) =>
+      pathsOverlap(candidate.path, protectedPath)
+    )
+  ) {
+    return {
+      ...baseResult,
+      status: "blocked_evidence_catalog",
+      reason: "candidate contains evidence protected by the verified catalog"
     };
   }
 
@@ -777,6 +811,16 @@ function matchesProtectedPath(projectPath: string, patterns: string[]): boolean 
 
 function normalizeProjectPath(value: string): string {
   return toPosixPath(value).replace(/^\/+/, "");
+}
+
+function pathsOverlap(left: string, right: string): boolean {
+  const normalizedLeft = normalizeProjectPath(left);
+  const normalizedRight = normalizeProjectPath(right);
+  return (
+    normalizedLeft === normalizedRight ||
+    normalizedLeft.startsWith(`${normalizedRight}/`) ||
+    normalizedRight.startsWith(`${normalizedLeft}/`)
+  );
 }
 
 function globToRegExp(pattern: string): RegExp {
