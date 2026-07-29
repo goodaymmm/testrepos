@@ -39,11 +39,17 @@ describe("runDoctor", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(result.summary).toMatchObject({ error: 0, warning: 3 });
+    expect(result.summary).toMatchObject({ error: 0, warning: 4 });
     expect(statusById(result, "git.repository")).toBe("pass");
     expect(statusById(result, "git.gitignore")).toBe("pass");
     expect(statusById(result, "cli.availability")).toBe("pass");
     expect(statusById(result, "agent.provider_policy")).toBe("pass");
+    expect(statusById(result, "agent.compatibility")).toBe("warning");
+    expect(
+      checkById(result, "agent.compatibility")?.details.some((detail) =>
+        detail.includes("reason=certification_missing")
+      )
+    ).toBe(true);
     expect(statusById(result, "policy.capabilities")).toBe("pass");
     expect(statusById(result, "env.api_keys")).toBe("pass");
     expect(statusById(result, "discord.config")).toBe("pass");

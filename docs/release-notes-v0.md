@@ -24,6 +24,10 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
   最新verified世代をverifyし、期限到来時だけ隔離rehearsalする。保存先未接続と
   backup破損を区別し、失敗・期限超過をWatchdog / Incidentへ同期する。自動restoreと
   retention cleanupは行わない。
+- T202: Codex、Claude、Antigravityの公式CLI version、login readiness、最小prompt、
+  outbox、same-day session、PTY、分類契約を認証するAgent compatibility certificationを
+  追加。version変更はtargeted smoke成功時に即unsupportedとせずDoctor warningとし、
+  certification artifactへprompt本文、stdout / stderr本文、credentialを保存しない。
 
 各PR本文とmerge履歴を一次記録とし、local operation resultやgenerated evidenceはrelease
 notesへ埋め込まず、再実行方法と判定結果だけを記録します。

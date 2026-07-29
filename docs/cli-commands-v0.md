@@ -25,6 +25,9 @@ kairon projects rollout show <plan-id> [--format text|json]
 kairon support bundle [--dry-run] [--output <directory>]
 kairon support verify <bundle.zip>
 kairon agent smoke --agent codex|claude|gemini
+kairon agent certify --agent codex|claude|gemini [--timeout-ms <ms>]
+kairon agent certify --all [--timeout-ms <ms>]
+kairon agent certification show [--agent codex|claude|gemini]
 kairon agent health [--agent codex|claude|gemini]
 kairon agent suspend --agent codex|claude|gemini --reason <text>
 kairon agent resume --agent codex|claude|gemini --reason <text>
@@ -356,6 +359,32 @@ health=.kairon/sessions/2026-05-26/codex/health.json
 ```
 
 実CLIを起動するため、unit testではcommand runner mockで検証し、実Agent smokeは手動運用テストとして扱う。
+
+## kairon agent certify / certification show
+
+Codex、Claude、Antigravityの公式CLIについて、command availability、正規化version、
+login / setup readiness、最小prompt、stdout / stderr artifact、outbox contract、
+same-day session、PTY round-tripをまとめて認証する。
+
+```text
+kairon agent certify --agent codex
+kairon agent certify --agent claude --timeout-ms 120000
+kairon agent certify --agent gemini --timeout-ms 120000
+kairon agent certify --all
+kairon agent certification show
+kairon agent certification show --agent gemini
+```
+
+認証結果は`.kairon/state/agent-certifications/{agent}/`へ保存する。historyとlatestは
+source commit、実行時刻、有効期限、正規化version、check結果、SHA-256でbindされる。
+prompt本文、stdout / stderr本文、credential、cookie、token、内部API endpointは
+certification artifactへ保存しない。実runの詳細は既存のsmoke artifactを参照する。
+
+CLIがない、または公式login / permission / quota対応が必要な場合は
+`SETUP_REQUIRED`、version parse、prompt、outbox、session、PTY契約の回帰は`FAIL`となる。
+前回成功時とversionが変わっても、targeted smokeが成功した場合は直ちにunsupportedとせず
+`PASS`を維持し、`version_change=WARNING`としてDoctorへ再確認入口を表示する。
+Agent ID `gemini`は互換名であり、実commandは引き続き`agy`である。
 
 ## kairon agent session
 

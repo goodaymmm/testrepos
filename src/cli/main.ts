@@ -7,11 +7,13 @@ import { agentCliIdHint } from "../agents/display.js";
 import { KAIRON_VERSION } from "../index.js";
 import {
   compactAgentSessionCommand,
+  certifyAgentCommand,
   listAgentSessionsCommand,
   resumeAgentCommand,
   resetAgentSessionCommand,
   rotateAgentSessionCommand,
   runAgentSmokeCommand,
+  showAgentCertificationCommand,
   showAgentHealthCommand,
   showAgentSessionBudgetCommand,
   suspendAgentCommand,
@@ -605,6 +607,34 @@ export function createProgram(): Command {
     .option("--timeout-ms <ms>", "CLI execution timeout in milliseconds.")
     .action(async (options: { agent?: string; timeoutMs?: string }) => {
       console.log(await runAgentSmokeCommand(process.cwd(), options));
+    });
+
+  agent
+    .command("certify")
+    .description("Certify official Agent CLI version and smoke compatibility.")
+    .option("--agent <agent>", `Agent id: ${agentCliIdHint()}.`)
+    .option("--all", "Certify all configured official Agent CLIs.")
+    .option("--timeout-ms <ms>", "Smoke execution timeout in milliseconds.")
+    .action(
+      async (options: {
+        agent?: string;
+        all?: boolean;
+        timeoutMs?: string;
+      }) => {
+        console.log(await certifyAgentCommand(process.cwd(), options));
+      }
+    );
+
+  const agentCertification = agent
+    .command("certification")
+    .description("Inspect latest Agent CLI compatibility certifications.");
+
+  agentCertification
+    .command("show")
+    .description("Show latest compatibility certification status.")
+    .option("--agent <agent>", `Agent id: ${agentCliIdHint()}.`)
+    .action(async (options: { agent?: string }) => {
+      console.log(await showAgentCertificationCommand(process.cwd(), options));
     });
 
   agent
