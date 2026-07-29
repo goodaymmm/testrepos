@@ -663,6 +663,8 @@ kairon cleanup show 2026-06-01
 kairon cleanup apply 2026-06-01 --dry-run
 kairon cleanup apply 2026-06-01
 kairon cleanup archive 2026-06-01
+kairon cleanup retention plan --include-evidence-catalog --dry-run
+kairon cleanup retention plan --include-evidence-catalog --write-proposal
 ```
 
 処理。
@@ -678,6 +680,9 @@ block protected paths
 ```
 
 直接削除は行わない。apply対象はreview済み候補とし、protected pathは常に拒否する。
+`--include-evidence-catalog`はT200 Operation evidence catalogを検証し、最新verified PASS、
+唯一のPASS世代、readiness参照証跡を候補から除外する。catalogが破損している場合は
+`operation-test-results`をfail-closedで保護し、apply時にもcatalogを再検証する。
 
 ## kairon discord http
 
@@ -1153,11 +1158,19 @@ kairon test docs --range T176-T189 --template stable-acceptance --result-root op
 kairon test docs --range T176-T189 --template stable-acceptance --result-root <new-root> --previous-result-root <previous-root>
 kairon test summarize <log-file>
 kairon test summarize --result-root <directory> --test-list <test-list.md> --suggest --patch-preview
+kairon test evidence catalog --result-root <directory> [--result-root <directory>] [--test-list <test-list.md>]
+kairon test evidence list [--task T199] [--test-id OT-T199-01-01] [--status PASS]
+kairon test evidence verify .kairon/runtime/operation-test/evidence-catalog.json
 kairon test stable-canary prepare --node-runtime-root <dir> --git-runtime-root <dir>
 kairon test stable-canary finalize --input <stable-canary-input.json>
 ```
 
 `commands`と`docs`はcredential値を埋め込まず、必要なenvironment variable名とsetup条件だけを出力する。`stable-acceptance` templateはtest list、PowerShell command group、source commitへbindしたevidence manifest、exact-ID cleanup planを同時生成する。`--previous-result-root`指定時は既存PASSを変更せず、新しいresult rootの再実行対象から除外する。`summarize`は既定でMarkdownを変更せず候補を表示し、`--apply-pass`を明示した場合もPASS候補だけをbackup付きで反映する。`FAIL`、`SETUP_REQUIRED`、`OPTIONAL`を自動的にPASSへ変更しない。
+
+`test evidence catalog`はresult rootを変更せず、検索・integrity・retention用のderived metadataを
+atomic保存する。`list`はTask、canonical test ID、status、integrityで絞り込み、
+`verify`はcatalogと各証跡のsize / SHA-256、source commit、freshnessをread-onlyで再計算する。
+絶対pathやsecret値はcatalogへ保存しない。
 
 `stable-canary prepare`は、最新または`--verification`で指定したT194 Stable verificationが
 freshな`PASS`であることを検証し、Windows Sandbox用のinput manifest、bootstrap、

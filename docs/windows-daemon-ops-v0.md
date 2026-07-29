@@ -317,6 +317,21 @@ kairon cleanup apply <retention-proposal-id> --dry-run
 
 各categoryは`max_age_days`、`max_files`、`max_bytes`、`min_keep`で制御します。最新の成功run、open approvalや未解決recovery targetから参照されるartifact、各categoryの最新`min_keep`件は候補から除外されます。JSONLはfile単位で扱い、途中の行だけを切り出しません。symbolic linkを含むartifact rootは候補化しません。
 
+operation test証跡を整理する場合は、先にcatalogを生成してから明示的にretentionへ含めます。
+
+```powershell
+kairon test evidence catalog `
+  --result-root operation-test-results\current `
+  --result-root operation-test-results\previous
+kairon test evidence verify .kairon\runtime\operation-test\evidence-catalog.json
+kairon cleanup retention plan --include-evidence-catalog --dry-run
+```
+
+最新のverified PASS、唯一のPASS世代、readiness manifest参照証跡は保護されます。catalog生成は
+削除・移動を行いません。proposal apply時にもcatalogを再検証し、生成後に保護状態が変わった
+pathは移動しません。catalogが欠損している場合は従来のretentionだけを使用し、catalogが
+存在するものの破損・改ざんされている場合は`operation-test-results`をfail-closedで保護します。
+
 `kairon maintenance run`も同じretention scannerを使用します。結果の`cleanup_retention_candidates`と`cleanup_retention_candidate_bytes`を確認し、`kairon cleanup apply`の前に必ずdry-runしてください。
 
 ## State backup / restore drill

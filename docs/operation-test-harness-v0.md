@@ -174,6 +174,30 @@ High・Critical incident 0件、SLO PASS/WARNINGを確認します。
 unit testのclock injectionや短縮fixtureは実時間operation testを代替しません。
 `evidence_mode=simulated`は常に`SETUP_REQUIRED`で、PASSへ更新しないでください。
 
+## T200 Operation evidence catalog
+
+複数世代のoperation resultを検索し、cleanupから必要なPASS証跡を保護するため、metadata-only
+catalogを生成できます。catalogはcanonical evidenceを置き換えず、Task、test ID、status、
+source commit、freshness、size、SHA-256、integrity、supersession、retention判定だけを保持します。
+
+```powershell
+kairon test evidence catalog `
+  --result-root operation-test-results\manual-t192-t205-current `
+  --result-root operation-test-results\manual-t192-t205-previous `
+  --test-list docs\t192-t205-operation-test-list-v0.md
+
+kairon test evidence list --task T199 --status PASS
+kairon test evidence verify .kairon\runtime\operation-test\evidence-catalog.json
+kairon cleanup retention plan --include-evidence-catalog --dry-run
+```
+
+`--test-list`のaliasはcanonical test IDへ正規化されます。最新のverified PASS、同一test IDで
+唯一のPASS世代、readiness manifestから参照される証跡はretention保護対象です。古い
+superseded、stale、tampered、missing証跡は候補になりますが、catalog生成だけでは移動も
+削除も行いません。catalogが破損・改ざんされている場合、cleanupは
+`operation-test-results`をfail-closedで保護します。catalogを削除しても、同じresult rootから
+再生成できます。
+
 ## 実行対象
 
 デフォルトでは次をすべて実行します。

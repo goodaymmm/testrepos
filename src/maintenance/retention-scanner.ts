@@ -11,6 +11,7 @@ import {
 import { loadConfigFile } from "../core/config/load-config.js";
 import { readJsonFile } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
+import { inspectOperationEvidenceRetention } from "../operation-test/evidence-catalog.js";
 import { listRuntimeRecoveryTargets } from "../recovery/runtime-recovery.js";
 
 const millisecondsPerDay = 24 * 60 * 60 * 1000;
@@ -35,14 +36,14 @@ type RetentionItem = {
 };
 
 export type CleanupRetentionCandidate = {
-  category: CleanupRetentionCategory;
+  category: CleanupRetentionCategory | "operation_evidence";
   absolutePath: string;
   path: string;
   size_bytes: number;
   modified_at: string;
   age_days: number;
   reason: string;
-  retention_rule: CleanupRetentionRule;
+  retention_rule?: CleanupRetentionRule;
 };
 
 export type CleanupRetentionScanResult = {
@@ -52,11 +53,18 @@ export type CleanupRetentionScanResult = {
   skipped_symbolic_links: number;
   candidate_bytes: number;
   candidates: CleanupRetentionCandidate[];
+  evidence_catalog?: {
+    status: "missing" | "verified" | "invalid";
+    path: string;
+    protected_paths: string[];
+    candidate_paths: string[];
+    reasons: string[];
+  };
 };
 
 export async function scanCleanupRetention(
   projectRoot: string,
-  options: { now?: Date } = {}
+  options: { now?: Date; includeEvidenceCatalog?: boolean } = {}
 ): Promise<CleanupRetentionScanResult> {
   const now = options.now ?? new Date();
   const policy = await loadRetentionPolicy(projectRoot);
@@ -99,6 +107,35 @@ export async function scanCleanupRetention(
     );
   }
 
+  const evidenceCatalog =
+    options.includeEvidenceCatalog === true
+      ? await inspectOperationEvidenceRetention(projectRoot, { now })
+      : undefined;
+  if (evidenceCatalog !== undefined) {
+    protectedItems += evidenceCatalog.protected_paths.length;
+    for (const candidatePath of evidenceCatalog.candidate_paths) {
+      const absolutePath = resolveInside(projectRoot, candidatePath);
+      const inspected = await inspectPath(absolutePath);
+      if (inspected === null) {
+        continue;
+      }
+      candidates.push({
+        category: "operation_evidence",
+        absolutePath,
+        path: candidatePath,
+        size_bytes: inspected.sizeBytes,
+        modified_at: inspected.modifiedAt.toISOString(),
+        age_days: Math.max(
+          0,
+          Math.floor(
+            (now.getTime() - inspected.modifiedAt.getTime()) / millisecondsPerDay
+          )
+        ),
+        reason: "evidence catalog classifies this result root as retention candidate"
+      });
+    }
+  }
+
   candidates.sort((left, right) =>
     left.category.localeCompare(right.category) || left.path.localeCompare(right.path)
   );
@@ -112,7 +149,17 @@ export async function scanCleanupRetention(
       (total, candidate) => total + candidate.size_bytes,
       0
     ),
-    candidates
+    candidates,
+    evidence_catalog:
+      evidenceCatalog === undefined
+        ? undefined
+        : {
+            status: evidenceCatalog.catalog_status,
+            path: evidenceCatalog.catalog_path,
+            protected_paths: evidenceCatalog.protected_paths,
+            candidate_paths: evidenceCatalog.candidate_paths,
+            reasons: evidenceCatalog.reasons
+          }
   };
 }
 
