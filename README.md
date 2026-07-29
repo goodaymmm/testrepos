@@ -55,6 +55,7 @@ Kaironは対象projectの`.kairon/`をcanonical stateとして使い、公式Age
 - off-device DR、Stable security baseline、Stable Acceptance / Readiness
 - allowlist収集、secret scan、hash manifest付きのsanitized support bundle
 - evidence manifest、Beta / Release Candidate互換gate、Stable Readiness 16 gate
+- T192-T204の配布後運用証跡を集約するOperational Stable Readiness 15 gate
 
 `0.3.0` Stable baseline後のrelease / maintenance作業:
 
@@ -660,6 +661,15 @@ README更新が必要な代表条件:
 
 release判断では [docs/release-checklist-v0.md](docs/release-checklist-v0.md) を使い、`npm run build`、`npm test`、対象operation test、secret / generated artifact確認、README更新要否、version同期を確認します。
 `kairon readiness manifest`でBeta互換証跡を、`kairon readiness rc manifest`でRC証跡を、`kairon readiness stable manifest`でStable証跡のSHA-256・source commit・有効期限を固定します。Stableは`kairon readiness stable check`で16 gateとglobal blockerを判定し、全gateが`PASS`かつblocker 0件の場合だけ`stable_ready=true`となります。外部未設定は`SETUP_REQUIRED`、期限切れ・別commit・改変済み証跡は`UNKNOWN`として扱います。
+
+<!-- kairon:t205-operational-stable-readiness -->
+`kairon readiness operational manifest`はT192-T204とcurrent build / security /
+cleanup証跡を15 gateへ集約します。全gateがfreshな`PASS`で、release identity drift、
+未解決incident、security / secret、rollback / cleanup blockerが0件の場合だけ
+`operational_stable_ready=true`となります。判定はGitHub release、update、restoreを
+実行しません。詳細は
+[docs/operational-stable-readiness-v0.md](docs/operational-stable-readiness-v0.md)
+を参照してください。
 release notesは [docs/release-notes-v0.md](docs/release-notes-v0.md) に手動で記録します。現在のStable Local Release versionは `0.3.0`で、T160-T191をcurrent source commitへ固定します。versionを変更する場合は `package.json`、`package-lock.json`、`src/index.ts` の `KAIRON_VERSION` を同時に更新します。`kairon release validate` でversion形式・同期、release checklist marker、`Unreleased` marker、現在version entryを一括確認できます。
 
 local packageはpublic npm registryへpublishせず、`npm run release:pack`でchecksummed tarballを生成します。Windowsでのinstall、update/rollback、uninstall手順は [docs/installation.md](docs/installation.md) を参照してください。uninstallはprojectの`.kairon/`を削除しません。

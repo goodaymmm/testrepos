@@ -141,6 +141,48 @@ Stable Readiness 16 / 16 gate、global blocker 0件、`stable_ready=true`を確�
 publish / Stable昇格では、release commitからartifactとexternal evidenceを再生成し、
 既存のapproval-bound commandを明示実行する。
 
+## Operational Stable Readiness
+
+<!-- kairon:t205-operational-stable-readiness -->
+
+Stable配布後の運用継続判断はT190のStable readinessとは分離し、
+T192-T204の証跡を`readiness operational`で集約する。
+
+```powershell
+kairon readiness operational manifest `
+  --evidence STABLE_BASELINE_CURRENT=.\evidence\t192.json `
+  --evidence CONSUMER_MANIFEST_VERIFY=.\evidence\t194.json `
+  --evidence PUBLISHED_STABLE_VERIFY=.\evidence\t194.json `
+  --evidence CLEAN_WINDOWS_CANARY=.\evidence\t195.json `
+  --evidence POST_RELEASE_HEALTH=.\evidence\t196.json `
+  --evidence UPDATE_CHECK_SCHEDULE=.\evidence\t197.json `
+  --evidence MULTI_PROJECT_ROLLOUT=.\evidence\t198.json `
+  --evidence STABLE_SOAK=.\evidence\t199.json `
+  --evidence EVIDENCE_CATALOG=.\evidence\t200.json `
+  --evidence SCHEDULED_DR_VERIFY=.\evidence\t201.json `
+  --evidence AGENT_COMPATIBILITY=.\evidence\t202.json `
+  --evidence DIAGNOSTICS_TRIAGE=.\evidence\t203.json `
+  --evidence PATCH_RELEASE_REHEARSAL=.\evidence\t204.json `
+  --evidence BUILD_UNIT_SECURITY=.\evidence\full-test.json `
+  --evidence BUILD_UNIT_SECURITY=.\evidence\security-baseline.json `
+  --evidence STATE_SECRET_CLEANUP=.\evidence\security-baseline.json `
+  --evidence STATE_SECRET_CLEANUP=.\evidence\patch-cleanup.json
+
+kairon readiness operational check
+kairon readiness operational report --format markdown
+```
+
+- 15 gateすべてがcurrent commitへbindされたfreshな`PASS`である。
+- Published Stableとconsumer/canary/health/rollout/soakのversion、release ID、
+  source commitにdriftがない。
+- unresolved high / critical incident、security high / critical、secret exposure、
+  rollback failure、cleanup failureが0件である。
+- external環境未準備をmanual overrideせず`SETUP_REQUIRED`として残す。
+- resultの`external_write_performed=false`を確認する。
+- release / update / restore commandはreferenceだけであり、この判定から実行しない。
+- `.kairon/readiness/operational-stable-result.json`と
+  `.kairon/readiness/operational-stable-report.md`へsecret値がない。
+
 ## Secret / Generated Artifact確認
 
 <!-- kairon:release-evidence -->

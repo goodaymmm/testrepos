@@ -121,6 +121,9 @@ import {
   verifyRagIndexCommand
 } from "./commands/rag.js";
 import {
+  operationalStableCheckCommand,
+  operationalStableManifestCommand,
+  operationalStableReportCommand,
   rcReadinessCheckCommand,
   rcReadinessManifestCommand,
   rcReadinessReportCommand,
@@ -3341,6 +3344,80 @@ export function createProgram(): Command {
       output?: string;
     }) => {
       const result = await stableReadinessReportCommand(
+        process.cwd(),
+        options
+      );
+      console.log(result.text);
+      if (!result.ready) {
+        process.exitCode = 1;
+      }
+    });
+
+  const operationalReadiness = readiness
+    .command("operational")
+    .description(
+      "Aggregate 15 current, external, security, recovery, and maintenance gates for Operational Stable readiness."
+    );
+
+  operationalReadiness
+    .command("manifest")
+    .description(
+      "Create a checksummed Operational Stable evidence manifest."
+    )
+    .requiredOption(
+      "--evidence <gate=path>",
+      "Evidence mapping in OPERATIONAL_GATE_ID=path form. Repeatable.",
+      collectOption,
+      []
+    )
+    .option("--output <path>", "Operational Stable manifest output path.")
+    .action(async (options: { evidence?: string[]; output?: string }) => {
+      console.log(
+        await operationalStableManifestCommand(process.cwd(), options)
+      );
+    });
+
+  operationalReadiness
+    .command("check")
+    .description(
+      "Evaluate all Operational Stable gates and write a read-only JSON result."
+    )
+    .option(
+      "--manifest <path>",
+      "Operational Stable evidence manifest path."
+    )
+    .action(async (options: { manifest?: string }) => {
+      const result = await operationalStableCheckCommand(
+        process.cwd(),
+        options
+      );
+      console.log(result.text);
+      if (!result.ready) {
+        process.exitCode = 1;
+      }
+    });
+
+  operationalReadiness
+    .command("report")
+    .description(
+      "Evaluate Operational Stable gates and write a JSON or Markdown operator report."
+    )
+    .option(
+      "--manifest <path>",
+      "Operational Stable evidence manifest path."
+    )
+    .option(
+      "--format <format>",
+      "Output format: json or markdown.",
+      "markdown"
+    )
+    .option("--output <path>", "Operational Stable report output path.")
+    .action(async (options: {
+      manifest?: string;
+      format?: string;
+      output?: string;
+    }) => {
+      const result = await operationalStableReportCommand(
         process.cwd(),
         options
       );

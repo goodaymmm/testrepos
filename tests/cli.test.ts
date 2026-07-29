@@ -1154,7 +1154,7 @@ describe("createProgram", () => {
     ]));
   });
 
-  it("registers Beta, Release Candidate, and Stable readiness commands", () => {
+  it("registers Beta, RC, Stable, and Operational Stable readiness commands", () => {
     const readiness = createProgram().commands.find(
       (command) => command.name() === "readiness"
     );
@@ -1165,10 +1165,14 @@ describe("createProgram", () => {
     const stable = readiness?.commands.find(
       (command) => command.name() === "stable"
     );
+    const operational = readiness?.commands.find(
+      (command) => command.name() === "operational"
+    );
 
     expect(readiness?.commands.map((command) => command.name()).sort()).toEqual([
       "check",
       "manifest",
+      "operational",
       "rc",
       "report",
       "stable"
@@ -1202,6 +1206,28 @@ describe("createProgram", () => {
     ).toEqual(expect.arrayContaining(["--evidence", "--output"]));
     expect(
       stable?.commands
+        .find((command) => command.name() === "report")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining([
+      "--manifest",
+      "--format",
+      "--output"
+    ]));
+    expect(
+      operational?.commands.map((command) => command.name()).sort()
+    ).toEqual(["check", "manifest", "report"]);
+    expect(
+      operational?.commands
+        .find((command) => command.name() === "manifest")
+        ?.options.map((option) => option.long)
+    ).toEqual(expect.arrayContaining(["--evidence", "--output"]));
+    expect(
+      operational?.commands
+        .find((command) => command.name() === "check")
+        ?.options.map((option) => option.long)
+    ).toContain("--manifest");
+    expect(
+      operational?.commands
         .find((command) => command.name() === "report")
         ?.options.map((option) => option.long)
     ).toEqual(expect.arrayContaining([

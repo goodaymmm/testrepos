@@ -1270,6 +1270,44 @@ describe("runDoctor", () => {
     );
   });
 
+  it("reports an existing invalid Operational Stable manifest as a warning", async () => {
+    const root = await createInitializedGitProject();
+    const readinessDir = path.join(root, ".kairon", "readiness");
+    await mkdir(readinessDir, { recursive: true });
+    await writeFile(
+      path.join(
+        readinessDir,
+        "operational-stable-evidence-manifest.json"
+      ),
+      "{ invalid",
+      "utf8"
+    );
+
+    const result = await runDoctor({
+      projectRoot: root,
+      commandAvailability: async () => true,
+      env: {}
+    });
+
+    expect(statusById(
+      result,
+      "readiness.operational_stable"
+    )).toBe("warning");
+    expect(checkById(
+      result,
+      "readiness.operational_stable"
+    )?.details).toEqual(expect.arrayContaining([
+      "status=UNPASSED",
+      "operational_stable_ready=false",
+      "manifest_status=invalid",
+      "cleanup_status=missing"
+    ]));
+    expect(checkById(
+      result,
+      "readiness.operational_stable"
+    )?.next_action).toContain("kairon readiness operational check");
+  });
+
   it("reports remote Board readiness without exposing access tokens", async () => {
     const root = await createInitializedGitProject();
     const notificationsPath = path.join(
