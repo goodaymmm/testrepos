@@ -34,6 +34,33 @@ describe("classifyCliRunResult", () => {
     });
     expect(result.setup_action).toContain("Run claude interactively");
   });
+
+  it("ignores Claude allowed rate-limit telemetry", () => {
+    const result = classifyCliRunResult("claude", {
+      ...commandResult(""),
+      exitCode: 0,
+      stdout: [
+        JSON.stringify({
+          type: "rate_limit_event",
+          rate_limit_info: {
+            status: "allowed",
+            rateLimitType: "five_hour",
+            overageStatus: "rejected"
+          }
+        }),
+        JSON.stringify({
+          type: "result",
+          subtype: "success",
+          is_error: false
+        })
+      ].join("\n")
+    });
+
+    expect(result).toMatchObject({
+      status: "completed",
+      reason: "cli_completed"
+    });
+  });
 });
 
 function commandResult(stderr: string): CommandRunResult {
