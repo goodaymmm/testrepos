@@ -26,11 +26,13 @@ let outputRoot: string;
 let packagePath: string;
 let checksumManifestPath: string;
 let releaseManifestPath: string;
+let currentVersion: string;
 
 describe("release manifest", () => {
   beforeAll(async () => {
     outputRoot = await mkdtemp(path.join(os.tmpdir(), "kairon-release-manifest-"));
-    const packed = await createPackageFixture(outputRoot);
+    currentVersion = await readPackageVersion(path.resolve("."));
+    const packed = await createPackageFixture(outputRoot, currentVersion);
     packagePath = packed.packagePath;
     checksumManifestPath = packed.manifestPath;
     const released = await createReleaseManifest(
@@ -45,7 +47,7 @@ describe("release manifest", () => {
     releaseManifestPath = released.release_manifest_path;
   }, 60_000);
 
-  it("binds a verified 0.3.0 package to clean source and normalized inventory", async () => {
+  it("binds a verified current-version package to clean source and normalized inventory", async () => {
     const manifest = JSON.parse(
       await readFile(releaseManifestPath, "utf8")
     ) as ReleaseManifest;
@@ -63,7 +65,7 @@ describe("release manifest", () => {
     expect(manifest).toMatchObject({
       artifact_kind: "kairon_release",
       release_channel: "local_beta",
-      package_version: "0.3.0",
+      package_version: currentVersion,
       source: {
         commit_sha: sourceCommit,
         dirty: false
@@ -223,8 +225,8 @@ describe("release manifest", () => {
       readReleaseManifest(secondRelease.release_manifest_path)
     ]);
 
-    expect(firstManifest.package_version).toBe("0.3.0");
-    expect(secondManifest.package_version).toBe("0.3.0");
+    expect(firstManifest.package_version).toBe(currentVersion);
+    expect(secondManifest.package_version).toBe(currentVersion);
     expect(secondManifest.source).toEqual(firstManifest.source);
     expect(secondManifest.runtime_support).toEqual(firstManifest.runtime_support);
     expect(secondManifest.package_inventory).toEqual(firstManifest.package_inventory);
@@ -260,13 +262,13 @@ function commandResult(
   };
 }
 
-async function createPackageFixture(root: string): Promise<{
+async function createPackageFixture(root: string, version: string): Promise<{
   packagePath: string;
   manifestPath: string;
 }> {
   const packageMetadata = {
     name: "kairon",
-    version: "0.3.0",
+    version,
     private: true,
     license: "UNLICENSED",
     bin: {
@@ -300,14 +302,14 @@ async function createPackageFixture(root: string): Promise<{
     content: Buffer.from(entry.content, "utf8")
   }));
   const packageBytes = gzipSync(createTar(entries));
-  const packagePath = path.join(root, "kairon-0.3.0.tgz");
+  const packagePath = path.join(root, `kairon-${version}.tgz`);
   const manifestPath = `${packagePath}.sha256.json`;
   await writeFile(packagePath, packageBytes);
   await writeFile(manifestPath, `${JSON.stringify({
     schema_version: "0.1",
     artifact_kind: "local_beta_package",
     package_name: "kairon",
-    package_version: "0.3.0",
+    package_version: version,
     package_file: path.basename(packagePath),
     sha256: createHash("sha256").update(packageBytes).digest("hex"),
     size_bytes: packageBytes.length,
@@ -319,6 +321,13 @@ async function createPackageFixture(root: string): Promise<{
     created_at: "2026-07-22T00:00:00.000Z"
   }, null, 2)}\n`, "utf8");
   return { packagePath, manifestPath };
+}
+
+async function readPackageVersion(root: string): Promise<string> {
+  const packageJson = JSON.parse(
+    await readFile(path.join(root, "package.json"), "utf8")
+  ) as { version: string };
+  return packageJson.version;
 }
 
 async function readReleaseManifest(file: string): Promise<ReleaseManifest> {
