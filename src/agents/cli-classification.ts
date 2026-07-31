@@ -31,7 +31,7 @@ export function classifyCliRunResult(
   result: CommandRunResult
 ): CliRunClassification {
   const output = `${result.stdout}\n${result.stderr}`;
-  const normalized = output.toLowerCase();
+  const normalized = removeAllowedRateLimitEvents(output).toLowerCase();
 
   if (result.timedOut) {
     return {
@@ -267,6 +267,31 @@ function firstMatch(value: string, patterns: string[]): PatternMatch | undefined
   }
 
   return undefined;
+}
+
+function removeAllowedRateLimitEvents(output: string): string {
+  return output
+    .split(/\r?\n/)
+    .filter((line) => !isAllowedRateLimitEvent(line))
+    .join("\n");
+}
+
+function isAllowedRateLimitEvent(line: string): boolean {
+  try {
+    const event = JSON.parse(line.trim()) as {
+      type?: unknown;
+      rate_limit_info?: {
+        status?: unknown;
+      };
+    };
+
+    return (
+      event.type === "rate_limit_event" &&
+      event.rate_limit_info?.status === "allowed"
+    );
+  } catch {
+    return false;
+  }
 }
 
 function extractRetryAfter(output: string): string | undefined {
