@@ -57,14 +57,15 @@ describe("release commands", () => {
     expect(formatReleaseValidation(result)).toContain("summary.fail=0");
   });
 
-  it("validates the current 0.3.0 Stable Local Release contract", async () => {
+  it("validates the current source release contract", async () => {
+    const currentVersion = await readPackageVersion(path.resolve("."));
     const result = await validateRelease(path.resolve("."));
 
     expect(result).toMatchObject({
       ok: true,
-      target_version: "0.3.0",
-      package_version: "0.3.0",
-      cli_version: "0.3.0"
+      target_version: currentVersion,
+      package_version: currentVersion,
+      cli_version: currentVersion
     });
     expect(result.checks.every((check) => check.status === "pass")).toBe(true);
   });

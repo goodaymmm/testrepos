@@ -16,6 +16,7 @@ const runIfPowerShell = powershell === undefined ? it.skip : it;
 describe("local release package", () => {
   it("packs and verifies only the fixed private local release file set", async () => {
     const output = await mkdtemp(path.join(os.tmpdir(), "kairon-local-beta-pack-"));
+    const currentVersion = await readPackageVersion(path.resolve("."));
     const result = await createLocalBetaPackage(path.resolve("."), {
       output,
       now: () => new Date("2026-07-16T00:00:00.000Z")
@@ -24,7 +25,7 @@ describe("local release package", () => {
     expect(result).toMatchObject({
       status: "created",
       package_name: "kairon",
-      package_version: "0.3.0",
+      package_version: currentVersion,
       verification: { ok: true }
     });
     expect(result.files).toBeGreaterThan(10);
@@ -213,6 +214,13 @@ describe("local release package", () => {
     expect(installation).toContain("diagnostic_bundle");
   });
 });
+
+async function readPackageVersion(root: string): Promise<string> {
+  const packageJson = JSON.parse(
+    await readFile(path.join(root, "package.json"), "utf8")
+  ) as { version: string };
+  return packageJson.version;
+}
 
 function runPowerShellScript(script: string, args: string[]) {
   return spawnSync(
