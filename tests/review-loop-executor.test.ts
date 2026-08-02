@@ -1,0 +1,603 @@
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import type {
+  CliInvocation,
+  CommandRunResult
+} from "../src/agents/command-runner.js";
+import { initializeProject } from "../src/cli/commands/init.js";
+import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
+import { createDiffSnapshot } from "../src/git/diff-snapshot.js";
+import { WorkQueue } from "../src/queue/work-queue.js";
+import { ReviewLoopExecutor } from "../src/review/review-loop-executor.js";
+import { ReviewLoopManager } from "../src/review/review-loop-manager.js";
+import { createTempProject } from "./test-utils.js";
+
+describe("ReviewLoopExecutor", () => {
+  it("runs reviewers, saves review results, and approves passing loops", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const manager = new ReviewLoopManager(root);
+    const loop = await manager.start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: reviewCommandRunner(root, {
+        status: "approved",
+        score: { overall: 0.95 },
+        findings: [],
+        tests_passed: true,
+        secret_scan_passed: true
+      })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      loop_id: "REV-0001",
+      status: "approved",
+      decision: { status: "passed" },
+      next_action: { action: "approve" },
+      review_run_ids: ["RUN-0002"],
+      review_result_ids: ["REV-0002"]
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "reviews", "results", "REV-0002.json"))
+    ).resolves.toMatchObject({
+      review_id: "REV-0002",
+      task_id: "TASK-0001",
+      reviewer: "claude",
+      status: "approved"
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "reviews", "loops", "REV-0001.json"))
+    ).resolves.toMatchObject({
+      status: "approved",
+      history: expect.arrayContaining([{ run_id: "RUN-0002", type: "review" }])
+    });
+  });
+
+  it("queues a git transaction when a commit-requested reviewed diff is approved", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeJsonFileAtomic(path.join(root, ".kairon", "tasks", "TASK-0001", "task.json"), {
+      schema_version: "0.1",
+      id: "TASK-0001",
+      status: "ready",
+      title: "Commit reviewed change",
+      commit_requested: true,
+      code_producing: true,
+      created_at: "2026-05-26T00:00:00.000Z",
+      updated_at: "2026-05-26T00:00:00.000Z"
+    });
+    await createDiffSnapshot(root, {
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      branch: "auto/TASK-0001/codex",
+      baseSha: "base-sha",
+      diff: "diff --git a/src/example.ts b/src/example.ts\n+export const value = 1;\n",
+      changedFiles: [
+        {
+          path: "src/example.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 0
+        }
+      ]
+    });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true,
+      commitRequested: true,
+      changedFiles: [{ path: "src/example.ts", status: "modified" }]
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: reviewCommandRunner(root, {
+        status: "approved",
+        score: { overall: 0.95 },
+        findings: [],
+        tests_passed: true,
+        secret_scan_passed: true
+      })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "approved",
+      git_transaction_queue_item_id: "JOB-0001"
+    });
+    await expect(new WorkQueue(root).list("ready")).resolves.toMatchObject([
+      {
+        id: "JOB-0001",
+        type: "git.transaction",
+        task_id: "TASK-0001",
+        priority: 90,
+        payload: {
+          action: "commit",
+          run_id: "RUN-0001",
+          agent: "codex",
+          review_loop_id: loop.loop_id,
+          write_paths: ["src/example.ts"],
+          push_requested: true,
+          diff_sha256: expect.stringMatching(/^sha256:/),
+          changed_files: [
+            {
+              path: "src/example.ts",
+              status: "modified",
+              additions: 1,
+              deletions: 0
+            }
+          ]
+        }
+      }
+    ]);
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "reviews", "loops", `${loop.loop_id}.json`))
+    ).resolves.toMatchObject({
+      status: "approved",
+      commit_requested: true,
+      git_transaction: {
+        status: "queued",
+        queue_item_id: "JOB-0001",
+        run_id: "RUN-0001",
+        diff_sha256: expect.stringMatching(/^sha256:/)
+      }
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "tasks", "TASK-0001", "task.json"))
+    ).resolves.toMatchObject({
+      git_transaction: {
+        status: "queued",
+        queue_item_id: "JOB-0001",
+        review_loop_id: loop.loop_id
+      }
+    });
+  });
+
+  it("blocks high findings and queues a fix before max iterations", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: reviewCommandRunner(root, {
+        status: "approved",
+        score: { overall: 0.95 },
+        findings: [{ severity: "high", body: "Unsafe change remains." }],
+        tests_passed: true,
+        secret_scan_passed: true
+      })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "changes_requested",
+      decision: { status: "failed" },
+      next_action: { action: "request_fix" }
+    });
+    expect(result.decision.reasons.join("\n")).toContain("high finding blocks gate");
+    await expect(new WorkQueue(root).list("ready")).resolves.toMatchObject([
+      {
+        type: "agent.run",
+        task_id: "TASK-0001",
+        payload: {
+          purpose: "review_fix",
+          review_loop_id: "REV-0001",
+          iteration: 2
+        }
+      }
+    ]);
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "reviews", "loops", "REV-0001.json"))
+    ).resolves.toMatchObject({
+      status: "changes_requested",
+      iteration: 2
+    });
+  });
+
+  it("escalates when max iterations are exceeded", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const manager = new ReviewLoopManager(root);
+    const loop = await manager.start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+    await manager.saveLoopState({
+      ...loop,
+      iteration: loop.max_iterations
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: reviewCommandRunner(root, {
+        status: "changes_requested",
+        score: { overall: 0.2 },
+        findings: [{ severity: "medium", body: "Score remains low." }],
+        tests_passed: true,
+        secret_scan_passed: true
+      })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "escalated",
+      decision: { status: "failed" },
+      next_action: { action: "escalate", approval_id: "APR-0001" }
+    });
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "approvals", "APR-0001.json"))
+    ).resolves.toMatchObject({
+      status: "pending",
+      type: "review_escalation",
+      review_loop_id: "REV-0001"
+    });
+  });
+
+  it("pauses review loops when a reviewer CLI is rate limited", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) =>
+        commandResult(invocation, {
+          exitCode: 1,
+          stdout: JSON.stringify({
+            type: "result",
+            is_error: true,
+            error: "rate_limit",
+            result: "You've hit your limit"
+          })
+        })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "setup_required",
+      decision: {
+        status: "failed",
+        blocking_findings: []
+      },
+      next_action: {
+        action: "setup_required",
+        reviewers: ["claude"]
+      },
+      review_result_ids: []
+    });
+    expect(result.decision.reasons.join("\n")).toContain(
+      "claude: cli_rate_limited for claude"
+    );
+    await expect(new WorkQueue(root).list("ready")).resolves.toEqual([]);
+    await expect(
+      readJsonFile(path.join(root, ".kairon", "reviews", "loops", "REV-0001.json"))
+    ).resolves.toMatchObject({
+      status: "setup_required",
+      iteration: 1,
+      history: expect.arrayContaining([{ run_id: "RUN-0002", type: "review" }])
+    });
+  });
+
+  it("pauses review loops when a reviewer CLI usage is limited", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) =>
+        commandResult(invocation, {
+          exitCode: 1,
+          stdout: "Usage limit reached for this billing period."
+        })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "setup_required",
+      decision: {
+        status: "failed",
+        blocking_findings: []
+      },
+      next_action: {
+        action: "setup_required",
+        reviewers: ["claude"]
+      },
+      review_result_ids: []
+    });
+    expect(result.decision.reasons.join("\n")).toContain(
+      "claude: cli_usage_limited for claude"
+    );
+    await expect(new WorkQueue(root).list("ready")).resolves.toEqual([]);
+  });
+
+  it("pauses review loops when reviewer outbox is missing review_result", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: reviewOutboxRunner(root, {
+        status: "completed",
+        events: [
+          {
+            type: "message.created",
+            payload: { message_type: "reviewer.note" }
+          }
+        ]
+      })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "setup_required",
+      decision: { status: "failed" },
+      next_action: {
+        action: "setup_required",
+        reviewers: ["claude"]
+      },
+      review_result_ids: []
+    });
+    expect(result.decision.reasons.join("\n")).toContain(
+      "claude: review outbox is missing review_result"
+    );
+    await expect(new WorkQueue(root).list("ready")).resolves.toEqual([]);
+  });
+
+  it("pauses review loops on generated runner failure outboxes without reporting missing review_result", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: reviewOutboxRunner(root, {
+        status: "failed",
+        events: [
+          {
+            type: "message.created",
+            payload: {
+              message_type: "agent.run.failure",
+              reason: "cli_failed",
+              timed_out: true
+            }
+          }
+        ]
+      })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    const reasons = result.decision.reasons.join("\n");
+    expect(result).toMatchObject({
+      status: "setup_required",
+      next_action: {
+        action: "setup_required",
+        reviewers: ["claude"]
+      },
+      review_result_ids: []
+    });
+    expect(reasons).toContain(
+      "claude: reviewer CLI did not produce a usable outbox: cli_failed, timed_out=true"
+    );
+    expect(reasons).not.toContain("review outbox is missing review_result");
+    await expect(new WorkQueue(root).list("ready")).resolves.toEqual([]);
+  });
+
+  it("pauses review loops when review_result fails schema validation", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: reviewCommandRunner(root, {
+        status: "approved",
+        score: { overall: "not-a-number" },
+        findings: [],
+        tests_passed: true,
+        secret_scan_passed: true
+      })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "setup_required",
+      next_action: {
+        action: "setup_required",
+        reviewers: ["claude"]
+      },
+      review_result_ids: []
+    });
+    expect(result.decision.reasons.join("\n")).toContain(
+      "claude: review_result failed schema validation"
+    );
+    await expect(new WorkQueue(root).list("ready")).resolves.toEqual([]);
+  });
+
+  it("keeps valid review_result gate failures as changes_requested", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "codex",
+      codeProducing: true
+    });
+
+    const result = await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: reviewCommandRunner(root, {
+        status: "approved",
+        score: { overall: 0.95 },
+        findings: []
+      })
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(result).toMatchObject({
+      status: "changes_requested",
+      decision: { status: "failed" },
+      next_action: { action: "request_fix" },
+      review_result_ids: ["REV-0002"]
+    });
+    expect(result.decision.reasons.join("\n")).toContain(
+      "REV-0002: tests_passed is required"
+    );
+    expect(result.decision.reasons.join("\n")).toContain(
+      "REV-0002: secret_scan_passed is required"
+    );
+    await expect(new WorkQueue(root).list("ready")).resolves.toMatchObject([
+      {
+        type: "agent.run",
+        task_id: "TASK-0001",
+        payload: { purpose: "review_fix" }
+      }
+    ]);
+  });
+
+  it("routes Claude Opus implementation review through Codex", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const invocations: CliInvocation[] = [];
+    const loop = await new ReviewLoopManager(root).start({
+      taskId: "TASK-0001",
+      runId: "RUN-0001",
+      implementer: "claude",
+      modelClass: "opus",
+      commitRequested: true
+    });
+
+    await new ReviewLoopExecutor(root, {
+      commandAvailability: async () => true,
+      commandRunner: async (invocation) => {
+        invocations.push(invocation);
+        return reviewCommandRunner(root, {
+          status: "approved",
+          score: { overall: 0.98 },
+          findings: [],
+          tests_passed: true,
+          secret_scan_passed: true
+        })(invocation);
+      }
+    }).run({ loopId: loop.loop_id, date: "2026-05-26" });
+
+    expect(loop).toMatchObject({
+      reviewers: ["codex"],
+      integration: "codex-plugin-cc"
+    });
+    expect(invocations[0]).toMatchObject({
+      command: "codex",
+      args: ["exec", "--json", "-"]
+    });
+  });
+});
+
+function reviewCommandRunner(
+  root: string,
+  reviewResult: Record<string, unknown>
+): (invocation: CliInvocation) => Promise<CommandRunResult> {
+  return async (invocation) => {
+    const prompt = invocation.stdin ?? invocation.args.join("\n");
+    const outboxPath = /Expected outbox: (.+)/.exec(prompt)?.[1];
+    const runId = /KAIRON_JOB_START (RUN-\d+)/.exec(prompt)?.[1];
+    const taskId = /Task: (TASK-\d+)/.exec(prompt)?.[1];
+
+    if (outboxPath === undefined || runId === undefined || taskId === undefined) {
+      throw new Error("Review prompt is missing run, task, or outbox path.");
+    }
+
+    await writeJsonFileAtomic(path.join(root, outboxPath), {
+      schema_version: "0.1",
+      run_id: runId,
+      task_id: taskId,
+      agent: invocation.command === "codex" ? "codex" : "claude",
+      persona: "reviewer",
+      status: "completed",
+      review_result: {
+        target: {},
+        ...reviewResult
+      }
+    });
+
+    return commandResult(invocation);
+  };
+}
+
+function reviewOutboxRunner(
+  root: string,
+  outbox: Record<string, unknown>
+): (invocation: CliInvocation) => Promise<CommandRunResult> {
+  return async (invocation) => {
+    const prompt = invocation.stdin ?? invocation.args.join("\n");
+    const outboxPath = /Expected outbox: (.+)/.exec(prompt)?.[1];
+    const runId = /KAIRON_JOB_START (RUN-\d+)/.exec(prompt)?.[1];
+    const taskId = /Task: (TASK-\d+)/.exec(prompt)?.[1];
+
+    if (outboxPath === undefined || runId === undefined || taskId === undefined) {
+      throw new Error("Review prompt is missing run, task, or outbox path.");
+    }
+
+    await writeJsonFileAtomic(path.join(root, outboxPath), {
+      schema_version: "0.1",
+      run_id: runId,
+      task_id: taskId,
+      agent: invocation.command === "codex" ? "codex" : "claude",
+      persona: "reviewer",
+      ...outbox
+    });
+
+    return commandResult(invocation);
+  };
+}
+
+function commandResult(
+  invocation: CliInvocation,
+  options: Partial<CommandRunResult> = {}
+): CommandRunResult {
+  return {
+    command: invocation.command,
+    args: invocation.args,
+    cwd: invocation.cwd,
+    pid: 1234,
+    exitCode: 0,
+    signal: null,
+    stdout: "",
+    stderr: "",
+    startedAt: "2026-05-26T00:00:00.000Z",
+    finishedAt: "2026-05-26T00:00:01.000Z",
+    timedOut: false,
+    ...options
+  };
+}

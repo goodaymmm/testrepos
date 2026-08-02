@@ -1,0 +1,519 @@
+# Release Readiness Checklist v0
+
+Kaironをreleaseできる状態か判断するためのchecklistです。PR作成時の確認は
+`docs/pr-release-checklist-v0.md`、manual / operation testの記録は
+`docs/manual-test-results-v0.md` を優先します。
+
+## 目的
+
+<!-- kairon:release-readiness -->
+release判断では、コードがbuildできることだけでなく、ローカル運用で必要な
+state、認証、manual evidence、README / docs、version表記が揃っていることを確認します。
+
+## 前提
+
+- `main` が `origin/main` と同期している。
+- release対象のPRがmerge済みである。
+- 作業ツリーにrelease対象外のtracked変更がない。
+- `operation-test-results/`、`.kairon/` state、local-only docsは原則commitしない。
+- tokenやsecret値をlog、PR本文、release notesへ出さない。
+
+## 必須確認
+
+```powershell
+git switch main
+git pull
+git status --short
+npm run build
+npm test
+```
+
+必要に応じて、対象範囲のtargeted testも実行します。
+
+```powershell
+npx vitest run tests\pr-release-docs.test.ts
+```
+
+## Operation Test確認
+
+release対象がCLI、runtime、Discord、GitHub、Board、RAG、cleanup、recovery、
+agent runnerに関係する場合は、対象範囲に応じてoperation testを実行します。
+
+```powershell
+.\scripts\kairon-operation-test.ps1 `
+  -KaironRoot "C:\Users\hikar\Documents\AutoRunner" `
+  -TargetRoot "M:\EnglishApp"
+```
+
+長いlogを確認する場合はsummaryを作ります。docsは自動更新しません。
+
+```powershell
+kairon test summarize --result-root .\operation-test-results
+```
+
+外部依存のlive確認は、実行できない場合に `SETUP_REQUIRED` として扱えます。
+ただしrelease判断では、代替確認または残課題として明記します。
+
+## Beta Readiness Gate
+
+各証跡を`GATE_ID=path`形式でmanifestへ登録し、証跡が現在commitに対応していることを確認します。
+
+```powershell
+kairon readiness manifest `
+  --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\summary.json `
+  --evidence CONFIG_MIGRATION_DOCTOR=.\.kairon\reports\doctor.json `
+  --evidence PACKAGE_LIFECYCLE=.\release-artifacts\0.3.0\verification.json
+
+kairon readiness check
+kairon readiness report --format markdown
+```
+
+Beta配布の機械判定では、すべての必須gateが`PASS`の場合だけreadyです。`SETUP_REQUIRED`、`UNKNOWN`、`UNPASSED`はexit code 1となります。manifest作成後に証跡を変更した場合、証跡が期限切れの場合、またはsource commitが現在の`HEAD`と異なる場合は証跡を再生成します。
+
+## Release Candidate Readiness Gate
+
+T160-T188の証跡をRC gateへ登録し、現在commitに対する配布・更新・復旧・
+workflow・Agent・RAG・複数project・stable remote・performance budget・Stable Security
+Baselineの成立を確認します。
+
+<!-- kairon:t175-rc-validation-baseline -->
+T175 operation testでは、当時のcurrent source commitへbindした14 gateがすべて`PASS`し、global blocker 0件、secret finding 0件、`rc_ready=true`を確認しました。T187以降は`PERFORMANCE_REGRESSION`を加えた15 gateで再判定し、T188以降の`SECURITY_INTEGRITY`にはfresh npm audit付き`security_baseline_result`を使用します。次のversion artifactを公開する際はrelease commitに対してmanifestと全external evidenceを再生成します。
+
+```powershell
+kairon readiness rc manifest `
+  --evidence BASELINE_DOCS=.\operation-test-results\t160.json `
+  --evidence RELEASE_ARTIFACT=.\operation-test-results\t161-release-verify.json `
+  --evidence PERFORMANCE_REGRESSION=.\.kairon\performance\runs\PERF-current.json `
+  --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\full-test.json `
+  --evidence SECURITY_INTEGRITY=.\.kairon\security\security-baseline.json
+
+kairon readiness rc check
+kairon readiness rc report --format json
+kairon readiness rc report --format markdown
+```
+
+- canonical resultは`.kairon/readiness/rc-result.json`、operator viewは
+  `.kairon/readiness/rc-report.md`へ出力する。
+- `required`と`external_required`の全gateが`PASS`で、global blockerが0件の場合だけ
+  `rc_ready=true`になる。
+- GitHub配布、clean Windows update / rollback、hybrid RAG、stable remoteは
+  `external_required`であり、環境未準備の`SETUP_REQUIRED`を`PASS`へ昇格しない。
+- stale、改変、別commit、許可されないartifact kindを持つ証跡は再実行する。
+- 未解決の`high` / `critical` incident、secret finding、source SHA mismatchが
+  1件でもあればRC判定をblockする。手動overrideは行わない。
+
+## Stable Local Release Readiness Gate
+
+<!-- kairon:t190-stable-readiness -->
+
+T176-T189のfresh evidenceを16 gateへ登録し、Stable Local Releaseとして公開可能かを
+機械判定する。
+
+```powershell
+kairon readiness stable manifest `
+  --evidence STABLE_BASELINE_DOCS=.\operation-test-results\t176.json `
+  --evidence RELEASE_ARTIFACT=.\release-artifacts\0.3.0\release-manifest.json `
+  --evidence RELEASE_PROVENANCE_SBOM=.\release-artifacts\0.3.0\provenance.json `
+  --evidence STABLE_ACCEPTANCE=.\operation-test-results\stable-acceptance\evidence-manifest.json `
+  --evidence BUILD_UNIT_INTEGRATION=.\operation-test-results\full-test.json `
+  --evidence STATE_SECRET_INTEGRITY=.\.kairon\security\security-baseline.json
+
+kairon readiness stable check
+kairon readiness stable report --format json
+kairon readiness stable report --format markdown
+```
+
+- canonical resultは`.kairon/readiness/stable-result.json`、operator viewは
+  `.kairon/readiness/stable-report.md`へ出力する。
+- `required`と`external_required`の16 gateすべてがcurrent / fresh / verified `PASS`で、
+  global blockerが0件の場合だけ`stable_ready=true`になる。
+- T189 manifestの18 scenario、document digest、exact-ID cleanup完了を再検証する。
+- `SETUP_REQUIRED`、stale、tampered、wrong commit、cleanup失敗、migration / rollback /
+  DR rehearsal失敗を手動overrideしない。
+- 未解決high / critical incident、security high / critical、secret exposureは1件でもblockする。
+- readiness判定はGitHub Releaseを変更しない。Stable昇格はapproval-bound promotion commandを
+  別途明示実行する。
+
+<!-- kairon:t192-stable-baseline -->
+T191のblocker修正後にcurrent sourceへ証跡を再bindし、Stable Acceptance 18 / 18 scenario、
+Stable Readiness 16 / 16 gate、global blocker 0件、`stable_ready=true`を確認した。
+この確認は個人運用向け`0.3.0` Stable Local Release baselineを示す。実際のGitHub Release
+publish / Stable昇格では、release commitからartifactとexternal evidenceを再生成し、
+既存のapproval-bound commandを明示実行する。
+
+## Operational Stable Readiness
+
+<!-- kairon:t205-operational-stable-readiness -->
+
+Stable配布後の運用継続判断はT190のStable readinessとは分離し、
+T192-T204の証跡を`readiness operational`で集約する。
+
+```powershell
+kairon readiness operational manifest `
+  --evidence STABLE_BASELINE_CURRENT=.\evidence\t192.json `
+  --evidence CONSUMER_MANIFEST_VERIFY=.\evidence\t194.json `
+  --evidence PUBLISHED_STABLE_VERIFY=.\evidence\t194.json `
+  --evidence CLEAN_WINDOWS_CANARY=.\evidence\t195.json `
+  --evidence POST_RELEASE_HEALTH=.\evidence\t196.json `
+  --evidence UPDATE_CHECK_SCHEDULE=.\evidence\t197.json `
+  --evidence MULTI_PROJECT_ROLLOUT=.\evidence\t198.json `
+  --evidence STABLE_SOAK=.\evidence\t199.json `
+  --evidence EVIDENCE_CATALOG=.\evidence\t200.json `
+  --evidence SCHEDULED_DR_VERIFY=.\evidence\t201.json `
+  --evidence AGENT_COMPATIBILITY=.\evidence\t202.json `
+  --evidence DIAGNOSTICS_TRIAGE=.\evidence\t203.json `
+  --evidence PATCH_RELEASE_REHEARSAL=.\evidence\t204.json `
+  --evidence BUILD_UNIT_SECURITY=.\evidence\full-test.json `
+  --evidence BUILD_UNIT_SECURITY=.\evidence\security-baseline.json `
+  --evidence STATE_SECRET_CLEANUP=.\evidence\security-baseline.json `
+  --evidence STATE_SECRET_CLEANUP=.\evidence\patch-cleanup.json
+
+kairon readiness operational check
+kairon readiness operational report --format markdown
+```
+
+- 15 gateすべてがcurrent commitへbindされたfreshな`PASS`である。
+- Published Stableとconsumer/canary/health/rollout/soakのversion、release ID、
+  source commitにdriftがない。
+- unresolved high / critical incident、security high / critical、secret exposure、
+  rollback failure、cleanup failureが0件である。
+- external環境未準備をmanual overrideせず`SETUP_REQUIRED`として残す。
+- resultの`external_write_performed=false`を確認する。
+- release / update / restore commandはreferenceだけであり、この判定から実行しない。
+- `.kairon/readiness/operational-stable-result.json`と
+  `.kairon/readiness/operational-stable-report.md`へsecret値がない。
+
+## Secret / Generated Artifact確認
+
+<!-- kairon:release-evidence -->
+secret値は存在確認だけを行い、値を表示しません。
+
+```powershell
+Get-ChildItem Env:GH_TOKEN,Env:GITHUB_TOKEN,Env:KAIRON_DISCORD_BOT_TOKEN `
+  -ErrorAction SilentlyContinue |
+  Select-Object Name,@{Name="Present";Expression={-not [string]::IsNullOrWhiteSpace($_.Value)}}
+```
+
+commit前に、generated artifactやlocal stateがstageされていないことを確認します。
+
+```powershell
+git status --short
+git diff --cached --stat
+```
+
+## Versioning方針
+
+<!-- kairon:versioning-policy -->
+現在のStable Local Release artifactはT160-T191を収録した`0.3.0`で、現行source commitから
+再生成・検証します。GitHub Releaseへのpublish / Stable昇格はreadiness判定から分離した
+approval-bound操作です。packageは `private: true` のため、
+npm publishを前提にしたversion bumpではなく、運用上のrelease tag / release noteの
+判断材料としてversionを扱います。
+
+- `MAJOR`: 1.0以降に使う。現段階では使わない。
+- `MINOR`: 0.x期間では、互換性に影響するCLI / config / artifact変更、または大きなuser-facing機能追加。
+- `PATCH`: bug fix、診断改善、docs、test、operation harness改善。
+- versionを変更する場合は、`package.json`、`package-lock.json` と `src/index.ts` の `KAIRON_VERSION` を必ず同じ値にする。
+- docsのみ、またはlocal operation test資料のみの更新では、原則versionを変更しない。
+
+Release helperを使う場合は、先にdry-runを確認してからwriteします。
+
+```powershell
+kairon release validate
+kairon release bump --version <next-version>
+kairon release bump --version <next-version> --write
+```
+
+`release validate` は次を一括確認し、不整合時はexit code 1を返します。
+
+- `package.json.version` と `src/index.ts` の `KAIRON_VERSION` が`x.y.z`形式で一致する。
+- `package-lock.json`のtop-level versionとroot package versionが`package.json.version`に一致する。
+- checklistにrelease readiness、evidence、versioningのmarkerがある。
+- release notesに`Unreleased` heading / markerと現在versionのheadingがある。
+
+`--write` はtracked worktreeがcleanな場合だけ実行できます。
+実行時は `.kairon/release/backups/<timestamp>/` に変更前の対象fileを保存します。
+
+## 0.3.x Patch Release Workflow
+
+<!-- kairon:patch-release-workflow -->
+
+Stable後のbug fixは、汎用`release bump`を直接writeするのではなく、patch planへ
+base / target version、base source commit、version file digest、release notes marker、
+required checks、有効期限を固定してから準備します。targetは同一major / minorの次の
+patchだけを受理します。
+
+```powershell
+kairon release patch plan --version 0.3.1 --mode rehearsal
+kairon release patch prepare PRP-<id> --confirm PRP-<id>
+```
+
+`prepare`はclean tracked worktree、plan期限、base commit、全input digest、exact confirmを
+再検証し、`.kairon/release/patch-plans/<plan-id>/backup/`へ変更前fileを保存してから
+`package.json`、`package-lock.json`、`src/index.ts`、release notes templateだけを更新します。
+prepare後はoperatorが差分をreviewしてcommitします。prepare自身はcommit、push、GitHub
+Release作成、Stable昇格、update applyを実行しません。
+
+commit後のrelease manifestにはplanを明示的にbindします。
+
+```powershell
+kairon release manifest `
+  --package <package.tgz> `
+  --manifest <checksum-manifest.json> `
+  --sbom <sbom.cdx.json> `
+  --provenance <provenance.json> `
+  --patch-plan PRP-<id>
+```
+
+patch verifyは、patch-bound release manifest、Clean Windows canary、post-release health、
+previous Stableからのupdate / rollback / reapply transaction、approval-gated Stable
+promotion result、exact cleanup evidenceをread-onlyで照合します。
+
+```powershell
+kairon release patch verify PRP-<id> `
+  --release-manifest <release-manifest.json> `
+  --canary <stable-canary-final-result.json> `
+  --health <post-release-health-result.json> `
+  --update-transaction <update.json> `
+  --rollback-transaction <rollback.json> `
+  --reapply-transaction <reapply.json> `
+  --promotion <stable-promotion-result.json> `
+  --cleanup <patch-release-cleanup-result.json>
+```
+
+- `rehearsal`ではtest release、tag、branchのexact IDが`deleted`または
+  `verified_absent`であることを要求する。
+- `release`ではproduction releaseを保持し、cleanupを`not_required`として明示する。
+- build、full test、security baseline、SBOM、provenance、manifest、canary、healthを
+  patch planから省略しない。
+- GitHub publish / promotionは既存のapproval-bound commandだけを使用する。
+
+## Reproducible Stable Local Artifact
+
+version bumpをcommitしたclean tracked worktreeでpackageを生成し、そのpackage、checksum
+manifest、CycloneDX SBOM、local build provenanceをsource commitへbindします。
+
+```powershell
+npm run release:pack
+kairon release sbom `
+  --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json `
+  --output .\release-artifacts\0.3.0\sbom.cdx.json
+kairon release provenance `
+  --package .\release-artifacts\0.3.0\kairon-0.3.0.tgz `
+  --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json `
+  --sbom .\release-artifacts\0.3.0\sbom.cdx.json `
+  --output .\release-artifacts\0.3.0\provenance.json
+kairon release manifest `
+  --package .\release-artifacts\0.3.0\kairon-0.3.0.tgz `
+  --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json `
+  --sbom .\release-artifacts\0.3.0\sbom.cdx.json `
+  --provenance .\release-artifacts\0.3.0\provenance.json
+kairon release verify .\release-artifacts\0.3.0\kairon-0.3.0.tgz `
+  --manifest .\release-artifacts\0.3.0\kairon-0.3.0.tgz.sha256.json `
+  --release-manifest .\release-artifacts\0.3.0\release-manifest.json
+```
+
+`release-manifest.json`はsource commit、`dirty=false`、Windows runtime support、artifact
+SHA-256、checksum manifest SHA-256、sorted package inventory、SBOM/provenanceのsizeと
+SHA-256を保持します。tracked変更が残る場合、SBOM/provenanceの片方だけを指定した場合、
+lockfile・inventory・sourceのbindingが一致しない場合は生成を拒否します。npm tar metadataの
+時刻差によるbyte-for-byte一致は要件にせず、同じsourceから同じinventoryと検証可能metadataが
+得られることを確認します。schemaとprivacy境界は
+`docs/release-provenance-v0.md`を参照します。
+
+## Approval-gated GitHub Release
+
+<!-- kairon:github-release-distribution -->
+検証済みStable Local artifactをGitHub Releaseへ配布する場合は、planとpublishを分離します。tokenには対象repositoryのContents read/write権限が必要です。`GH_TOKEN`または`GITHUB_TOKEN`を使い、値自体は表示・保存しません。
+
+```powershell
+kairon release github plan `
+  --version 0.3.0 `
+  --repository owner/repo
+
+kairon approval show APR-0001
+kairon approval decide APR-0001 --action approve --reason "GitHub Release publish approved"
+
+kairon release github publish REL-0001 `
+  --approval-id APR-0001 `
+  --confirm REL-0001
+
+kairon release github verify `
+  --version 0.3.0 `
+  --repository owner/repo
+```
+
+- 既定はprerelease。attestation付きmanifestではpackage、checksum manifest、
+  release manifest、SBOM、provenanceの5 assetを同一releaseへ公開する。
+- plan作成後に`main`、local HEAD、release artifact、approval bindingが変化した場合はpublishしない。
+- approvalの`plan_id`、`plan_digest`、artifact pathが一致し、decisionが`approve`の場合だけpublishする。
+- tag、release、asset nameが既存の場合はsource SHA、channel、asset SHA-256が完全一致することを確認する。
+- network / rate limitによる途中失敗は同じplan IDで再実行し、検証済みassetを重複uploadしない。
+- result artifactにはtokenやraw GitHub responseを含めず、tag SHA、release ID、asset ID / size / SHA-256、正規化errorだけを残す。
+
+### Guarded Stable Promotion
+
+検証済みprereleaseをStableへ変更する場合は、新規Stable releaseを作らず専用promotion経路を
+使います。promotion中のasset upload、release削除、tag更新、asset上書きは禁止です。
+
+```powershell
+kairon release github promote plan `
+  --version 0.3.0 `
+  --repository owner/repo `
+  --expires-in-minutes 30
+
+kairon approval show APR-0002
+kairon approval decide APR-0002 --action approve --reason "Stable promotion approved"
+
+kairon release github promote apply REL-0002 `
+  --approval-id APR-0002 `
+  --confirm REL-0002
+
+kairon release github verify `
+  --version 0.3.0 `
+  --repository owner/repo `
+  --stable
+```
+
+- planはrelease ID、tag SHA、source commit、5 assetのID / size / SHA-256、
+  SBOM / provenance digest、有効期限を固定する。
+- applyはlock取得後にclean HEAD、local asset、remote branch / tag / release / assetを再取得し、
+  完全一致時だけprerelease flagを解除する。
+- stale、expired、approval取り違え、追加・欠落・差替えasset、tag / release ID driftは
+  GitHub write前にblockする。
+- 完全一致したStableへの再実行は`already_promoted`とし、GitHub writeを行わない。
+- 成功時はsanitized auditに加えて`.kairon/update/stable-release.json`へStable versionを記録する。
+
+### Published Stable Verification
+
+Stable昇格後は、local artifactを参照せず利用者と同じremote releaseをread-onlyで再取得します。
+
+```powershell
+kairon release stable verify `
+  --version 0.3.0 `
+  --repository owner/repo
+
+kairon release stable verify `
+  --version 0.3.0 `
+  --repository owner/repo `
+  --format json
+```
+
+- `draft=false`、`prerelease=false`、version、tag、release nameを検証する。
+- package、checksum manifest、release manifest、SBOM、provenanceのexact 5 assetをdownloadする。
+- downloadしたbundleは`consumer` contextで検証し、tag SHAとmanifest source SHAを照合する。
+- integrityとStable channel currentnessを別checkとして記録する。
+- resultは`.kairon/release/stable-verifications/STV-*.json`へatomic writeする。
+- temp downloadは成功・失敗にかかわらず削除する。
+- raw GitHub response、signed download URL、token、credential名はresultへ保存しない。
+- verifyはrelease、tag、assetを作成・更新・削除しない。
+
+### Post-release Health Decision
+
+Stable canaryとupdate完了後は、rollout継続前にread-only health判定を記録します。
+
+```powershell
+kairon release health check `
+  --release-verification .kairon\release\stable-verifications\<STV>.json `
+  --canary .kairon\release\stable-canaries\<CANARY>\final-result.json `
+  --transaction UTX-0001
+
+kairon release health report --format markdown
+```
+
+- Stable verification、canary、verified download、transactionのrelease ID、version、
+  source commit、package digestを照合する。
+- canary後の既定60分観測windowとfresh SLOが完了している。
+- unresolved warningまたはevidence不足は`hold`とする。
+- post-check failure、binding mismatch、high / critical incident、state / security failureは
+  `rollback_required`とする。
+- rollback targetは事前検証済みcacheに限定し、exact commandを表示する。
+- health判定はrollbackを実行せず、approvalを自動作成・承認しない。
+- 判定前後でproject config / stateとinstalled registry digestが変化していない。
+
+### Stable Soak Certification
+
+Stable verification後の長期運用は、release-bound soakを168実時間以上継続して認証します。
+
+```powershell
+kairon daemon soak start `
+  --release-verification .kairon\release\stable-verifications\<STV>.json `
+  --minimum-hours 168
+kairon daemon soak status <soak-id> --format json
+kairon daemon soak certify <soak-id> --format json
+```
+
+- manifestのverification ID、version、release ID、source commit、state digest、artifact digestが対象releaseと一致する。
+- 168実時間以上が経過し、clock injectionを使ったfixtureではない。
+- daemon coverageがthreshold以上で、説明不能heartbeat gap、fatal error、unexpected restartがない。
+- 日次SLO証跡が不足・破損・Criticalではなく、High / Critical incidentがない。
+- 計画停止markerはwindow前に記録し、planned rebootは実際のhost reboot証跡と一致する。
+- certificateと日次rollupにhostname、username、raw task、raw log、credential値がない。
+- release verificationまたはsourceが変化した場合は既存soakを再利用せず、新しいsoakを開始する。
+
+## Verified Update And Rollback
+
+release利用側では`stable | beta | pinned`のmanual channelを明示設定し、check / download / applyを分離します。
+attestation付きreleaseは5 assetをdownloadし、SBOM / provenanceをrelease manifestとともに
+user-local cacheで再検証します。
+
+```powershell
+kairon update channel set beta --repository owner/repo --write --confirm beta
+kairon update check
+kairon update download 0.3.0
+kairon update apply UPD-0001 --confirm UPD-0001 --dry-run
+kairon update apply UPD-0001 --confirm UPD-0001
+```
+
+- `update check`でfilesystemやregistryが変化しない。
+- download後にpackage SHA-256、checksum manifest、release manifest、inventory、tag source SHAが一致する。
+- cacheはproject source外のuser-local directoryにあり、partial downloadが確定artifactとして残らない。
+- apply / rollback前にcache済みartifactを再検証し、exact confirmなしではPowerShell lifecycleを開始しない。
+- runtime停止、state integrity、disk容量のtransaction preflightを通過している。
+- user-local staging prefixでversion、package/release manifest、state integrityを確認し、成功前にactive packageを変更していない。
+- `.kairon/update/transactions/UTX-*.json`のtimelineとupdate registry historyのtransaction IDが一致する。
+- lifecycle失敗時はregistryのinstalled / previous / last successfulを成功扱いにしない。
+- post-check失敗時は事前検証済みrollback packageを1回だけ適用し、失敗時はcritical incidentとrecovery markerを残して自動再試行しない。
+- rollback targetは事前にverified cacheへ取得し、`kairon update rollback --to <version> --confirm <version>`で明示する。
+- background auto-update、silent update、schedulerは存在しない。
+
+## Release Notes更新
+
+releaseする場合は `docs/release-notes-v0.md` の `Unreleased` から該当versionへ移します。
+
+Draftを生成する場合は、write前にdry-runを確認します。
+
+```powershell
+kairon release notes --since <ref>
+kairon release notes --since <ref> --write
+```
+
+`--write` は `docs/release-notes-v0.md` の `<!-- kairon:release-notes-unreleased -->`
+直下へappend-onlyで追記します。
+
+記録する内容:
+
+- release日
+- version
+- 主な変更
+- 実行したtest
+- manual / operation test evidence
+- known limitations
+
+## 完了条件
+
+- `npm run build` と `npm test` が通っている。
+- `kairon readiness check` がexit code 0を返している。
+- RCへ進める場合は`kairon readiness rc check`がexit code 0を返している。
+- Stableへ進める場合は`kairon readiness stable check`がexit code 0を返している。
+- 対象範囲のtargeted testまたはoperation test結果がPRまたはrelease notesにある。
+- README / docs更新要否を判断済み。
+- `package.json` と `src/index.ts` のversionが一致している。
+- generated artifact、secret、local stateをcommitしていない。
+- SBOM、provenance、release manifestを同じpackageとsource commitから生成し、
+  `release verify`で相互bindingが通っている。
+- GitHub配布を行う場合は`release github verify`が`status=verified`を返している。
+- Stable昇格後は`release stable verify`がintegrity / currentnessともに`PASS`を返している。
+- 長期運用認証を要求するreleaseでは`daemon soak certify`が168実時間以上の証跡で`PASS`を返している。
+- canary後は`release health check`がrelease / transactionへbindされ、`continue`または
+  operatorが明示的に受理した`hold` / approved rollback decisionを記録している。

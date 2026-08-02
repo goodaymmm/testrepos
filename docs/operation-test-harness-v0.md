@@ -1,0 +1,316 @@
+# Kairon Operation Test Harness v0
+
+`scripts/kairon-operation-test.ps1` は、T11-T15で手動実行していた運用テストを再実行しやすくするために追加し、その後のDiscord live / runtime recovery検証まで拡張したPowerShell harnessです。
+
+## 目的
+
+- Kairon repoのbuild / linkと、対象project上の主要operation testを一括実行する。
+- 対象projectの `.kairon` stateを実行前にbackupし、デフォルトで実行後にrestoreする。
+- PASS / FAIL summaryをJSONとMarkdownの両方で出力する。
+
+## 基本実行
+
+```powershell
+cd C:\Users\hikar\Documents\AutoRunner
+
+.\scripts\kairon-operation-test.ps1 `
+  -KaironRoot "C:\Users\hikar\Documents\AutoRunner" `
+  -TargetRoot "M:\EnglishApp"
+```
+
+出力先:
+
+```text
+operation-test-results/<yyyyMMdd-HHmmss>/summary.json
+operation-test-results/<yyyyMMdd-HHmmss>/summary.md
+operation-test-results/<yyyyMMdd-HHmmss>/backup/kairon-state/
+```
+
+## Result summaryとテストリストalias
+
+`kairon test summarize --test-list <md> --suggest` は、operation test resultからPASS / FAIL / SETUP_REQUIRED / OPTIONAL候補を抽出し、テストリストへの反映候補を表示します。
+ログ由来の汎用IDがテストリストの `OT-*` / `RET-*` IDと一致しない場合は、テストリスト側にalias commentを置いて対応付けできます。
+
+```markdown
+<!-- kairon:alias GIT_BRANCH_PROTECTION=OT-T99-01-04 -->
+<!-- kairon:alias KAIRON_TASK_RUN=RET-T102-01-02 -->
+```
+
+aliasはsummary候補のIDを既存テスト行へ解決するためだけに使います。
+`--patch-preview` は該当行の置換案を表示しますが、テストリストを直接書き換えません。
+同じsource IDに複数aliasがある場合は後勝ちで解決し、warningを出します。
+
+## Command profile generator
+
+`kairon test commands` は、operation test用のPowerShell commandをprofile registryから生成します。
+手書きdocsの長いコマンドを直接コピーする代わりに、profile IDまたはtask rangeを指定して再生成できます。
+
+```powershell
+kairon test commands --profile t116-alias
+kairon test commands --range T116-T118
+kairon test commands --profile branch-protection-public-sandbox --format powershell
+```
+
+生成コマンドは、既定で次の共通変数を用意します。
+
+```powershell
+$KAIRON
+$TARGET
+$RUN_STAMP
+$RESULT_ROOT
+```
+
+`$KAIRON` は既定で現在のdirectory、`$TARGET` は既定で `$KAIRON` です。
+別projectを対象にする場合は、実行前に `KAIRON_ROOT` / `KAIRON_TARGET_ROOT` を環境変数として指定できます。
+
+Node.jsを使うfixture生成は、`node -e` ではなく `$RESULT_ROOT` 配下の一時 `.mjs` ファイルを生成して実行する形式にします。
+`GH_TOKEN` / `GITHUB_TOKEN` などのsecretは値を出さず、必要なenv名だけを表示します。
+
+## T195 Clean Windows Stable canary
+
+`stable-canary` profileは、T194で作成したfreshなpublished Stable verificationを入力にし、
+Windows Sandbox用のinput manifest、bootstrap PowerShell、`.wsb`を生成します。Sandboxへ
+Kairon source checkoutや`npm link`環境は共有せず、Node.js 22+ runtime、Git runtime、
+canary harness/result directoryだけをmapします。
+
+```powershell
+kairon test commands --profile stable-canary
+
+.\scripts\kairon-stable-canary.ps1 `
+  -ProjectRoot "C:\Users\hikar\Documents\AutoRunner" `
+  -TimeoutSeconds 1800
+```
+
+runnerは開始前に既存の`WindowsSandbox` processを確認します。既存instanceの所有者を
+証明できない場合は`reason=windows_sandbox_already_running`、
+`unknown_sandbox_action=refuse`として停止し、自動終了しません。runner自身が起動した
+Sandboxもtimeout時には強制終了せず、Sandbox result欠落を`SETUP_REQUIRED`として
+finalizeします。
+
+Sandbox内では、公開release URLからT194に記録されたexact 5 assetsをdownloadし、
+size / SHA-256、consumer verification、user-local global install、version、fixture init、
+doctor contract、state integrity、read-only status、uninstall、`.kairon`保持を順に確認します。
+resultにはcommand IDだけを保存し、command output、credential値、host cacheは保存しません。
+`ProjectRoot`はStable verificationを保持するKairon repository rootであり、production
+projectではありません。canary projectはSandbox内へ生成します。
+
+private release等でpublic downloadできない場合は、tokenをartifactへ埋め込まず
+`stable_artifact_download_unavailable`として`SETUP_REQUIRED`にします。credentialを
+共有する方式は、secret brokerまたは短命credentialのcleanup契約を別途用意するまで
+canaryの標準経路には含めません。
+
+## T196 Post-release health
+
+`post-release-health` profileは、T194 Stable verification、T195 canary final result、
+completed update transaction、verified download / rollback cache、fresh SLO / security、
+incident store、canonical stateをrelease単位で照合します。
+
+```powershell
+kairon test commands --profile post-release-health
+
+$env:KAIRON_POST_RELEASE_VERIFICATION_PATH = "<STV artifact>"
+$env:KAIRON_POST_RELEASE_CANARY_PATH = "<canary final-result.json>"
+$env:KAIRON_POST_RELEASE_TRANSACTION = "UTX-0001"
+kairon test commands --profile post-release-health
+```
+
+判定は`continue`、`hold`、`rollback_required`の3値です。evidence不足、warning、
+観測window不足、verified rollback cache不足は`hold`です。release / transaction
+binding不一致、post-check failure、high / critical incident、state / security failureは
+`rollback_required`です。profileはrollback targetとexact commandを表示しますが、
+rollback、approval、Agent task、GitHub操作を自動実行しません。判定前後のproject stateと
+installed registry digestも比較します。
+
+## T197 Scheduled update check
+
+`scheduled-update-check` profileは、Windows Task Schedulerへのexact task登録、read-only
+check、同一release通知のdeduplicate、status、解除を順に確認します。
+
+```powershell
+kairon test commands --profile scheduled-update-check
+```
+
+管理者PowerShell、configured update channel、`GH_TOKEN` / `GITHUB_TOKEN`またはWindows
+Credential Managerが必要です。Discord live通知を確認する場合だけDiscord providerを有効に
+します。証跡では`mutation_detected=false`、credential値の非出力、
+`automatic_download=false`、`automatic_apply=false`、`automatic_restart=false`を確認します。
+外部条件不足は`SETUP_REQUIRED`であり、foreign Taskは置換・削除しません。
+
+## T198 Multi-project rollout
+
+`multi-project-rollout` profileは、2つのfixture projectをcanary / primaryへ割り当て、
+current PASS Stable verificationにbindしたread-only planを確認します。
+
+```powershell
+$env:KAIRON_T198_CANARY_ROOT = "C:\tmp\kairon-canary"
+$env:KAIRON_T198_PRIMARY_ROOT = "C:\tmp\kairon-primary"
+$env:KAIRON_T198_TARGET_VERSION = "0.3.1"
+kairon test commands --profile multi-project-rollout
+```
+
+初回planではcanaryだけが`ready`、primaryは`canary_not_completed`で`blocked`になります。
+operatorがcanaryで手動download / applyとhealth確認を完了した後、新しいplanではcanaryが
+`completed`、primaryが`ready`になります。古いplanは`rollout_input_drift`で`stale`となり、
+commandを再提示しません。profile自体はupdate、runtime、Task Schedulerを変更せず、
+`execution_performed=false`と`automatic_update=false`を確認します。
+
+## T199 Stable soak certification
+
+`stable-soak-certification` profileは、current PASS Stable verificationへbindした新しい
+168時間soakを開始し、最初のmanifestと`SETUP_REQUIRED`状態を確認します。
+
+```powershell
+$env:KAIRON_T199_STABLE_VERIFICATION = ".kairon\release\stable-verifications\<verification-id>.json"
+kairon test commands --profile stable-soak-certification
+```
+
+開始後はproduction daemonとruntime metricsを168実時間以上継続し、OS再起動後も同じ
+`SSK-*` IDを使用します。計画メンテナンスまたは再起動は事前に
+`kairon daemon soak mark`で記録します。168時間経過後に
+`kairon daemon soak certify <soak-id> --format json`を実行し、release driftなし、
+coverage threshold充足、説明不能gap 0件、fatal error / unexpected restart /
+High・Critical incident 0件、SLO PASS/WARNINGを確認します。
+
+unit testのclock injectionや短縮fixtureは実時間operation testを代替しません。
+`evidence_mode=simulated`は常に`SETUP_REQUIRED`で、PASSへ更新しないでください。
+
+## T200 Operation evidence catalog
+
+複数世代のoperation resultを検索し、cleanupから必要なPASS証跡を保護するため、metadata-only
+catalogを生成できます。catalogはcanonical evidenceを置き換えず、Task、test ID、status、
+source commit、freshness、size、SHA-256、integrity、supersession、retention判定だけを保持します。
+
+```powershell
+kairon test evidence catalog `
+  --result-root operation-test-results\manual-t192-t205-current `
+  --result-root operation-test-results\manual-t192-t205-previous `
+  --test-list docs\t192-t205-operation-test-list-v0.md
+
+kairon test evidence list --task T199 --status PASS
+kairon test evidence verify .kairon\runtime\operation-test\evidence-catalog.json
+kairon cleanup retention plan --include-evidence-catalog --dry-run
+```
+
+`--test-list`のaliasはcanonical test IDへ正規化されます。最新のverified PASS、同一test IDで
+唯一のPASS世代、readiness manifestから参照される証跡はretention保護対象です。古い
+superseded、stale、tampered、missing証跡は候補になりますが、catalog生成だけでは移動も
+削除も行いません。catalogが破損・改ざんされている場合、cleanupは
+`operation-test-results`をfail-closedで保護します。catalogを削除しても、同じresult rootから
+再生成できます。
+
+## 実行対象
+
+デフォルトでは次をすべて実行します。
+
+| Test | 内容 |
+|---|---|
+| `Build` | `npm run build` と `npm link` |
+| `Doctor` | `kairon doctor` |
+| `AgentSmoke` | `codex` / `claude` / `gemini`互換agent smoke |
+| `TaskRun` | operation-test tag付きtask create / run |
+| `ReviewLoop` | review loop create / run |
+| `RuntimeActive` | Active Work scheduleでruntime tick確認。実行前にready状態のoperation/manual test queue itemを隔離し、harnessが投入した `maintenance.run` の `item_id` が処理されたことまで確認 |
+| `RuntimeReview` | runtime tick経由でreview queue itemを処理し、review result / loop stateを確認 |
+| `DiscordLiveReady` | Discord envとGateway live readinessを確認。env不足は `SETUP_REQUIRED` として扱う |
+| `DiscordInvalidEnv` | 一時的にinvalid envを注入し、診断とsecret非漏洩を確認 |
+| `DiscordSetupError` | 権限不足や設定不一致のsetup errorを誘発し、raw Discord errorやsecretが出ないことを確認 |
+| `ApprovalNotificationAudit` | Discord approval notification audit artifactを検査 |
+| `DiscordDecisionAuditLive` | 手動Discord button/modal操作後に `decision-interactions.jsonl` が記録されることを確認。timeout未指定時はOPTIONAL、timeout指定後にdecision auditが無い場合はSETUP_REQUIRED |
+| `RuntimeRecovery` | stale gateway / stale git transactionをseedし、runtime recovery evidenceとapproval生成を確認 |
+| `BranchProtectionPublicSandbox` | public sandbox repositoryでGitHub branch protection live API疎通を確認。token不足や403/404は `SETUP_REQUIRED` として扱う |
+
+一部だけ実行する場合:
+
+```powershell
+.\scripts\kairon-operation-test.ps1 `
+  -KaironRoot "C:\Users\hikar\Documents\AutoRunner" `
+  -TargetRoot "M:\EnglishApp" `
+  -Test Build,Doctor,RuntimeActive
+```
+
+Discord decision auditをliveで確認する場合は、approvalをseedしてDiscord上で期待actionをクリックするまで待機させます。
+manual timeout未指定で実行した場合は `decision_audit.status=missing` と `decision_audit.next_action=click Discord approval button and rerun DiscordDecisionAuditLive` を出してOPTIONAL扱いにします。
+timeout指定後も `decision-interactions.jsonl` に対象approval / decisionが記録されない場合は、コードFAILではなく手動操作またはDiscord疎通の外部条件不足としてSETUP_REQUIREDにします。
+
+```powershell
+.\scripts\kairon-operation-test.ps1 `
+  -KaironRoot "C:\Users\hikar\Documents\AutoRunner" `
+  -TargetRoot "M:\EnglishApp" `
+  -Test DiscordDecisionAuditLive `
+  -DiscordDecisionAuditExpectedAction approve `
+  -DiscordDecisionAuditTimeoutSeconds 120
+```
+
+`DiscordSetupError` では実tokenを使いつつ、存在しないguild / channel idを一時注入してsetup errorを確認できます。出力にはraw token、guild id、channel idを残さない方針です。
+
+## GitHub branch protection live確認
+
+T67のGitHub branch protection live確認は、private repositoryのGitHubプラン制約で403になる場合があるため、public sandbox repositoryで代替確認します。手順の詳細は [docs/github-branch-protection-sandbox-v0.md](github-branch-protection-sandbox-v0.md) を参照してください。
+
+必要な前提:
+
+- `GH_TOKEN` または `GITHUB_TOKEN` が設定されていること。両方ある場合、Kaironは `GH_TOKEN` を優先します。
+- fine-grained PATの場合、対象public sandbox repositoryへのRepository accessがあること。
+- Administration permissionがRead-onlyで付与されていること。
+- sandbox repositoryの対象branchにBranch protection ruleが設定され、required pull request reviewsとrequired status checksが有効であること。
+- token値を出力しない。`GH_TOKEN` / `GITHUB_TOKEN` は値ではなく `present` / `missing` のみ記録します。
+
+既定fixtureは `Goodaymmm14Forge` です。`-BranchProtectionSandboxRepoUrl` を省略した場合は `https://github.com/goodaymmm/14Forge.git`、branchは `main` を使います。別のpublic sandbox repositoryを使う場合は `-BranchProtectionSandboxFixture Custom` と `-BranchProtectionSandboxRepoUrl` を指定します。
+
+期待する `kairon doctor` evidence:
+
+```text
+PASS git.branch_protection GitHub branch protection
+  - api_status=ok
+  - branch_protection=enabled
+  - required_pull_request_reviews=present
+  - required_status_checks=present
+```
+
+profile実行例:
+
+```powershell
+.\scripts\kairon-operation-test.ps1 `
+  -KaironRoot "C:\Users\hikar\Documents\AutoRunner" `
+  -TargetRoot "M:\EnglishApp" `
+  -Test BranchProtectionPublicSandbox `
+  -BranchProtectionSandboxRoot "$env:TEMP\kairon-branch-protection-sandbox" `
+  -BranchProtectionSandboxFixture Goodaymmm14Forge `
+  -BranchProtectionSandboxBranch main `
+  -BranchProtectionRequireToken
+```
+
+`BranchProtectionPublicSandbox` は `GH_TOKEN` を優先し、未設定時に `GITHUB_TOKEN` を使います。token未設定、403、404、required gate未設定は、コード不具合ではなく外部条件不足として `SETUP_REQUIRED` に記録します。
+expected required status check名まで厳密に確認する場合は、`-BranchProtectionExpectedStatusChecks "build,ci/test"` を指定します。
+同じ期待値は `KAIRON_GITHUB_EXPECTED_STATUS_CHECKS` にcomma-separatedで設定しても `kairon doctor` 側で解釈されます。
+期待check名が指定された場合、doctor / harness evidenceには `required_status_check_contexts=<names>`、`expected_status_checks=<names>`、`missing_expected_status_checks=none|<names>` が記録されます。
+EnglishAppなどの個人アカウントprivate repositoryで `api_status=plan_or_permission_error` / `http_status=403` になる場合も、public sandbox repositoryで `api_status=ok` を確認できればKairon実装側のlive API疎通は確認済みとして扱います。
+
+## Restore方針
+
+実行開始時に `TargetRoot\.kairon` をbackupします。`-SkipRestore` を付けない限り、script終了時に現在の `TargetRoot\.kairon` を削除してbackupから復元します。
+
+```powershell
+.\scripts\kairon-operation-test.ps1 `
+  -KaironRoot "C:\Users\hikar\Documents\AutoRunner" `
+  -TargetRoot "M:\EnglishApp" `
+  -SkipRestore
+```
+
+`-SkipRestore` は、実行後の `.kairon` artifactを対象project側に残して調査したい場合だけ使います。
+
+## 終了コード
+
+- すべてPASS: `0`
+- 1件以上FAIL: `1`
+
+## 判定メモ
+
+- `codex` smokeは `completed` をPASS条件にする。
+- `claude` smokeは provider quota / rate limit を考慮し、`completed` または `setup_required` をPASS条件にする。
+- `gemini`互換agentはAntigravity (`agy`) のPTY adapter状態に依存するため、`completed` または `setup_required` をPASS条件にする。
+- review loopは `approved` / `changes_requested` / `setup_required` を許容するが、CLI引数エラーや `review_result`欠落・schema validation失敗を evidenceに含む場合はFAILにする。
+- RuntimeActiveは `base_mode=active_work`、`active_work_closed=False`、`action=processed-item` に加え、`tick.item_type=maintenance.run` と `expected_item_id == tick.item_id` をPASS条件にする。
+- Discord系profileはenv不足や手動操作待ちを `SETUP_REQUIRED` / `OPTIONAL` として扱い、secret漏洩があればFAILにする。
+- Discord decision auditは、timeout未指定のmissingを `OPTIONAL`、timeout指定後のmissingを `SETUP_REQUIRED` として扱う。Boardでは `decision_audit.status` と `decision_audit.next_action` を確認する。
+- RuntimeRecoveryは `git_transaction_issues` と `approvals_requested` または既存approvalの検出をevidenceとして確認する。

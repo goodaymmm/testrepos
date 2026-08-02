@@ -1,0 +1,744 @@
+import path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import {
+  CliSessionRunner,
+  type CliSessionRunRecord
+} from "../agents/cli-session-runner.js";
+import type { CommandRunner } from "../agents/command-runner.js";
+import type { InteractiveSessionRunner } from "../agents/interactive-session-runner.js";
+import type { CommandAvailabilityChecker } from "../agents/session-host.js";
+import type { AgentId } from "../agents/types.js";
+import { nextId } from "../core/ids/counter.js";
+import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
+import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
+import {
+  parseReviewResult,
+  type QualityGateDecision,
+  type ReviewResult
+} from "./quality-gate.js";
+import { readDiffSnapshot, type ChangedFile } from "../git/diff-snapshot.js";
+import { WorkQueue } from "../queue/work-queue.js";
+import {
+  ReviewLoopManager,
+  type ReviewLoopState,
+  type ReviewNextAction
+} from "./review-loop-manager.js";
+
+export type ReviewLoopExecutionRequest = {
+  loopId: string;
+  date?: string;
+  timeoutMs?: number;
+};
+
+export type ReviewLoopExecutionResult = {
+  schema_version: string;
+  loop_id: string;
+  status: ReviewLoopState["status"];
+  iteration: number;
+  review_run_ids: string[];
+  review_result_ids: string[];
+  iteration_path: string;
+  decision: QualityGateDecision;
+  next_action: ReviewNextAction;
+  git_transaction_queue_item_id?: string;
+};
+
+type ReviewOutbox = {
+  status?: unknown;
+  review_result?: unknown;
+  events?: unknown;
+};
+
+type ReviewResultReadOutcome =
+  | {
+      kind: "review_result";
+      result: ReviewResult;
+    }
+  | {
+      kind: "setup_required";
+      reviewer: AgentId;
+      reason: string;
+    };
+
+type GitTransactionQueueSummary = NonNullable<ReviewLoopState["git_transaction"]>;
+
+export class ReviewLoopExecutor {
+  private readonly manager: ReviewLoopManager;
+
+  constructor(
+    private readonly projectRoot: string,
+    private readonly options: {
+      commandAvailability?: CommandAvailabilityChecker;
+      commandRunner?: CommandRunner;
+      interactiveSessionRunner?: InteractiveSessionRunner;
+      now?: () => Date;
+    } = {}
+  ) {
+    this.manager = new ReviewLoopManager(projectRoot);
+  }
+
+  async run(request: ReviewLoopExecutionRequest): Promise<ReviewLoopExecutionResult> {
+    const state = await this.manager.loadLoopState(request.loopId);
+
+    if (!shouldRunReviews(state)) {
+      const decision: QualityGateDecision = {
+        status: "passed",
+        reasons: [`review loop is ${state.status}`],
+        blocking_findings: [],
+        review_ids: []
+      };
+      const nextAction: ReviewNextAction = {
+        action: "none",
+        reason: `review loop is ${state.status}`
+      };
+      const artifactPath = await this.writeIterationArtifact(state, {
+        reviewRunIds: [],
+        reviewResults: [],
+        decision,
+        nextAction
+      });
+
+      return {
+        schema_version: "0.1",
+        loop_id: state.loop_id,
+        status: state.status,
+        iteration: state.iteration,
+        review_run_ids: [],
+        review_result_ids: [],
+        iteration_path: artifactPath,
+        decision,
+        next_action: nextAction
+      };
+    }
+
+    const reviewRuns: Array<{ runId: string; record: CliSessionRunRecord }> = [];
+    const reviewResults: ReviewResult[] = [];
+    const setupRequiredReviewers: AgentId[] = [];
+    const setupRequiredReasons: string[] = [];
+    const date = request.date ?? localDateKey(this.now());
+    const allocatedRunIds = new Set(state.history.map((entry) => entry.run_id));
+
+    for (const reviewer of state.reviewers) {
+      const runId = await nextUniqueRunId(this.projectRoot, allocatedRunIds);
+      allocatedRunIds.add(runId);
+      const reviewId = await nextId(this.projectRoot, "review");
+      const instructionPath = await this.writeReviewInstruction(state, {
+        reviewer,
+        reviewId,
+        runId,
+        date
+      });
+      const record = await new CliSessionRunner(this.projectRoot, {
+        commandAvailability: this.options.commandAvailability,
+        commandRunner: this.options.commandRunner,
+        interactiveSessionRunner: this.options.interactiveSessionRunner,
+        now: this.options.now
+      }).runAgentJob({
+        agent: reviewer,
+        date,
+        runId,
+        taskId: state.task_id,
+        persona: "reviewer",
+        timeoutMs: request.timeoutMs,
+        capabilities: ["review", "json.output"],
+        extraSources: [instructionPath]
+      });
+      reviewRuns.push({ runId, record });
+
+      if (isReviewerBlockedStatus(record.status)) {
+        setupRequiredReviewers.push(reviewer);
+        setupRequiredReasons.push(
+          reviewerBlockedReason(reviewer, record)
+        );
+        continue;
+      }
+
+      const outcome = await this.readReviewResult(state, {
+        reviewer,
+        reviewId,
+        runId,
+        record
+      });
+
+      if (outcome.kind === "setup_required") {
+        setupRequiredReviewers.push(outcome.reviewer);
+        setupRequiredReasons.push(outcome.reason);
+        continue;
+      }
+
+      await this.manager.saveReviewResult(outcome.result);
+      reviewResults.push(outcome.result);
+    }
+
+    if (setupRequiredReviewers.length > 0) {
+      const decision: QualityGateDecision = {
+        status: "failed",
+        reasons: setupRequiredReasons,
+        blocking_findings: [],
+        review_ids: reviewResults.map((result) => result.review_id)
+      };
+      const nextAction: ReviewNextAction = {
+        action: "setup_required",
+        reviewers: setupRequiredReviewers,
+        reasons: setupRequiredReasons
+      };
+      const nextState = updateLoopState(state, {
+        reviewRunIds: reviewRuns.map((run) => run.runId),
+        decision,
+        nextAction,
+        now: this.now()
+      });
+      await this.manager.saveLoopState(nextState);
+      const artifactPath = await this.writeIterationArtifact(nextState, {
+        reviewRunIds: reviewRuns.map((run) => run.runId),
+        reviewResults,
+        decision,
+        nextAction
+      });
+
+      return {
+        schema_version: "0.1",
+        loop_id: nextState.loop_id,
+        status: nextState.status,
+        iteration: nextState.iteration,
+        review_run_ids: reviewRuns.map((run) => run.runId),
+        review_result_ids: reviewResults.map((result) => result.review_id),
+        iteration_path: artifactPath,
+        decision,
+        next_action: nextAction
+      };
+    }
+
+    const decision = await this.manager.evaluate(reviewResults);
+    const nextAction = await this.manager.nextAction(state, decision);
+    let nextState = updateLoopState(state, {
+      reviewRunIds: reviewRuns.map((run) => run.runId),
+      decision,
+      nextAction,
+      now: this.now()
+    });
+    const gitTransaction = await this.maybeQueueGitTransaction(nextState, nextAction);
+    if (gitTransaction !== undefined) {
+      nextState = {
+        ...nextState,
+        git_transaction: gitTransaction,
+        updated_at: this.now().toISOString()
+      };
+    }
+    await this.manager.saveLoopState(nextState);
+    const artifactPath = await this.writeIterationArtifact(nextState, {
+      reviewRunIds: reviewRuns.map((run) => run.runId),
+      reviewResults,
+      decision,
+      nextAction,
+      gitTransaction
+    });
+
+    return {
+      schema_version: "0.1",
+      loop_id: nextState.loop_id,
+      status: nextState.status,
+      iteration: nextState.iteration,
+      review_run_ids: reviewRuns.map((run) => run.runId),
+      review_result_ids: reviewResults.map((result) => result.review_id),
+      iteration_path: artifactPath,
+      decision,
+      next_action: nextAction,
+      git_transaction_queue_item_id: gitTransaction?.queue_item_id
+    };
+  }
+
+  private async readReviewResult(
+    state: ReviewLoopState,
+    input: {
+      reviewer: AgentId;
+      reviewId: string;
+      runId: string;
+      record: CliSessionRunRecord;
+    }
+  ): Promise<ReviewResultReadOutcome> {
+    if (input.record.outbox_path === undefined) {
+      return setupRequired(input, "review runner did not produce an outbox path");
+    }
+
+    try {
+      const outbox = await readJsonFile<ReviewOutbox>(
+        resolveInside(this.projectRoot, input.record.outbox_path)
+      );
+      const outboxSetupReason = setupRequiredReasonFromOutbox(outbox);
+      if (outboxSetupReason !== undefined) {
+        return setupRequired(input, outboxSetupReason);
+      }
+
+      const raw =
+        outbox.review_result !== null &&
+        typeof outbox.review_result === "object" &&
+        !Array.isArray(outbox.review_result)
+          ? (outbox.review_result as Record<string, unknown>)
+          : undefined;
+
+      if (raw === undefined) {
+        return setupRequired(input, "review outbox is missing review_result");
+      }
+
+      try {
+        return {
+          kind: "review_result",
+          result: parseReviewResult({
+            schema_version: "0.1",
+            target: {},
+            findings: [],
+            ...raw,
+            review_id: input.reviewId,
+            task_id: state.task_id,
+            run_id: input.runId,
+            reviewer: input.reviewer,
+            created_at: this.now().toISOString()
+          })
+        };
+      } catch (error) {
+        return setupRequired(
+          input,
+          `review_result failed schema validation: ${String(error)}`
+        );
+      }
+    } catch (error) {
+      return setupRequired(
+        input,
+        `review outbox could not be read: ${String(error)}`
+      );
+    }
+  }
+
+  private async writeReviewInstruction(
+    state: ReviewLoopState,
+    input: {
+      reviewer: AgentId;
+      reviewId: string;
+      runId: string;
+      date: string;
+    }
+  ): Promise<string> {
+    const paths = getKaironPaths(this.projectRoot);
+    const instructionPath = resolveInside(
+      paths.kaironDir,
+      "reviews",
+      "loops",
+      `${state.loop_id}-iteration-${state.iteration}-${input.reviewer}.md`
+    );
+    const content = [
+      "# Kairon Review Request",
+      "",
+      `Loop: ${state.loop_id}`,
+      `Iteration: ${state.iteration}`,
+      `Task: ${state.task_id}`,
+      `Reviewer: ${input.reviewer}`,
+      `Review ID: ${input.reviewId}`,
+      `Review Run: ${input.runId}`,
+      `Date: ${input.date}`,
+      "",
+      "Write the normal Kairon outbox JSON and include a top-level `review_result` object.",
+      "Kairon will assign `review_id`, `task_id`, `run_id`, and `reviewer` from this request.",
+      "",
+      "Required `review_result` fields:",
+      "- status: approved | changes_requested | commented",
+      "- score.overall: number from 0 to 1",
+      "- findings: array of { severity, file?, line?, body }",
+      "- tests_passed: boolean",
+      "- secret_scan_passed: boolean",
+      "",
+      "Keep the review bounded by the provided timeout. If full validation cannot finish, still write a valid `review_result`; use `status=commented` or `status=changes_requested`, and set `tests_passed=false` when tests were not completed.",
+      "Do not modify source files during review execution.",
+      ""
+    ].join("\n");
+
+    await writeTextFile(instructionPath, content);
+    return toProjectPath(this.projectRoot, instructionPath);
+  }
+
+  private async writeIterationArtifact(
+    state: ReviewLoopState,
+    input: {
+      reviewRunIds: string[];
+      reviewResults: ReviewResult[];
+      decision: QualityGateDecision;
+      nextAction: ReviewNextAction;
+      gitTransaction?: GitTransactionQueueSummary;
+    }
+  ): Promise<string> {
+    const artifactPath = resolveInside(
+      getKaironPaths(this.projectRoot).kaironDir,
+      "reviews",
+      "loops",
+      `${state.loop_id}-iteration-${state.iteration}.json`
+    );
+    await writeJsonFileAtomic(artifactPath, {
+      schema_version: "0.1",
+      loop_id: state.loop_id,
+      iteration: state.iteration,
+      status: state.status,
+      review_run_ids: input.reviewRunIds,
+      review_result_ids: input.reviewResults.map((result) => result.review_id),
+      decision: input.decision,
+      next_action: input.nextAction,
+      git_transaction: input.gitTransaction,
+      created_at: this.now().toISOString()
+    });
+    return toProjectPath(this.projectRoot, artifactPath);
+  }
+
+  private async maybeQueueGitTransaction(
+    state: ReviewLoopState,
+    nextAction: ReviewNextAction
+  ): Promise<GitTransactionQueueSummary | undefined> {
+    if (
+      nextAction.action !== "approve" ||
+      state.commit_requested !== true ||
+      state.git_transaction !== undefined
+    ) {
+      return state.git_transaction;
+    }
+
+    const implementationRunId = latestImplementationRunId(state);
+    if (implementationRunId === undefined) {
+      return undefined;
+    }
+
+    const snapshot = await readOptionalDiffSnapshot(this.projectRoot, implementationRunId);
+    if (snapshot === undefined) {
+      return undefined;
+    }
+
+    const item = await new WorkQueue(this.projectRoot).enqueue({
+      type: "git.transaction",
+      task_id: state.task_id,
+      priority: 90,
+      payload: {
+        action: "commit",
+        run_id: implementationRunId,
+        agent: state.implementer,
+        review_loop_id: state.loop_id,
+        write_paths: writePathsFromChangedFiles(snapshot.changed_files),
+        push_requested: true,
+        diff_sha256: snapshot.diff_sha256,
+        changed_files: snapshot.changed_files
+      }
+    });
+
+    const summary: GitTransactionQueueSummary = {
+      status: "queued",
+      queue_item_id: item.id,
+      run_id: implementationRunId,
+      diff_sha256: snapshot.diff_sha256,
+      changed_files: snapshot.changed_files,
+      queued_at: item.created_at
+    };
+    await this.recordTaskGitTransaction(state, summary);
+    return summary;
+  }
+
+  private async recordTaskGitTransaction(
+    state: ReviewLoopState,
+    summary: GitTransactionQueueSummary
+  ): Promise<void> {
+    const taskPath = resolveInside(
+      getKaironPaths(this.projectRoot).tasksDir,
+      state.task_id,
+      "task.json"
+    );
+
+    try {
+      const task = await readJsonFile<Record<string, unknown>>(taskPath);
+      await writeJsonFileAtomic(taskPath, {
+        ...task,
+        git_transaction: {
+          status: summary.status,
+          queue_item_id: summary.queue_item_id,
+          run_id: summary.run_id,
+          review_loop_id: state.loop_id,
+          diff_sha256: summary.diff_sha256,
+          queued_at: summary.queued_at
+        },
+        updated_at: summary.queued_at
+      });
+    } catch (error) {
+      if (!String(error).includes("ENOENT")) {
+        throw error;
+      }
+    }
+  }
+
+  private now(): Date {
+    return this.options.now?.() ?? new Date();
+  }
+}
+
+export function formatReviewLoopExecutionResult(
+  result: ReviewLoopExecutionResult
+): string {
+  return [
+    "Kairon review loop executed.",
+    `loop_id=${result.loop_id}`,
+    `status=${result.status}`,
+    `iteration=${result.iteration}`,
+    `decision=${result.decision.status}`,
+    `next_action=${result.next_action.action}`,
+    `review_runs=${result.review_run_ids.join(",")}`,
+    `review_results=${result.review_result_ids.join(",")}`,
+    `iteration_artifact=${result.iteration_path}`,
+    result.git_transaction_queue_item_id === undefined
+      ? null
+      : `git_transaction_queue_item_id=${result.git_transaction_queue_item_id}`,
+    ...result.decision.reasons.map((reason) => `reason=${reason}`)
+  ]
+    .filter((line): line is string => line !== null)
+    .join("\n");
+}
+
+function shouldRunReviews(state: ReviewLoopState): boolean {
+  return (
+    state.code_producing &&
+    ["running", "changes_requested", "setup_required"].includes(state.status)
+  );
+}
+
+async function readOptionalDiffSnapshot(
+  projectRoot: string,
+  runId: string
+): Promise<Awaited<ReturnType<typeof readDiffSnapshot>> | undefined> {
+  try {
+    return await readDiffSnapshot(projectRoot, runId);
+  } catch (error) {
+    if (String(error).includes("ENOENT")) {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+function latestImplementationRunId(state: ReviewLoopState): string | undefined {
+  return [...state.history]
+    .reverse()
+    .find((entry) => entry.type === "implementation" || entry.type === "fix")
+    ?.run_id;
+}
+
+function writePathsFromChangedFiles(changedFiles: ChangedFile[]): string[] {
+  return [
+    ...new Set(
+      changedFiles
+        .flatMap((file) => [file.path, file.previous_path])
+        .filter((value): value is string => value !== undefined && value.length > 0)
+    )
+  ];
+}
+
+function updateLoopState(
+  state: ReviewLoopState,
+  input: {
+    reviewRunIds: string[];
+    decision: QualityGateDecision;
+    nextAction: ReviewNextAction;
+    now: Date;
+  }
+): ReviewLoopState {
+  const nextStatus: ReviewLoopState["status"] =
+    input.nextAction.action === "approve"
+      ? "approved"
+      : input.nextAction.action === "setup_required"
+        ? "setup_required"
+      : input.nextAction.action === "escalate"
+        ? "escalated"
+        : input.nextAction.action === "request_fix"
+          ? "changes_requested"
+          : state.status;
+  const nextIteration =
+    input.nextAction.action === "request_fix" ? state.iteration + 1 : state.iteration;
+
+  return {
+    ...state,
+    status: nextStatus,
+    iteration: nextIteration,
+    history: [
+      ...state.history,
+      ...input.reviewRunIds.map((runId) => ({
+        run_id: runId,
+        type: "review" as const
+      }))
+    ],
+    updated_at: input.now.toISOString()
+  };
+}
+
+function setupRequired(
+  input: {
+    reviewer: AgentId;
+    reviewId: string;
+    runId: string;
+  },
+  reason: string
+): ReviewResultReadOutcome {
+  return {
+    kind: "setup_required",
+    reviewer: input.reviewer,
+    reason: `${input.reviewer}: ${reason}`
+  };
+}
+
+function setupRequiredReasonFromOutbox(outbox: ReviewOutbox): string | undefined {
+  if (isBlockedOutboxStatus(outbox.status)) {
+    const reason = findClassifiedReason(outbox.events);
+    return reason === undefined
+      ? `reviewer CLI is blocked: ${String(outbox.status)}`
+      : `reviewer CLI is blocked: ${reason}`;
+  }
+
+  if (outbox.status === "failed") {
+    const failure = findFailureReason(outbox.events);
+    if (failure !== undefined) {
+      return `reviewer CLI did not produce a usable outbox: ${failure}`;
+    }
+  }
+
+  return findSetupRequiredReason(outbox.events);
+}
+
+function isReviewerBlockedStatus(status: CliSessionRunRecord["status"]): boolean {
+  return (
+    status === "setup_required" ||
+    status === "permission_required" ||
+    status === "rate_limited" ||
+    status === "usage_limited" ||
+    status === "timeout" ||
+    status === "no_output"
+  );
+}
+
+function reviewerBlockedReason(
+  reviewer: AgentId,
+  record: CliSessionRunRecord
+): string {
+  const detail = record.failure_reason ?? record.status;
+  return `${reviewer}: ${detail} for ${record.command}`;
+}
+
+function isBlockedOutboxStatus(status: unknown): boolean {
+  return (
+    status === "setup_required" ||
+    status === "permission_required" ||
+    status === "rate_limited" ||
+    status === "usage_limited" ||
+    status === "timeout" ||
+    status === "no_output"
+  );
+}
+
+function findFailureReason(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const reason = findFailureReason(item);
+      if (reason !== undefined) {
+        return reason;
+      }
+    }
+    return undefined;
+  }
+
+  if (value === null || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (
+    record.message_type === "agent.run.failure" &&
+    typeof record.reason === "string"
+  ) {
+    const timedOut = record.timed_out === true ? ", timed_out=true" : "";
+    return `${record.reason}${timedOut}`;
+  }
+
+  return findFailureReason(Object.values(record));
+}
+
+function findSetupRequiredReason(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const reason = findSetupRequiredReason(item);
+      if (reason !== undefined) {
+        return reason;
+      }
+    }
+    return undefined;
+  }
+
+  if (value === null || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (
+    record.message_type === "agent.run.setup_required" &&
+    typeof record.reason === "string"
+  ) {
+    return `reviewer CLI setup is required: ${record.reason}`;
+  }
+
+  return findSetupRequiredReason(Object.values(record));
+}
+
+function findClassifiedReason(value: unknown): string | undefined {
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const reason = findClassifiedReason(item);
+      if (reason !== undefined) {
+        return reason;
+      }
+    }
+    return undefined;
+  }
+
+  if (value === null || typeof value !== "object") {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  if (
+    typeof record.message_type === "string" &&
+    record.message_type.startsWith("agent.run.") &&
+    typeof record.reason === "string"
+  ) {
+    const timedOut = record.timed_out === true ? ", timed_out=true" : "";
+    return `${record.reason}${timedOut}`;
+  }
+
+  return findClassifiedReason(Object.values(record));
+}
+
+async function nextUniqueRunId(
+  projectRoot: string,
+  allocatedRunIds: Set<string>
+): Promise<string> {
+  for (;;) {
+    const runId = await nextId(projectRoot, "run");
+    if (!allocatedRunIds.has(runId)) {
+      return runId;
+    }
+  }
+}
+
+async function writeTextFile(filePath: string, content: string): Promise<void> {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, content, "utf8");
+}
+
+function toProjectPath(projectRoot: string, filePath: string): string {
+  return toPosixPath(path.relative(projectRoot, filePath));
+}
+
+function localDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
