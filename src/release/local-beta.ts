@@ -110,6 +110,10 @@ const requiredPackageFiles = [
   "package/scripts/install-local-beta.ps1",
   "package/scripts/update-local-beta.ps1",
   "package/scripts/uninstall-local-beta.ps1",
+  "package/scripts/kairon-background-launcher.vbs",
+  "package/scripts/kairon-task-scheduler-common.ps1",
+  "package/scripts/kairon-daemon-task.ps1",
+  "package/scripts/kairon-supervisor-health-task.ps1",
   "package/scripts/kairon-update-check-task.ps1",
   "package/scripts/kairon-dr-verify-task.ps1"
 ];
@@ -120,6 +124,10 @@ const requiredFilesAllowlist = [
   "scripts/install-local-beta.ps1",
   "scripts/update-local-beta.ps1",
   "scripts/uninstall-local-beta.ps1",
+  "scripts/kairon-background-launcher.vbs",
+  "scripts/kairon-task-scheduler-common.ps1",
+  "scripts/kairon-daemon-task.ps1",
+  "scripts/kairon-supervisor-health-task.ps1",
   "scripts/kairon-update-check-task.ps1",
   "scripts/kairon-dr-verify-task.ps1",
   "docs/installation.md",
@@ -369,6 +377,10 @@ function isAllowedPackagePath(value: string): boolean {
     value === "package/scripts/install-local-beta.ps1" ||
     value === "package/scripts/update-local-beta.ps1" ||
     value === "package/scripts/uninstall-local-beta.ps1" ||
+    value === "package/scripts/kairon-background-launcher.vbs" ||
+    value === "package/scripts/kairon-task-scheduler-common.ps1" ||
+    value === "package/scripts/kairon-daemon-task.ps1" ||
+    value === "package/scripts/kairon-supervisor-health-task.ps1" ||
     value === "package/scripts/kairon-update-check-task.ps1" ||
     value === "package/scripts/kairon-dr-verify-task.ps1" ||
     value === "package/dist" ||

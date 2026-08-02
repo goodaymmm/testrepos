@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
   [Parameter(Mandatory = $true)]
-  [ValidateSet("Register", "Verify", "Unregister")]
+  [ValidateSet("Register", "Verify", "Unregister", "Run")]
   [string]$Action,
 
   [Parameter(Mandatory = $true)]
@@ -26,9 +26,53 @@ param(
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
-function Quote-TaskArgument {
-  param([Parameter(Mandatory = $true)][string]$Value)
-  return '"' + ($Value -replace '"', '\"') + '"'
+$taskSchedulerCommon = Join-Path $PSScriptRoot "kairon-task-scheduler-common.ps1"
+. $taskSchedulerCommon
+
+function Get-SupervisorArguments {
+  return @(
+    "projects",
+    "health",
+    "scan",
+    "--registry-path",
+    $RegistryPath,
+    "--project-timeout-ms",
+    [string]$ProjectTimeoutMs,
+    "--concurrency",
+    [string]$Concurrency,
+    "--retention-days",
+    [string]$RetentionDays,
+    "--alert-threshold",
+    $AlertThreshold,
+    "--provider-pressure-threshold",
+    [string]$ProviderPressureThreshold
+  )
+}
+
+function Get-SupervisorTaskSpec {
+  return Get-KaironBackgroundPowerShellActionSpec `
+    -ArgumentList @(
+      "-File",
+      $PSCommandPath,
+      "-Action",
+      "Run",
+      "-TaskName",
+      $TaskName,
+      "-RegistryPath",
+      $RegistryPath,
+      "-KaironCommand",
+      $KaironCommand,
+      "-ProjectTimeoutMs",
+      [string]$ProjectTimeoutMs,
+      "-Concurrency",
+      [string]$Concurrency,
+      "-RetentionDays",
+      [string]$RetentionDays,
+      "-AlertThreshold",
+      $AlertThreshold,
+      "-ProviderPressureThreshold",
+      [string]$ProviderPressureThreshold
+    )
 }
 
 function Show-TaskStatus {
@@ -42,6 +86,21 @@ function Show-TaskStatus {
   Write-Output "task.exists=true"
   Write-Output "task.name=$TaskName"
   Write-Output "task.state=$($task.State)"
+  $windowMode = if (@($task.Actions).Count -eq 1) {
+    Get-KaironTaskWindowMode -Action $task.Actions[0]
+  } else {
+    "foreground_possible"
+  }
+  Write-Output "task.window_mode=$windowMode"
+}
+
+if ($Action -eq "Run") {
+  if ([string]::IsNullOrWhiteSpace($RegistryPath)) {
+    throw "RegistryPath is required for scheduled execution."
+  }
+  $supervisorArguments = Get-SupervisorArguments
+  & $KaironCommand @supervisorArguments
+  exit $LASTEXITCODE
 }
 
 switch ($Action) {
@@ -64,27 +123,7 @@ switch ($Action) {
       throw "RegistryPath is required for registration."
     }
 
-    $arguments = @(
-      "projects",
-      "health",
-      "scan",
-      "--registry-path",
-      (Quote-TaskArgument $RegistryPath),
-      "--project-timeout-ms",
-      [string]$ProjectTimeoutMs,
-      "--concurrency",
-      [string]$Concurrency,
-      "--retention-days",
-      [string]$RetentionDays,
-      "--alert-threshold",
-      $AlertThreshold,
-      "--provider-pressure-threshold",
-      [string]$ProviderPressureThreshold
-    ) -join " "
-
-    $taskAction = New-ScheduledTaskAction `
-      -Execute $KaironCommand `
-      -Argument $arguments
+    $taskAction = New-KaironBackgroundTaskAction -Spec (Get-SupervisorTaskSpec)
     $trigger = New-ScheduledTaskTrigger `
       -Once `
       -At (Get-Date).AddMinutes(1) `

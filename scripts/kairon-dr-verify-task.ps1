@@ -26,29 +26,53 @@ $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
 
 $TaskDescription = "Kairon managed scheduled off-device backup verification"
+$taskSchedulerCommon = Join-Path $PSScriptRoot "kairon-task-scheduler-common.ps1"
+. $taskSchedulerCommon
 
-function Quote-TaskArgument {
-  param([Parameter(Mandatory = $true)][string]$Value)
-  return '"' + ($Value -replace '"', '\"') + '"'
+function Get-ExpectedTaskPowerShellArguments {
+  $scriptPath = $PSCommandPath
+  return @(
+    "-File",
+    $scriptPath,
+    "-Action",
+    "Run",
+    "-ProjectRoot",
+    $ProjectRoot,
+    "-CatalogPath",
+    $CatalogPath,
+    "-KaironCommand",
+    $KaironCommand,
+    "-RehearsalIntervalDays",
+    [string]$RehearsalIntervalDays,
+    "-TimeoutMs",
+    [string]$TimeoutMs,
+    "-MinimumGenerations",
+    [string]$MinimumGenerations
+  )
 }
 
-function Get-ExpectedTaskArguments {
-  $scriptPath = $PSCommandPath
+function Get-ExpectedTaskSpec {
+  return Get-KaironBackgroundPowerShellActionSpec `
+    -ArgumentList (Get-ExpectedTaskPowerShellArguments) `
+    -WorkingDirectory $ProjectRoot
+}
+
+function Get-ExpectedLegacyTaskArguments {
   return @(
     "-NoProfile",
     "-NonInteractive",
     "-ExecutionPolicy",
     "Bypass",
     "-File",
-    (Quote-TaskArgument $scriptPath),
+    (ConvertTo-KaironLegacyTaskArgument $PSCommandPath),
     "-Action",
     "Run",
     "-ProjectRoot",
-    (Quote-TaskArgument $ProjectRoot),
+    (ConvertTo-KaironLegacyTaskArgument $ProjectRoot),
     "-CatalogPath",
-    (Quote-TaskArgument $CatalogPath),
+    (ConvertTo-KaironLegacyTaskArgument $CatalogPath),
     "-KaironCommand",
-    (Quote-TaskArgument $KaironCommand),
+    (ConvertTo-KaironLegacyTaskArgument $KaironCommand),
     "-RehearsalIntervalDays",
     $RehearsalIntervalDays,
     "-TimeoutMs",
@@ -68,9 +92,12 @@ function Test-KaironManagedTask {
 
   $taskAction = $actions[0]
   return (
-    [System.IO.Path]::GetFileName([string]$taskAction.Execute) -ieq
-      "powershell.exe" -and
-    $taskAction.Arguments -eq (Get-ExpectedTaskArguments)
+    (Test-KaironBackgroundTaskAction `
+      -Action $taskAction `
+      -ExpectedSpec (Get-ExpectedTaskSpec)) -or
+    (Test-KaironLegacyPowerShellTaskAction `
+      -Action $taskAction `
+      -ExpectedArguments (Get-ExpectedLegacyTaskArguments))
   )
 }
 
@@ -87,10 +114,13 @@ function Show-TaskStatus {
   }
 
   $managed = Test-KaironManagedTask -Task $task
+  $windowMode = Get-KaironTaskWindowMode -Action $task.Actions[0]
   Write-Output "task.exists=true"
   Write-Output "task.name=$TaskName"
   Write-Output "task.managed=$($managed.ToString().ToLowerInvariant())"
   Write-Output "task.state=$($task.State)"
+  Write-Output "task.window_mode=$windowMode"
+  Write-Output "task.migration_required=$(($managed -and $windowMode -ne 'background').ToString().ToLowerInvariant())"
 }
 
 if ($Action -eq "Run") {
@@ -147,9 +177,7 @@ switch ($Action) {
       throw "Refusing to replace a task that is not managed by Kairon."
     }
 
-    $taskAction = New-ScheduledTaskAction `
-      -Execute "powershell.exe" `
-      -Argument (Get-ExpectedTaskArguments)
+    $taskAction = New-KaironBackgroundTaskAction -Spec (Get-ExpectedTaskSpec)
     $trigger = New-ScheduledTaskTrigger `
       -Once `
       -At (Get-Date).AddMinutes(1) `

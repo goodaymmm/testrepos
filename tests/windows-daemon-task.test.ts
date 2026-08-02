@@ -1,5 +1,6 @@
-import { readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -27,10 +28,32 @@ describe("kairon-daemon-task.ps1", () => {
     expect(script).toContain("[switch]$DryRun");
     expect(script).toContain("task.mutation=skipped");
     expect(script).toContain("secret_values=not_in_task_arguments");
+    expect(script).toContain("Get-KaironBackgroundPowerShellActionSpec");
+    expect(script).toContain("task.window_mode=background");
     expect(script).toContain("Secrets are read from user environment variables.");
     expect(script).not.toContain("KAIRON_DISCORD_BOT_TOKEN");
     expect(script).not.toContain("GH_TOKEN");
     expect(script).not.toContain("GITHUB_TOKEN");
+  });
+
+  it("uses a consoleless background launcher for managed tasks", async () => {
+    const common = await readFile(
+      path.resolve("scripts", "kairon-task-scheduler-common.ps1"),
+      "utf8"
+    );
+    const launcher = await readFile(
+      path.resolve("scripts", "kairon-background-launcher.vbs"),
+      "utf8"
+    );
+
+    expect(common).toContain("wscript.exe");
+    expect(common).toContain("//B");
+    expect(common).toContain("//NoLogo");
+    expect(common).toContain('"-WindowStyle"');
+    expect(common).toContain('"Hidden"');
+    expect(common).toContain("New-KaironBackgroundTaskAction");
+    expect(launcher).toContain('CreateObject("WScript.Shell")');
+    expect(launcher).toContain("shell.Run(commandLine, 0, True)");
   });
 
   it("keeps the Windows daemon operation guide linked from README", async () => {
@@ -74,6 +97,95 @@ describe("kairon-daemon-task.ps1", () => {
     expect(result.stderr).toBe("");
   });
 
+  runIfPowerShell("builds a background action spec and runs it without a console", async () => {
+    const commonPath = path.resolve(
+      "scripts",
+      "kairon-task-scheduler-common.ps1"
+    );
+    const launcherPath = path.resolve(
+      "scripts",
+      "kairon-background-launcher.vbs"
+    );
+    const spec = spawnSync(
+      powershell!,
+      [
+        "-NoProfile",
+        "-Command",
+        `. '${commonPath.replaceAll("'", "''")}'; ` +
+          "$spec = Get-KaironBackgroundPowerShellActionSpec -ArgumentList @('-Command', 'exit 0'); " +
+          "$spec | ConvertTo-Json -Compress"
+      ],
+      { cwd: path.resolve("."), encoding: "utf8", timeout: 10_000 }
+    );
+
+    expect(spec.status, spec.stderr).toBe(0);
+    expect(JSON.parse(spec.stdout)).toMatchObject({
+      WindowMode: "background"
+    });
+    expect(JSON.parse(spec.stdout).Execute.toLowerCase()).toMatch(/wscript\.exe$/u);
+
+    const host = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "cscript.exe");
+    const run = spawnSync(
+      host,
+      ["//B", "//NoLogo", launcherPath, powershell!, "-NoProfile", "-Command", "exit 0"],
+      { cwd: path.resolve("."), encoding: "utf8", timeout: 10_000 }
+    );
+    expect(run.status, run.stderr).toBe(0);
+
+    const roundTripValue = 'space "quoted" trailing\\';
+    const roundTripRoot = await mkdtemp(
+      path.join(os.tmpdir(), "kairon-background-launcher-")
+    );
+    const roundTripScript = path.join(roundTripRoot, "round-trip.ps1");
+    const roundTripOutput = path.join(roundTripRoot, "actual.txt");
+    await writeFile(
+      roundTripScript,
+      [
+        "param([string]$OutputPath, [string]$Expected, [string]$Actual)",
+        "[IO.File]::WriteAllText($OutputPath, $Actual)",
+        "if ($Actual -cne $Expected) { exit 9 }",
+        "exit 0",
+        ""
+      ].join("\n"),
+      "utf8"
+    );
+    const roundTripSpecResult = spawnSync(
+      powershell!,
+      [
+        "-NoProfile",
+        "-Command",
+        `. '${commonPath.replaceAll("'", "''")}'; ` +
+          "$spec = Get-KaironBackgroundProcessActionSpec " +
+          "-Executable (Get-Command pwsh.exe -ErrorAction Stop).Source " +
+          "-ArgumentList @('-NoProfile', '-File', $env:KAIRON_PROBE_SCRIPT, " +
+          "$env:KAIRON_PROBE_OUTPUT, $env:KAIRON_PROBE_VALUE, $env:KAIRON_PROBE_VALUE); " +
+          "$process = Start-Process -FilePath $spec.Execute -ArgumentList $spec.Arguments " +
+          "-WorkingDirectory $env:KAIRON_PROBE_ROOT -WindowStyle Hidden -Wait -PassThru; " +
+          "[pscustomobject]@{ ExitCode = $process.ExitCode; WindowMode = $spec.WindowMode } " +
+          "| ConvertTo-Json -Compress"
+      ],
+      {
+        cwd: path.resolve("."),
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          KAIRON_PROBE_SCRIPT: roundTripScript,
+          KAIRON_PROBE_OUTPUT: roundTripOutput,
+          KAIRON_PROBE_ROOT: roundTripRoot,
+          KAIRON_PROBE_VALUE: roundTripValue
+        }
+      }
+    );
+    expect(roundTripSpecResult.status, roundTripSpecResult.stderr).toBe(0);
+    const roundTrip = JSON.parse(roundTripSpecResult.stdout) as {
+      ExitCode: number;
+      WindowMode: string;
+    };
+    expect(roundTrip).toMatchObject({ ExitCode: 0, WindowMode: "background" });
+    expect(await readFile(roundTripOutput, "utf8")).toBe(roundTripValue);
+  });
+
   it("keeps scheduled supervisor health read-only and secret-free", async () => {
     const script = await readFile(
       path.resolve("scripts", "kairon-supervisor-health-task.ps1"),
@@ -86,6 +198,8 @@ describe("kairon-daemon-task.ps1", () => {
     expect(script).toContain('"health"');
     expect(script).toContain('"scan"');
     expect(script).toContain("-MultipleInstances IgnoreNew");
+    expect(script).toContain("New-KaironBackgroundTaskAction");
+    expect(script).toContain('"-TaskName"');
     expect(script).not.toContain("runtime start");
     expect(script).not.toContain("queue claim");
     expect(script).not.toContain("GH_TOKEN");
@@ -128,6 +242,9 @@ describe("kairon-daemon-task.ps1", () => {
     expect(script).toContain("Test-KaironManagedTask");
     expect(script).toContain("Refusing to remove a task");
     expect(script).toContain("-MultipleInstances IgnoreNew");
+    expect(script).toContain("New-KaironBackgroundTaskAction");
+    expect(script).toContain("Get-ExpectedLegacyTaskArguments");
+    expect(script).toContain("task.migration_required=");
     expect(script).not.toContain("update download");
     expect(script).not.toContain("update apply");
     expect(script).not.toContain("update rollback");
@@ -171,6 +288,9 @@ describe("kairon-daemon-task.ps1", () => {
     expect(script).toContain("Test-KaironManagedTask");
     expect(script).toContain("Refusing to remove a task");
     expect(script).toContain("-MultipleInstances IgnoreNew");
+    expect(script).toContain("New-KaironBackgroundTaskAction");
+    expect(script).toContain("Get-ExpectedLegacyTaskArguments");
+    expect(script).toContain("task.migration_required=");
     expect(script).toContain("-MinimumGenerations");
     expect(script).not.toContain("state backup restore");
     expect(script).not.toContain("GH_TOKEN");

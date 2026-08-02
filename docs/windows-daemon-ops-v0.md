@@ -5,6 +5,8 @@ Task Schedulerにはsecret値を渡さず、ユーザー環境変数からKairon
 通常の状態確認・登録・登録解除・再起動は `kairon daemon task` を使います。
 CLIは内部で `scripts/kairon-daemon-task.ps1` へ固定引数を渡します。helperの直接実行手順も障害調査用として残します。
 
+Task Schedulerは`wscript.exe`のconsoleless launcherを経由してPowerShellとKaironを起動します。ユーザーのinteractive session、mapped drive、Windows Credential Managerへのアクセスを維持しながら、TerminalやCMDを表示せず、Active Windowを奪わない構成です。`task.window_mode=background`を状態確認に使用できます。Task定義自体は隠さないため、Task Schedulerからも確認できます。
+
 <!-- kairon:t175-daemon-baseline -->
 T175 Release Candidate baselineでは、Task Schedulerの無期限実行、24時間以上のsoak certification、restart / reboot segment分類、heartbeat gap、fatal error、evidence hashに加え、Watchdogのdedupe / cooldown / resolve、Incident lifecycle、approval-gated assisted recoveryまでoperation test済みです。短縮fixtureは回帰test用であり、実時間certificationやlive notificationの代替にはしません。
 
