@@ -13,6 +13,9 @@ import {
   type RemoteNotificationsConfig
 } from "./profile.js";
 
+const identityEnforcementHeader = "x-kairon-identity-enforced";
+const identityEnforcementValue = "verified";
+
 export type RemoteEndpointState =
   | "not_configured"
   | "missing"
@@ -330,6 +333,12 @@ async function probeBoardIdentity(
     response.status === 401 ||
     response.status === 403 ||
     (response.status >= 300 && response.status < 400)
+  ) {
+    return "identity_enforced";
+  }
+  if (
+    response.ok &&
+    response.headers.get(identityEnforcementHeader) === identityEnforcementValue
   ) {
     return "identity_enforced";
   }

@@ -233,6 +233,31 @@ describe("stable remote operations profile", () => {
     });
   });
 
+  it("accepts a successful Board response marked by the identity proxy", async () => {
+    const root = await createRemoteProject();
+    await writeRuntimeStatuses(root);
+    const fetchImpl = vi.fn(async (input: string | URL | Request) =>
+      String(input).endsWith("/discord/ready")
+        ? Response.json({ status: "ready", mode: "http_interactions" })
+        : new Response("<html>Board</html>", {
+            status: 200,
+            headers: { "x-kairon-identity-enforced": "verified" }
+          })
+    ) as unknown as typeof fetch;
+
+    const status = await inspectStableRemoteOperations(root, {
+      fetchImpl,
+      probeExternal: true
+    });
+
+    expect(status).toMatchObject({
+      status: "ready",
+      board: { external_readiness: "identity_enforced" },
+      identity: { status: "enforced" },
+      issues: []
+    });
+  });
+
   it("adds the fixed remote Board deep link without embedding a token", async () => {
     const root = await createRemoteProject();
     await writeJsonFileAtomic(

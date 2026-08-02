@@ -1,6 +1,4 @@
-import path from "node:path";
-import { readJsonFile } from "../core/fs/json-file.js";
-import { getKaironPaths } from "../core/fs/paths.js";
+import { getScheduleStatus } from "../runtime/schedule-engine.js";
 import {
   CommandInbox,
   type CommandEnvelope,
@@ -39,6 +37,7 @@ export type QueueWorkerHandlers = {
 
 export type ProcessNextOptions = {
   scheduleMode?: ScheduleMode;
+  activeWorkClosed?: boolean;
   now?: Date;
   blocked?: (item: QueueItem) => boolean;
   commandsOnly?: boolean;
@@ -68,7 +67,9 @@ export class QueueWorker {
 
     await this.workQueue.expireStaleTestItems(options.now);
 
-    const activeWorkClosed = await this.isActiveWorkClosed(options.now);
+    const activeWorkClosed =
+      options.activeWorkClosed ??
+      (await getScheduleStatus(this.projectRoot, options.now)).activeWorkClosed;
     const item = await this.workQueue.claim(workerId, {
       now: options.now,
       blocked: (candidate) =>
@@ -148,36 +149,6 @@ export class QueueWorker {
       item_id: item.id,
       item_type: item.type
     };
-  }
-
-  private async isActiveWorkClosed(now = new Date()): Promise<boolean> {
-    const overridePath = path.join(
-      getKaironPaths(this.projectRoot).stateDir,
-      "schedule_override.json"
-    );
-
-    try {
-      const override = await readJsonFile<{
-        active_work_closed?: boolean;
-        expires_at?: string;
-      }>(overridePath);
-
-      if (!override.active_work_closed) {
-        return false;
-      }
-
-      if (override.expires_at === undefined) {
-        return true;
-      }
-
-      return Date.parse(override.expires_at) > now.getTime();
-    } catch (error) {
-      if (String(error).includes("ENOENT")) {
-        return false;
-      }
-
-      throw error;
-    }
   }
 }
 

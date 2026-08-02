@@ -158,7 +158,9 @@ describe("scheduled off-device backup verification", () => {
         "utf8"
       )))
     ).resolves.toEqual(["keep", "keep"]);
-    expect((await getScheduledDrVerificationStatus(fixture.root)).stale).toBe(false);
+    expect((await getScheduledDrVerificationStatus(fixture.root, {
+      now: () => fixture.now
+    })).stale).toBe(false);
   });
 
   it("uses verification between rehearsal intervals and reports generation shortfall without deletion", async () => {

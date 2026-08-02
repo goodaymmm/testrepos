@@ -142,4 +142,36 @@ describe("QueueWorker", () => {
     });
     await expect(queue.list("ready")).resolves.toHaveLength(2);
   });
+
+  it("ignores an active work closure from a different local date", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeJsonFileAtomic(
+      path.join(root, ".kairon", "state", "schedule_override.json"),
+      {
+        schema_version: "0.1",
+        active_work_closed: true,
+        date: "2026-05-26"
+      }
+    );
+
+    const queue = new WorkQueue(root);
+    const inbox = new CommandInbox(root);
+    const item = await queue.enqueue({ type: "agent.run" });
+    const worker = new QueueWorker(root, queue, inbox, {
+      items: {
+        "agent.run": async () => ({ ran: true })
+      }
+    });
+
+    await expect(
+      worker.processNext("worker-1", {
+        scheduleMode: "active_work",
+        now: new Date("2026-08-02T00:00:00.000Z")
+      })
+    ).resolves.toMatchObject({
+      status: "processed-item",
+      item_id: item.id
+    });
+  });
 });
