@@ -1,7 +1,7 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { initializeProject } from "../src/cli/commands/init.js";
-import { readJsonFile } from "../src/core/fs/json-file.js";
+import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import {
   acquireResourceLock,
   recoverExpiredResourceLocks,
@@ -57,6 +57,10 @@ describe("resource-level state locks", () => {
       now: new Date(now.getTime() - 2_000),
       ttlMs: 1_000
     });
+    await writeJsonFileAtomic(stale.path, {
+      ...stale.data,
+      pid: -1
+    });
     const current = await acquireResourceLock(root, resourcePath, {
       owner: "current-writer",
       now,
@@ -83,10 +87,14 @@ describe("resource-level state locks", () => {
       now: new Date("2026-06-01T00:00:00.000Z"),
       ttlMs: 60_000
     });
-    await acquireResourceLock(root, expiredResource, {
+    const expiredLock = await acquireResourceLock(root, expiredResource, {
       owner: "expired-writer",
       now: new Date("2026-06-01T00:00:00.000Z"),
       ttlMs: 1_000
+    });
+    await writeJsonFileAtomic(expiredLock.path, {
+      ...expiredLock.data,
+      pid: -1
     });
 
     const recovered = await recoverExpiredResourceLocks(root, {
@@ -105,5 +113,29 @@ describe("resource-level state locks", () => {
       })
     ).rejects.toBeInstanceOf(ResourceLockAlreadyExistsError);
     await releaseResourceLock(activeLock);
+  });
+
+  it("does not steal an expired resource lock from a live process", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const resourcePath = path.join(root, ".kairon", "runtime", "lock.json");
+    const liveLock = await acquireResourceLock(root, resourcePath, {
+      owner: "slow-live-writer",
+      now: new Date("2026-06-01T00:00:00.000Z"),
+      ttlMs: 1_000
+    });
+
+    await expect(
+      acquireResourceLock(root, resourcePath, {
+        now: new Date("2026-06-01T00:00:02.000Z")
+      })
+    ).rejects.toBeInstanceOf(ResourceLockAlreadyExistsError);
+    expect(
+      await recoverExpiredResourceLocks(root, {
+        now: new Date("2026-06-01T00:00:02.000Z")
+      })
+    ).toEqual([]);
+
+    await releaseResourceLock(liveLock);
   });
 });

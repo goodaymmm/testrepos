@@ -135,11 +135,116 @@ describe("runtime lock", () => {
       owner: "manual-runtime-lock-test"
     });
 
-    await expect(refreshRuntimeHeartbeat(root)).rejects.toThrow(
-      /Resource lock already exists/
+    const refresh = refreshRuntimeHeartbeat(root);
+    await new Promise((resolve) => setTimeout(resolve, 75));
+    await releaseResourceLock(blocker);
+    await expect(refresh).resolves.toMatchObject({
+      owner: "kairon-runtime",
+      pid: process.pid
+    });
+
+    await releaseRuntimeLock(root);
+  });
+
+  it("does not reclaim a stale heartbeat while the daemon pid is alive", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runtimeLockPath = path.join(root, ".kairon", "runtime", "lock.json");
+    await writeJsonFileAtomic(runtimeLockPath, {
+      owner: "kairon-runtime",
+      pid: process.pid,
+      created_at: "2026-05-26T00:00:00.000Z",
+      expires_at: "2026-05-26T00:00:01.000Z",
+      mode: "daemon",
+      heartbeat_at: "2026-05-26T00:00:00.000Z",
+      updated_at: "2026-05-26T00:00:00.000Z"
+    });
+
+    await expect(readRuntimeLockStatus(root)).resolves.toMatchObject({
+      locked: true,
+      stale: true
+    });
+    await expect(acquireRuntimeLock(root, { mode: "daemon" })).rejects.toThrow(
+      /Lock already exists/
     );
 
-    await releaseResourceLock(blocker);
     await releaseRuntimeLock(root);
+  });
+
+  it("retries runtime acquisition while its resource lock is briefly busy", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const runtimeLockPath = path.join(root, ".kairon", "runtime", "lock.json");
+    const blocker = await acquireResourceLock(root, runtimeLockPath, {
+      owner: "manual-runtime-acquire-test"
+    });
+
+    const acquisition = acquireRuntimeLock(root, { mode: "daemon" });
+    await new Promise((resolve) => setTimeout(resolve, 125));
+    await releaseResourceLock(blocker);
+
+    await expect(acquisition).resolves.toMatchObject({
+      locked: true,
+      data: {
+        owner: "kairon-runtime",
+        pid: process.pid
+      }
+    });
+    await releaseRuntimeLock(root);
+  });
+
+  it("preserves a concurrent stop request during heartbeat serialization", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await acquireRuntimeLock(root, { mode: "daemon" });
+
+    const [heartbeat, stop] = await Promise.all([
+      refreshRuntimeHeartbeat(root, { tickCount: 9, lastAction: "idle" }),
+      requestRuntimeStop(root)
+    ]);
+
+    expect(heartbeat.tick_count).toBe(9);
+    expect(stop).toMatchObject({ stop_requested: true });
+    await expect(readRuntimeLockStatus(root)).resolves.toMatchObject({
+      locked: true,
+      data: {
+        tick_count: 9,
+        stop_requested: true
+      }
+    });
+
+    await releaseRuntimeLock(root);
+  });
+
+  it("rejects heartbeat writes after runtime ownership changes", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await acquireRuntimeLock(root, { mode: "daemon" });
+    await writeJsonFileAtomic(path.join(root, ".kairon", "runtime", "lock.json"), {
+      owner: "kairon-runtime",
+      pid: process.pid + 100_000,
+      created_at: "2026-05-26T00:00:00.000Z",
+      expires_at: "2999-01-01T00:00:00.000Z",
+      mode: "daemon",
+      heartbeat_at: "2026-05-26T00:00:00.000Z",
+      updated_at: "2026-05-26T00:00:00.000Z"
+    });
+
+    await expect(refreshRuntimeHeartbeat(root)).rejects.toThrow(
+      /Runtime lock ownership was lost/
+    );
+    await releaseRuntimeLock(root);
+  });
+
+  it("serializes a stop request with runtime lock release", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await acquireRuntimeLock(root, { mode: "daemon" });
+
+    await Promise.all([requestRuntimeStop(root), releaseRuntimeLock(root)]);
+
+    await expect(readRuntimeLockStatus(root)).resolves.toMatchObject({
+      locked: false
+    });
   });
 });

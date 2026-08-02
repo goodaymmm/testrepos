@@ -28,6 +28,10 @@ export type ResourceLockOptions = {
   ttlMs?: number;
 };
 
+type ResourceLockRetirementResult =
+  | { retired: true; lock: ResourceLockData }
+  | { retired: false };
+
 export type RecoveredResourceLock = {
   lock_path: string;
   resource: string;
@@ -89,8 +93,12 @@ export async function acquireResourceLock(
       throw error;
     }
 
-    if (await isResourceLockExpired(lockPath, now)) {
-      await rm(lockPath, { force: true });
+    const observed = await readResourceLock(lockPath);
+    if (
+      observed !== null &&
+      Date.parse(observed.expires_at) <= now.getTime() &&
+      (await retireExpiredResourceLock(lockPath, observed, now)).retired
+    ) {
       return acquireResourceLock(projectRoot, resourcePath, options);
     }
 
@@ -185,7 +193,10 @@ export async function recoverExpiredResourceLocks(
       continue;
     }
 
-    await rm(lockPath, { force: true });
+    const retirement = await retireExpiredResourceLock(lockPath, lock, now);
+    if (!retirement.retired) {
+      continue;
+    }
     recovered.push({
       lock_path: toPosixPath(path.relative(getKaironPaths(projectRoot).root, lockPath)),
       resource: lock.resource,
@@ -221,12 +232,59 @@ function normalizeResourcePath(projectRoot: string, resourcePath: string): strin
   return toPosixPath(relative);
 }
 
-async function isResourceLockExpired(lockPath: string, now: Date): Promise<boolean> {
+async function readResourceLock(lockPath: string): Promise<ResourceLockData | null> {
   try {
     const raw = await readFile(lockPath, "utf8");
-    const data = JSON.parse(raw) as ResourceLockData;
-    return Date.parse(data.expires_at) <= now.getTime();
+    return JSON.parse(raw) as ResourceLockData;
   } catch {
+    return null;
+  }
+}
+
+async function retireExpiredResourceLock(
+  lockPath: string,
+  observed: ResourceLockData,
+  now: Date
+): Promise<ResourceLockRetirementResult> {
+  const recoveryPath = `${lockPath}.recovery`;
+  let recoveryHandle;
+  try {
+    recoveryHandle = await open(recoveryPath, "wx");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+      return { retired: false };
+    }
+    throw error;
+  }
+
+  try {
+    const current = await readResourceLock(lockPath);
+    if (
+      current === null ||
+      current.fencing_token !== observed.fencing_token ||
+      Date.parse(current.expires_at) > now.getTime() ||
+      processExists(current.pid)
+    ) {
+      return { retired: false };
+    }
+
+    await rm(lockPath, { force: true });
+    return { retired: true, lock: current };
+  } finally {
+    await recoveryHandle.close();
+    await rm(recoveryPath, { force: true });
+  }
+}
+
+function processExists(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) {
     return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "EPERM";
   }
 }
