@@ -40,6 +40,34 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 各PR本文とmerge履歴を一次記録とし、local operation resultやgenerated evidenceはrelease
 notesへ埋め込まず、再実行方法と判定結果だけを記録します。
 
+## 0.3.1 - 2026-08-02
+
+<!-- kairon:patch-release-plan PRP-20260802110526-9613f553c17b -->
+
+### Summary
+
+- Review the Unreleased items above and move the approved patch scope here.
+
+### Tests
+
+- `npm run build`
+- `npm test`
+- `npx vitest run tests\security-baseline.test.ts`
+
+### Compatibility / Canary
+
+- 0.3.0 -> 0.3.1 -> 0.3.0 -> 0.3.1
+- Clean Windows Stable canary: pending
+- Post-release health decision: pending
+
+### Manual / Operation Test Evidence
+
+- Patch release verification result: pending
+
+### Known Limitations
+
+-
+
 ## Versioning
 
 <!-- kairon:versioning-policy -->
