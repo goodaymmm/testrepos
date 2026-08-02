@@ -33,6 +33,7 @@ T175 Release Candidate baselineでは、固定hostnameでのDiscord interaction�
 - `board_base_url`のoriginを`allowed_origins`へ含める。
 - `trusted_proxies`はKairon loopback backendへ接続するreverse proxyだけに限定する。
 - `identity_header`はreverse proxyが認証成功後に設定し、外部requestから渡された同名headerをproxy側で除去・上書きする。
+- 認証済みoperatorからのprobeがTailscale等で自動認証される構成では、identity-aware proxyは認証成功後の応答に`X-Kairon-Identity-Enforced: verified`を設定できる。proxyはupstream由来の同名headerを転送せず、自身がidentityを検証した場合だけ設定する。`remote doctor`はこの完全一致をidentity enforcementの証跡として扱い、headerのない2xxは従来どおりbypassと判定する。
 
 profile有効時は、Discordへ`reverse-proxy`、Boardへ`remote-readonly`の実効設定を配布する。従来の`notifications.http`と`notifications.board`はprofile無効時の互換設定として残る。
 

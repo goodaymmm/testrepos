@@ -152,6 +152,7 @@ export class RuntimeLoop {
         date
       ).processNext(workerId, {
         scheduleMode: schedule.mode,
+        activeWorkClosed: schedule.activeWorkClosed,
         now,
         commandsOnly: true
       });
@@ -205,6 +206,7 @@ export class RuntimeLoop {
       date
     ).processNext(workerId, {
       scheduleMode: schedule.mode,
+      activeWorkClosed: schedule.activeWorkClosed,
       now,
       blocked: (item) =>
         this.isWorkflowRuntimeItemBlocked(item, productionWorkflowEnabled)
