@@ -265,9 +265,16 @@ function Assert-NoResidualServices {
 }
 
 function Stop-KaironRuntime {
-  & $KaironWrapper stop
-  if ($LASTEXITCODE -ne 0) {
-    throw "Kairon runtime stop request failed. exit_code=$LASTEXITCODE"
+  $exitCode = 1
+  Push-Location -LiteralPath $ProjectRoot
+  try {
+    & $KaironWrapper stop
+    $exitCode = if ($LASTEXITCODE -is [int]) { $LASTEXITCODE } else { 0 }
+  } finally {
+    Pop-Location
+  }
+  if ($exitCode -ne 0) {
+    throw "Kairon runtime stop request failed. exit_code=$exitCode"
   }
   $timeoutSeconds = if ($AllowLegacyCleanup) { 10 } else { 90 }
   $deadline = [DateTimeOffset]::UtcNow.AddSeconds($timeoutSeconds)

@@ -193,6 +193,23 @@ function Convert-T199TimeOfDay([string]$Value) {
   )
 }
 
+function ConvertTo-T199DateTimeOffset([object]$Value) {
+  if ($null -eq $Value) {
+    throw "T199 timestamp is missing."
+  }
+  if ($Value -is [DateTimeOffset]) {
+    return $Value
+  }
+  if ($Value -is [DateTime]) {
+    return [DateTimeOffset]$Value
+  }
+  return [DateTimeOffset]::Parse(
+    [string]$Value,
+    [Globalization.CultureInfo]::InvariantCulture,
+    [Globalization.DateTimeStyles]::RoundtripKind
+  )
+}
+
 function Get-LatestDaemonStartedAt {
   if (-not (Test-Path -LiteralPath $DaemonLogRoot -PathType Container)) {
     return $null
@@ -205,7 +222,7 @@ function Get-LatestDaemonStartedAt {
             try {
               $event = $_ | ConvertFrom-Json
               if ($event.event -eq "started" -and -not [string]::IsNullOrWhiteSpace($event.created_at)) {
-                [DateTimeOffset]::Parse($event.created_at)
+                ConvertTo-T199DateTimeOffset $event.created_at
               }
             } catch {
               # Ignore a partially written final JSONL record and retry on the next poll.
@@ -220,7 +237,7 @@ function Test-StatusFresh([object]$Status, [DateTimeOffset]$NotBefore) {
   if ($null -eq $Status -or [string]::IsNullOrWhiteSpace($Status.updated_at)) {
     return $false
   }
-  return [DateTimeOffset]::Parse($Status.updated_at) -ge $NotBefore
+  return (ConvertTo-T199DateTimeOffset $Status.updated_at) -ge $NotBefore
 }
 
 function Wait-SoakServices([DateTimeOffset]$NotBefore, [int]$TimeoutSeconds = 180) {
@@ -321,7 +338,7 @@ switch ($Action) {
     if ($artifact.status -ne "PASS" -or $artifact.integrity_status -ne "PASS" -or $artifact.currentness_status -ne "PASS") {
       throw "Stable verification is not a current integrity PASS."
     }
-    if ([DateTimeOffset]::Parse($artifact.expires_at) -le [DateTimeOffset]::UtcNow) {
+    if ((ConvertTo-T199DateTimeOffset $artifact.expires_at) -le [DateTimeOffset]::UtcNow) {
       throw "Stable verification is expired. Rerun PublishAndVerify immediately before Start."
     }
     Assert-CleanQueue
