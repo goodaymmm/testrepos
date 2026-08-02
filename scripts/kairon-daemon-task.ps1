@@ -14,6 +14,9 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+$taskSchedulerCommon = Join-Path $PSScriptRoot "kairon-task-scheduler-common.ps1"
+. $taskSchedulerCommon
+
 function Resolve-ProjectRoot {
   param([string]$Path)
 
@@ -34,13 +37,7 @@ function Get-LogRoot {
   return $ConfiguredLogRoot
 }
 
-function Quote-Argument {
-  param([string]$Value)
-
-  return '"' + ($Value -replace '"', '\"') + '"'
-}
-
-function Get-RunArguments {
+function Get-RunArgumentList {
   param(
     [string]$ScriptPath,
     [string]$Root,
@@ -49,24 +46,20 @@ function Get-RunArguments {
     [string]$DaemonLogRoot
   )
 
-  $parts = @(
-    "-NoProfile",
-    "-ExecutionPolicy",
-    "Bypass",
+  return @(
     "-File",
-    (Quote-Argument $ScriptPath),
+    $ScriptPath,
     "-Action",
     "Run",
     "-ProjectRoot",
-    (Quote-Argument $Root),
+    $Root,
     "-KaironCommand",
-    (Quote-Argument $Command),
+    $Command,
     "-IntervalMs",
     [string]$TickIntervalMs,
     "-LogRoot",
-    (Quote-Argument $DaemonLogRoot)
+    $DaemonLogRoot
   )
-  return ($parts -join " ")
 }
 
 function Assert-WindowsTaskScheduler {
@@ -174,6 +167,7 @@ function Show-KaironTaskPlan {
     Write-Host "interval_ms=$TickIntervalMs"
     Write-Host "log_root=$DaemonLogRoot"
     Write-Host "secret_values=not_in_task_arguments"
+    Write-Host "task.window_mode=background"
   }
 }
 
@@ -194,26 +188,21 @@ function Register-KaironTask {
   }
 
   New-Item -ItemType Directory -Force -Path $DaemonLogRoot | Out-Null
-  $execute = if (Get-Command pwsh.exe -ErrorAction SilentlyContinue) {
-    "pwsh.exe"
-  } else {
-    "powershell.exe"
-  }
-  $arguments = Get-RunArguments `
+  $arguments = Get-RunArgumentList `
     -ScriptPath $scriptPath `
     -Root $Root `
     -Command $Command `
     -TickIntervalMs $TickIntervalMs `
     -DaemonLogRoot $DaemonLogRoot
+  $actionSpec = Get-KaironBackgroundPowerShellActionSpec `
+    -ArgumentList $arguments `
+    -WorkingDirectory $Root
   $trigger = if ($UseStartupTrigger) {
     New-ScheduledTaskTrigger -AtStartup
   } else {
     New-ScheduledTaskTrigger -AtLogOn
   }
-  $action = New-ScheduledTaskAction `
-    -Execute $execute `
-    -Argument $arguments `
-    -WorkingDirectory $Root
+  $action = New-KaironBackgroundTaskAction -Spec $actionSpec
   $principalUserId = if ([string]::IsNullOrWhiteSpace($env:USERDOMAIN)) {
     $env:USERNAME
   } else {
@@ -251,6 +240,7 @@ function Register-KaironTask {
   Write-Host "task_registered=$Name"
   Write-Host "project_root=$Root"
   Write-Host "log_root=$DaemonLogRoot"
+  Write-Host "task.window_mode=background"
 }
 
 function Show-KaironTaskStatus {
@@ -269,6 +259,12 @@ function Show-KaironTaskStatus {
   Write-Host "task.lastRunTime=$($info.LastRunTime)"
   Write-Host "task.lastTaskResult=$($info.LastTaskResult)"
   Write-Host "task.nextRunTime=$($info.NextRunTime)"
+  $windowMode = if (@($task.Actions).Count -eq 1) {
+    Get-KaironTaskWindowMode -Action $task.Actions[0]
+  } else {
+    "foreground_possible"
+  }
+  Write-Host "task.window_mode=$windowMode"
 }
 
 $resolvedProjectRoot = Resolve-ProjectRoot $ProjectRoot

@@ -36,6 +36,10 @@ export async function createReleaseBundleFixture(
       "scripts/install-local-beta.ps1",
       "scripts/update-local-beta.ps1",
       "scripts/uninstall-local-beta.ps1",
+      "scripts/kairon-background-launcher.vbs",
+      "scripts/kairon-task-scheduler-common.ps1",
+      "scripts/kairon-daemon-task.ps1",
+      "scripts/kairon-supervisor-health-task.ps1",
       "scripts/kairon-update-check-task.ps1",
       "scripts/kairon-dr-verify-task.ps1",
       "docs/installation.md",
@@ -51,6 +55,10 @@ export async function createReleaseBundleFixture(
     { path: "package/scripts/install-local-beta.ps1", content: "# install\n" },
     { path: "package/scripts/update-local-beta.ps1", content: "# update\n" },
     { path: "package/scripts/uninstall-local-beta.ps1", content: "# uninstall\n" },
+    { path: "package/scripts/kairon-background-launcher.vbs", content: "' background launcher\n" },
+    { path: "package/scripts/kairon-task-scheduler-common.ps1", content: "# task scheduler common\n" },
+    { path: "package/scripts/kairon-daemon-task.ps1", content: "# daemon task\n" },
+    { path: "package/scripts/kairon-supervisor-health-task.ps1", content: "# supervisor health task\n" },
     { path: "package/scripts/kairon-update-check-task.ps1", content: "# scheduled update\n" },
     { path: "package/scripts/kairon-dr-verify-task.ps1", content: "# scheduled DR verification\n" }
   ].map((entry) => ({

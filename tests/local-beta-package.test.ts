@@ -82,6 +82,10 @@ describe("local release package", () => {
       "scripts/install-local-beta.ps1",
       "scripts/update-local-beta.ps1",
       "scripts/uninstall-local-beta.ps1",
+      "scripts/kairon-background-launcher.vbs",
+      "scripts/kairon-task-scheduler-common.ps1",
+      "scripts/kairon-daemon-task.ps1",
+      "scripts/kairon-supervisor-health-task.ps1",
       "scripts/kairon-update-check-task.ps1",
       "scripts/kairon-dr-verify-task.ps1",
       "docs/installation.md",
@@ -116,6 +120,9 @@ describe("local release package", () => {
       "install-local-beta.ps1",
       "update-local-beta.ps1",
       "uninstall-local-beta.ps1",
+      "kairon-task-scheduler-common.ps1",
+      "kairon-daemon-task.ps1",
+      "kairon-supervisor-health-task.ps1",
       "kairon-update-check-task.ps1",
       "kairon-dr-verify-task.ps1"
     ]) {
