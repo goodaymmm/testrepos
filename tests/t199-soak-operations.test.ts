@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -129,7 +129,11 @@ describe("T199 soak operations", () => {
     );
 
     expect(result.status, result.stderr).toBe(0);
-    expect((await readFile(capturePath, "utf8")).trim()).toBe(root);
+    const observedRoot = await realpath((await readFile(capturePath, "utf8")).trim());
+    const expectedRoot = await realpath(root);
+    expect(normalizePathForComparison(observedRoot)).toBe(
+      normalizePathForComparison(expectedRoot)
+    );
   });
 
   it("treats a missing or stopped remote supervisor as an idempotent stop", async () => {
@@ -226,4 +230,9 @@ function findPowerShell(): string | undefined {
     if (result.status === 0) return candidate;
   }
   return undefined;
+}
+
+function normalizePathForComparison(value: string): string {
+  const normalized = path.normalize(value);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
