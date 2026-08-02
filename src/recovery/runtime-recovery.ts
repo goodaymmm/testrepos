@@ -7,6 +7,7 @@ import { recoverExpiredResourceLocks } from "../core/fs/resource-lock.js";
 import { nextId } from "../core/ids/counter.js";
 import { WorkQueue, type QueueItem } from "../queue/work-queue.js";
 import {
+  isRuntimeLockOwnerProcessAlive,
   readRuntimeLockStatus,
   releaseRuntimeLock
 } from "../runtime/runtime-lock.js";
@@ -607,7 +608,11 @@ async function recoverStaleRuntimeLock(
     heartbeatStaleMs: options.heartbeatStaleMs
   });
 
-  if (!status.locked || !status.stale) {
+  if (
+    !status.locked ||
+    !status.stale ||
+    isRuntimeLockOwnerProcessAlive(status.data)
+  ) {
     return null;
   }
   const issue = createRecoveryIssue({

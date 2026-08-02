@@ -1,12 +1,30 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { readJsonFile } from "../core/fs/json-file.js";
-import { acquireLockFile, type LockFileData } from "../core/fs/lock-file.js";
+import {
+  acquireLockFile,
+  LockAlreadyExistsError,
+  type LockFileData
+} from "../core/fs/lock-file.js";
 import { getKaironPaths } from "../core/fs/paths.js";
 import {
+  ResourceFencingTokenError,
+  ResourceLockAlreadyExistsError,
   withResourceLock,
   writeJsonFileFenced
 } from "../core/fs/resource-lock.js";
+
+const runtimeResourceLockTtlMs = 5 * 60 * 1_000;
+const runtimeLockRetryDelaysMs = [
+  100,
+  250,
+  500,
+  1_000,
+  2_000,
+  4_000,
+  8_000,
+  15_000
+] as const;
 
 export type RuntimeLockMode = "single_tick" | "daemon";
 
@@ -51,33 +69,64 @@ export async function acquireRuntimeLock(
   options: RuntimeLockOptions = {}
 ): Promise<RuntimeLockStatus> {
   const lockPath = runtimeLockPath(projectRoot);
-  const existing = await readRuntimeLockStatus(projectRoot, options);
-  if (existing.locked && existing.stale) {
-    await rm(lockPath, { force: true });
-  }
-
   const now = options.now ?? new Date();
   const ttlMs = options.ttlMs ?? 24 * 60 * 60 * 1000;
-  const handle = await acquireLockFile(lockPath, "kairon-runtime", ttlMs);
-  const data: RuntimeLockData = {
-    ...handle.data,
-    mode: options.mode ?? "single_tick",
-    heartbeat_at: now.toISOString(),
-    updated_at: now.toISOString(),
-    expires_at: new Date(now.getTime() + ttlMs).toISOString()
-  };
-  await writeRuntimeLockData(projectRoot, data);
+  return withRuntimeLockWriteRetry(async () =>
+    withResourceLock(
+      projectRoot,
+      lockPath,
+      { owner: "runtime-lock-acquire", ttlMs: runtimeResourceLockTtlMs },
+      async (resourceLock) => {
+        const existing = await readRuntimeLockStatus(projectRoot, options);
+        if (existing.locked) {
+          if (
+            existing.stale &&
+            !isRuntimeLockOwnerProcessAlive(existing.data)
+          ) {
+            await rm(lockPath, { force: true });
+          } else {
+            throw new LockAlreadyExistsError(lockPath);
+          }
+        }
 
-  return {
-    locked: true,
-    stale: false,
-    data,
-    path: lockPath
-  };
+        const handle = await acquireLockFile(lockPath, "kairon-runtime", ttlMs);
+        const data: RuntimeLockData = {
+          ...handle.data,
+          mode: options.mode ?? "single_tick",
+          heartbeat_at: now.toISOString(),
+          updated_at: now.toISOString(),
+          expires_at: new Date(now.getTime() + ttlMs).toISOString()
+        };
+        try {
+          await writeJsonFileFenced(resourceLock, lockPath, data);
+        } catch (error) {
+          await rm(lockPath, { force: true });
+          throw error;
+        }
+
+        return {
+          locked: true,
+          stale: false,
+          data,
+          path: lockPath
+        };
+      }
+    )
+  );
 }
 
 export async function releaseRuntimeLock(projectRoot: string): Promise<void> {
-  await rm(runtimeLockPath(projectRoot), { force: true });
+  const lockPath = runtimeLockPath(projectRoot);
+  await withRuntimeLockWriteRetry(async () =>
+    withResourceLock(
+      projectRoot,
+      lockPath,
+      { owner: "runtime-lock-release", ttlMs: runtimeResourceLockTtlMs },
+      async () => {
+        await rm(lockPath, { force: true });
+      }
+    )
+  );
 }
 
 export async function readRuntimeLockStatus(
@@ -115,66 +164,69 @@ export async function refreshRuntimeHeartbeat(
     lastError?: RuntimeLockData["last_error"] | null;
   } = {}
 ): Promise<RuntimeLockData> {
-  const status = await readRuntimeLockStatus(projectRoot);
-  if (!status.locked) {
-    throw new Error("Runtime lock is not held.");
-  }
-
   const now = options.now ?? new Date();
   const ttlMs = options.ttlMs ?? 24 * 60 * 60 * 1000;
-  const data: RuntimeLockData = {
-    ...status.data,
-    heartbeat_at: now.toISOString(),
-    updated_at: now.toISOString(),
-    expires_at: new Date(now.getTime() + ttlMs).toISOString()
-  };
-
-  if (options.tickCount !== undefined) {
-    data.tick_count = options.tickCount;
-  }
-  if (options.idleCount !== undefined) {
-    data.idle_count = options.idleCount;
-  }
-  if (options.lastAction !== undefined) {
-    data.last_action = options.lastAction;
-  }
-  if (options.nextTickAt !== undefined) {
-    if (options.nextTickAt === null) {
-      delete data.next_tick_at;
-    } else {
-      data.next_tick_at = options.nextTickAt;
+  return mutateRuntimeLockData(projectRoot, (current) => {
+    if (current === null) {
+      throw new Error("Runtime lock is not held.");
     }
-  }
-  if (options.lastError !== undefined) {
-    if (options.lastError === null) {
-      delete data.last_error;
-    } else {
-      data.last_error = options.lastError;
+    if (current.owner !== "kairon-runtime" || current.pid !== process.pid) {
+      throw new Error(
+        `Runtime lock ownership was lost. expected_pid=${process.pid} actual_pid=${current.pid}`
+      );
     }
-  }
 
-  await writeRuntimeLockData(projectRoot, data);
-  return data;
+    const data: RuntimeLockData = {
+      ...current,
+      heartbeat_at: now.toISOString(),
+      updated_at: now.toISOString(),
+      expires_at: new Date(now.getTime() + ttlMs).toISOString()
+    };
+
+    if (options.tickCount !== undefined) {
+      data.tick_count = options.tickCount;
+    }
+    if (options.idleCount !== undefined) {
+      data.idle_count = options.idleCount;
+    }
+    if (options.lastAction !== undefined) {
+      data.last_action = options.lastAction;
+    }
+    if (options.nextTickAt !== undefined) {
+      if (options.nextTickAt === null) {
+        delete data.next_tick_at;
+      } else {
+        data.next_tick_at = options.nextTickAt;
+      }
+    }
+    if (options.lastError !== undefined) {
+      if (options.lastError === null) {
+        delete data.last_error;
+      } else {
+        data.last_error = options.lastError;
+      }
+    }
+
+    return data;
+  });
 }
 
 export async function requestRuntimeStop(
   projectRoot: string,
   options: { now?: Date } = {}
 ): Promise<RuntimeLockData | null> {
-  const status = await readRuntimeLockStatus(projectRoot);
-  if (!status.locked) {
-    return null;
-  }
-
   const now = options.now ?? new Date();
-  const data: RuntimeLockData = {
-    ...status.data,
-    stop_requested: true,
-    stop_requested_at: now.toISOString(),
-    updated_at: now.toISOString()
-  };
-  await writeRuntimeLockData(projectRoot, data);
-  return data;
+  return mutateRuntimeLockData(projectRoot, (current) => {
+    if (current === null) {
+      return null;
+    }
+    return {
+      ...current,
+      stop_requested: true,
+      stop_requested_at: now.toISOString(),
+      updated_at: now.toISOString()
+    };
+  });
 }
 
 export async function isRuntimeStopRequested(projectRoot: string): Promise<boolean> {
@@ -186,19 +238,85 @@ function runtimeLockPath(projectRoot: string): string {
   return path.join(getKaironPaths(projectRoot).runtimeDir, "lock.json");
 }
 
-async function writeRuntimeLockData(
+async function mutateRuntimeLockData<T extends RuntimeLockData | null>(
   projectRoot: string,
-  data: RuntimeLockData
-): Promise<void> {
+  mutate: (current: RuntimeLockData | null) => T
+): Promise<T> {
   const lockPath = runtimeLockPath(projectRoot);
-  await withResourceLock(
-    projectRoot,
-    lockPath,
-    { owner: "runtime-lock" },
-    async (lock) => {
-      await writeJsonFileFenced(lock, lockPath, data);
-    }
+  return withRuntimeLockWriteRetry(async () =>
+    withResourceLock(
+      projectRoot,
+      lockPath,
+      { owner: "runtime-lock", ttlMs: runtimeResourceLockTtlMs },
+      async (lock) => {
+        let current: RuntimeLockData | null;
+        try {
+          current = await readJsonFile<RuntimeLockData>(lockPath);
+        } catch (error) {
+          if (String(error).includes("ENOENT")) {
+            current = null;
+          } else {
+            throw error;
+          }
+        }
+        const next = mutate(current);
+        if (next !== null) {
+          await writeJsonFileFenced(lock, lockPath, next);
+        }
+        return next;
+      }
+    )
   );
+}
+
+export function isRuntimeLockOwnerProcessAlive(data: RuntimeLockData): boolean {
+  return processExists(data.pid);
+}
+
+async function withRuntimeLockWriteRetry<T>(run: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await run();
+    } catch (error) {
+      if (
+        !isRetryableRuntimeLockError(error) ||
+        attempt >= runtimeLockRetryDelaysMs.length
+      ) {
+        throw error;
+      }
+      await delay(runtimeLockRetryDelaysMs[attempt]);
+    }
+  }
+}
+
+function isRetryableRuntimeLockError(error: unknown): boolean {
+  if (
+    error instanceof ResourceLockAlreadyExistsError ||
+    error instanceof ResourceFencingTokenError
+  ) {
+    return true;
+  }
+  const code = findErrorCode(error);
+  return code !== undefined && ["EACCES", "EBUSY", "EPERM"].includes(code);
+}
+
+function findErrorCode(error: unknown): string | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (typeof current !== "object" || current === null) {
+      return undefined;
+    }
+    const code = (current as NodeJS.ErrnoException).code;
+    if (typeof code === "string") {
+      return code;
+    }
+    current = (current as { cause?: unknown }).cause;
+  }
+  return undefined;
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 async function isRuntimeLockStale(

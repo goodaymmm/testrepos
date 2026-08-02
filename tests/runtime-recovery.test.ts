@@ -16,7 +16,10 @@ import {
   runRuntimeRecovery,
   type RuntimeRecoveryResult
 } from "../src/recovery/runtime-recovery.js";
-import { readRuntimeLockStatus } from "../src/runtime/runtime-lock.js";
+import {
+  readRuntimeLockStatus,
+  releaseRuntimeLock
+} from "../src/runtime/runtime-lock.js";
 import { WorkQueue } from "../src/queue/work-queue.js";
 import { createTempProject } from "./test-utils.js";
 
@@ -176,10 +179,35 @@ describe("runtime recovery", () => {
     });
   });
 
+  it("does not clear a stale heartbeat while the runtime pid is alive", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await writeJsonFileAtomic(path.join(root, ".kairon", "runtime", "lock.json"), {
+      owner: "kairon-runtime",
+      pid: process.pid,
+      created_at: "2026-06-01T00:00:00.000Z",
+      expires_at: "2999-01-01T00:00:00.000Z",
+      mode: "daemon",
+      heartbeat_at: "2026-06-01T00:00:00.000Z",
+      updated_at: "2026-06-01T00:00:00.000Z"
+    });
+
+    const result = await runRuntimeRecovery(root, {
+      now: new Date("2026-06-01T00:02:00.000Z")
+    });
+
+    expect(result.summary.stale_locks_cleared).toBe(0);
+    await expect(readRuntimeLockStatus(root)).resolves.toMatchObject({
+      locked: true,
+      stale: true
+    });
+    await releaseRuntimeLock(root);
+  });
+
   it("clears expired resource-level locks during recovery", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
-    await acquireResourceLock(
+    const staleLock = await acquireResourceLock(
       root,
       path.join(root, ".kairon", "approvals", "APR-LOCKED.json"),
       {
@@ -188,6 +216,10 @@ describe("runtime recovery", () => {
         ttlMs: 1_000
       }
     );
+    await writeJsonFileAtomic(staleLock.path, {
+      ...staleLock.data,
+      pid: -1
+    });
 
     const result = await runRuntimeRecovery(root, {
       now: new Date("2026-06-01T00:00:02.000Z")
