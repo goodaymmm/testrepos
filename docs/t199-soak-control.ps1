@@ -210,6 +210,113 @@ function ConvertTo-T199DateTimeOffset([object]$Value) {
   )
 }
 
+function Get-T199RemoteFailureThreshold {
+  $runtimePath = Join-Path $ProjectRoot ".kairon\config\runtime.json"
+  if (-not (Test-Path -LiteralPath $runtimePath -PathType Leaf)) {
+    return 3
+  }
+  $runtime = Get-Content -LiteralPath $runtimePath -Raw -Encoding UTF8 | ConvertFrom-Json
+  $watchdogProperty = $runtime.PSObject.Properties["watchdog"]
+  if ($null -eq $watchdogProperty) {
+    return 3
+  }
+  $rulesProperty = $watchdogProperty.Value.PSObject.Properties["rules"]
+  if ($null -eq $rulesProperty) {
+    return 3
+  }
+  $ruleProperty = $rulesProperty.Value.PSObject.Properties["remote_external_unreachable"]
+  if ($null -eq $ruleProperty) {
+    return 3
+  }
+  $rule = $ruleProperty.Value
+  $thresholdSeconds = $rule.PSObject.Properties["threshold_seconds"]
+  $thresholdCount = $rule.PSObject.Properties["threshold"]
+  $configured = if ($null -ne $thresholdSeconds) {
+    $thresholdSeconds.Value
+  } elseif ($null -ne $thresholdCount) {
+    $thresholdCount.Value
+  } else {
+    3
+  }
+  $threshold = 0
+  if (-not [int]::TryParse([string]$configured, [ref]$threshold) -or $threshold -lt 1) {
+    throw "T199 remote failure threshold is invalid: $configured"
+  }
+  return $threshold
+}
+
+function Test-T199RemoteCheckpointReady([object]$Status) {
+  return (
+    $null -ne $Status -and
+    $Status.profile -eq "stable-remote-readonly" -and
+    $Status.status -eq "ready" -and
+    $Status.config.status -eq "ready" -and
+    $Status.discord.local_status -eq "ready" -and
+    -not [bool]$Status.discord.url_drift -and
+    $Status.discord.external_readiness -eq "ready" -and
+    $Status.board.local_status -eq "ready" -and
+    -not [bool]$Status.board.url_drift -and
+    $Status.board.external_readiness -eq "identity_enforced" -and
+    $Status.identity.status -eq "enforced" -and
+    $Status.tunnel.status -eq "connected"
+  )
+}
+
+function Test-T199RemoteFailureConfirmed(
+  [object]$Status,
+  [int]$FailureThreshold
+) {
+  if ($null -eq $Status) {
+    return $true
+  }
+  if (
+    $Status.profile -ne "stable-remote-readonly" -or
+    $Status.config.status -ne "ready" -or
+    $Status.discord.local_status -ne "ready" -or
+    [bool]$Status.discord.url_drift -or
+    $Status.board.local_status -ne "ready" -or
+    [bool]$Status.board.url_drift -or
+    $Status.board.external_readiness -eq "identity_bypass_detected" -or
+    $Status.identity.status -eq "bypass_detected"
+  ) {
+    return $true
+  }
+  return (
+    ($Status.discord.external_readiness -eq "unreachable" -and
+      [int]$Status.discord.consecutive_failures -ge $FailureThreshold) -or
+    ($Status.board.external_readiness -eq "unreachable" -and
+      [int]$Status.board.consecutive_failures -ge $FailureThreshold) -or
+    ($Status.tunnel.status -eq "disconnected" -and
+      [int]$Status.tunnel.consecutive_failures -ge $FailureThreshold)
+  )
+}
+
+function Invoke-T199RemoteCheckpointProbe {
+  $failureThreshold = Get-T199RemoteFailureThreshold
+  $lastStatus = $null
+  for ($attempt = 1; $attempt -le $failureThreshold; $attempt++) {
+    $lastStatus = Invoke-KaironJson @("remote", "doctor", "--format", "json")
+    if (
+      (Test-T199RemoteCheckpointReady $lastStatus) -or
+      (Test-T199RemoteFailureConfirmed $lastStatus $failureThreshold)
+    ) {
+      return [ordered]@{
+        status = $lastStatus
+        attempts = $attempt
+        failure_threshold = $failureThreshold
+      }
+    }
+    if ($attempt -lt $failureThreshold) {
+      Start-Sleep -Seconds 5
+    }
+  }
+  return [ordered]@{
+    status = $lastStatus
+    attempts = $failureThreshold
+    failure_threshold = $failureThreshold
+  }
+}
+
 function Get-LatestDaemonStartedAt {
   if (-not (Test-Path -LiteralPath $DaemonLogRoot -PathType Container)) {
     return $null
@@ -417,7 +524,8 @@ switch ($Action) {
     $evaluation = Invoke-KaironJson @(
       "daemon", "soak", "status", $id, "--format", "json"
     )
-    $remote = Invoke-KaironJson @("remote", "doctor", "--format", "json")
+    $remoteProbe = Invoke-T199RemoteCheckpointProbe
+    $remote = $remoteProbe.status
     $tasks = Get-SoakTaskStatus
     $reasons = @($evaluation.reasons)
     $blockingReasons = @(
@@ -449,10 +557,7 @@ switch ($Action) {
       $blockingReasons.Count -eq 0 -and
       @($evaluation.slo_statuses).Count -gt 0 -and
       $badSloStatuses.Count -eq 0 -and
-      $remote.status -eq "ready" -and
-      $remote.discord.external_readiness -eq "ready" -and
-      $remote.board.external_readiness -eq "identity_enforced" -and
-      $remote.tunnel.status -eq "connected" -and
+      (Test-T199RemoteCheckpointReady $remote) -and
       $taskFailures.Count -eq 0
     )
     $artifact = [ordered]@{
@@ -464,6 +569,8 @@ switch ($Action) {
       evaluated_at = [DateTimeOffset]::UtcNow.ToString("o")
       soak = $evaluation
       remote = $remote
+      remote_probe_attempts = $remoteProbe.attempts
+      remote_failure_threshold = $remoteProbe.failure_threshold
       tasks = $tasks
       blocking_reasons = $blockingReasons
       bad_slo_statuses = $badSloStatuses

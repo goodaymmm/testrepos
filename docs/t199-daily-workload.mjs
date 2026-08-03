@@ -10,6 +10,7 @@ import { metricsSloCheckCommand } from "../dist/cli/commands/metrics.js";
 import { runRemoteDoctorCommand } from "../dist/cli/commands/remote.js";
 import { createTaskCommand } from "../dist/cli/commands/task.js";
 import { WorkQueue } from "../dist/queue/work-queue.js";
+import { createT199ApprovalId } from "./t199-soak-identifiers.mjs";
 
 const projectRoot = resolveProjectRoot(process.argv.slice(2));
 const runtimeRoot = path.join(projectRoot, ".kairon", "runtime");
@@ -17,7 +18,6 @@ const lockPath = path.join(runtimeRoot, "t199-daily-workload.lock");
 const statusPath = path.join(runtimeRoot, "t199-daily-workload.json");
 const date = localDateKey(new Date());
 const soakId = await readActiveSoakId(projectRoot);
-const soakKey = soakId.slice(-12);
 let lock;
 
 await mkdir(runtimeRoot, { recursive: true });
@@ -92,7 +92,7 @@ try {
   }
 
   for (let index = 1; index <= 5; index += 1) {
-    const approvalId = `APR-T199-${date.replaceAll("-", "")}-${soakKey}-${index}`;
+    const approvalId = createT199ApprovalId(soakId, date, index);
     const approvalPath = path.join(
       projectRoot,
       ".kairon",
