@@ -50,7 +50,7 @@ kairon remote doctor
 - `profile show`: 実効設定と旧設定からの移行提案を表示する。設定を書き換えない。
 - `profile validate`: networkへ接続せず、固定URL、CIDR、origin、identity headerを検証する。
 - `status`: local runtime artifactと設定URLを照合し、起動状態とURL driftを表示する。直前の外部診断結果は上書きしない。
-- `doctor`: 外部Discord readinessと未認証Board accessをprobeし、疎通、identity enforcement、tunnel状態を保存する。
+- `doctor`: 外部Discord readinessと未認証Board accessをprobeし、疎通、identity enforcement、tunnel状態を保存する。単発の到達不能はstatus artifactへ残すが、remote readiness SLOの失敗サンプルは`remote_external_unreachable`の連続失敗閾値へ到達した時点で確定する。
 
 状態は`.kairon/runtime/remote/status.json`へ保存する。raw response body、cookie、Authorization、identity値、access tokenは保存しない。
 

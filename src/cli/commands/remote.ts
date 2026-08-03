@@ -10,6 +10,7 @@ import {
   type RemoteProbeState
 } from "../../remote/status.js";
 import { recordRemoteReadiness } from "../../observability/runtime-metrics.js";
+import { defaultWatchdogPolicy } from "../../runtime/watchdog-rules.js";
 
 type OutputFormat = "text" | "json";
 
@@ -102,19 +103,64 @@ export async function runRemoteDoctorCommand(
   projectRoot: string,
   options: { format?: string } = {}
 ): Promise<string> {
+  const failureThreshold = await resolveRemoteFailureThreshold(projectRoot);
   const status = await inspectStableRemoteOperations(projectRoot, {
     probeExternal: true
   });
-  await recordRemoteReadiness(projectRoot, {
+  await recordConfirmedRemoteReadiness(projectRoot, {
     provider: "discord",
-    result: metricReadiness(status.discord.external_readiness)
+    probe: status.discord.external_readiness,
+    consecutiveFailures: status.discord.consecutive_failures,
+    failureThreshold
   }).catch(() => undefined);
-  await recordRemoteReadiness(projectRoot, {
+  await recordConfirmedRemoteReadiness(projectRoot, {
     provider: "board",
-    result: metricReadiness(status.board.external_readiness)
+    probe: status.board.external_readiness,
+    consecutiveFailures: status.board.consecutive_failures,
+    failureThreshold
   }).catch(() => undefined);
   return formatStableRemoteStatus(status, {
     format: parseOutputFormat(options.format)
+  });
+}
+
+type RemoteRuntimeConfig = {
+  watchdog?: {
+    rules?: {
+      remote_external_unreachable?: {
+        threshold?: number;
+        threshold_seconds?: number;
+      };
+    };
+  };
+};
+
+async function resolveRemoteFailureThreshold(projectRoot: string): Promise<number> {
+  const runtime = await loadConfigFile<RemoteRuntimeConfig>(projectRoot, "runtime.json");
+  const configured = runtime.watchdog?.rules?.remote_external_unreachable;
+  return configured?.threshold_seconds ??
+    configured?.threshold ??
+    defaultWatchdogPolicy.rules.remote_external_unreachable.threshold;
+}
+
+async function recordConfirmedRemoteReadiness(
+  projectRoot: string,
+  input: {
+    provider: "discord" | "board";
+    probe: RemoteProbeState;
+    consecutiveFailures: number;
+    failureThreshold: number;
+  }
+): Promise<void> {
+  if (
+    input.probe === "unreachable" &&
+    input.consecutiveFailures < input.failureThreshold
+  ) {
+    return;
+  }
+  await recordRemoteReadiness(projectRoot, {
+    provider: input.provider,
+    result: metricReadiness(input.probe)
   });
 }
 

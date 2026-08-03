@@ -16,8 +16,11 @@ import {
 } from "../src/remote/status.js";
 import {
   getRemoteStatusCommand,
+  runRemoteDoctorCommand,
   validateRemoteProfileCommand
 } from "../src/cli/commands/remote.js";
+import { createRuntimeMetricsSnapshot } from "../src/observability/metrics-store.js";
+import { checkRuntimeSlo } from "../src/observability/slo.js";
 import { notifyPendingDiscordApprovals } from "../src/discord/approval-notifier.js";
 import type { PreparedDiscordGateway } from "../src/discord/gateway.js";
 import { createTempProject } from "./test-utils.js";
@@ -301,6 +304,70 @@ describe("stable remote operations profile", () => {
     expect(recovered.status).toBe("ready");
     expect(recovered.board.consecutive_failures).toBe(0);
     expect(recovered.tunnel.consecutive_failures).toBe(0);
+  });
+
+  it("keeps isolated probe failures out of SLO until one streak is confirmed", async () => {
+    const root = await createRemoteProject();
+    await writeRuntimeStatuses(root);
+    const boardOutcomes = [
+      "fail",
+      "ready",
+      "fail",
+      "ready",
+      "fail",
+      "fail",
+      "fail"
+    ];
+    const failingFetch = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).endsWith("/discord/ready")) {
+        return Response.json({ status: "ready", mode: "http_interactions" });
+      }
+      if (boardOutcomes.shift() === "ready") {
+        return new Response("", { status: 302 });
+      }
+      throw new Error("transient board failure");
+    }) as unknown as typeof fetch;
+    vi.stubGlobal("fetch", failingFetch);
+
+    try {
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        await runRemoteDoctorCommand(root, { format: "json" });
+      }
+      const transient = await createRuntimeMetricsSnapshot(root, {
+        now: new Date(),
+        windowMinutes: 60
+      });
+      expect(transient.metrics.remote_readiness).toMatchObject({
+        samples: 6,
+        average: 1
+      });
+      const transientSlo = await checkRuntimeSlo(root, {
+        now: new Date(),
+        snapshot: transient,
+        persist: false
+      });
+      expect(transientSlo.objectives.remote_readiness.status).toBe("PASS");
+
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        await runRemoteDoctorCommand(root, { format: "json" });
+      }
+      const confirmed = await createRuntimeMetricsSnapshot(root, {
+        now: new Date(),
+        windowMinutes: 60
+      });
+      expect(confirmed.metrics.remote_readiness).toMatchObject({
+        samples: 10,
+        average: 0.9
+      });
+      const confirmedSlo = await checkRuntimeSlo(root, {
+        now: new Date(),
+        snapshot: confirmed,
+        persist: false
+      });
+      expect(confirmedSlo.objectives.remote_readiness.status).toBe("CRITICAL");
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("adds the fixed remote Board deep link without embedding a token", async () => {
