@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
@@ -26,6 +26,9 @@ describe("T199 soak operations", () => {
     expect(tasks).toContain("t199-soak-schedule.json");
     expect(control).toContain("Read-T199Schedule");
     expect(control).toContain("daily_workload_at");
+    expect(control).toContain("ConvertTo-T199DateTimeOffset");
+    expect(control).not.toContain("[DateTimeOffset]::Parse($event.created_at)");
+    expect(control).not.toContain("[DateTimeOffset]::Parse($Status.updated_at)");
     expect(tasks).not.toContain('New-ScheduledTaskTrigger -Daily -At "01:10"');
     expect(control).not.toContain("Start T199 between 00:55 and 01:05");
   });
@@ -70,6 +73,67 @@ describe("T199 soak operations", () => {
       );
       expect(result.status, result.stderr).toBe(0);
     }
+  });
+
+  runIfPowerShell("preserves UTC when ConvertFrom-Json returns DateTime", () => {
+    const scriptPath = path.resolve("docs", "t199-soak-control.ps1");
+    const escapedPath = scriptPath.replaceAll("'", "''");
+    const command = [
+      `$source = Get-Content -LiteralPath '${escapedPath}' -Raw -Encoding UTF8`,
+      "$tokens = $null",
+      "$errors = $null",
+      "$ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)",
+      "$function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'ConvertTo-T199DateTimeOffset' }, $true)",
+      ". ([scriptblock]::Create($function.Extent.Text))",
+      "$value = '{\"updated_at\":\"2026-08-02T18:06:29.581Z\"}' | ConvertFrom-Json",
+      "(ConvertTo-T199DateTimeOffset $value.updated_at).ToString('o')"
+    ].join("; ");
+    const result = spawnSync(
+      powershell!,
+      ["-NoProfile", "-Command", command],
+      { cwd: path.resolve("."), encoding: "utf8", timeout: 10_000 }
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("2026-08-02T18:06:29.5810000+00:00");
+  });
+
+  runIfPowerShell("requests runtime stop from the configured project root", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kairon-t199-stop-root-"));
+    const capturePath = path.join(root, "captured-cwd.txt");
+    const wrapperPath = path.join(root, "fake-kairon.cmd");
+    await writeFile(
+      wrapperPath,
+      `@echo off\r\ncd > "${capturePath}"\r\nexit /b 0\r\n`,
+      "utf8"
+    );
+    const scriptPath = path.resolve("docs", "t199-soak-tasks.ps1");
+    const escaped = (value: string) => value.replaceAll("'", "''");
+    const command = [
+      `$source = Get-Content -LiteralPath '${escaped(scriptPath)}' -Raw -Encoding UTF8`,
+      "$tokens = $null",
+      "$errors = $null",
+      "$ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)",
+      "$function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Stop-KaironRuntime' }, $true)",
+      ". ([scriptblock]::Create($function.Extent.Text))",
+      `$ProjectRoot = '${escaped(root)}'`,
+      `$KaironWrapper = '${escaped(wrapperPath)}'`,
+      `$RuntimeLockPath = '${escaped(path.join(root, ".kairon", "runtime", "lock.json"))}'`,
+      "$AllowLegacyCleanup = $false",
+      "Stop-KaironRuntime"
+    ].join("; ");
+    const result = spawnSync(
+      powershell!,
+      ["-NoProfile", "-Command", command],
+      { cwd: path.resolve("."), encoding: "utf8", timeout: 10_000 }
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    const observedRoot = await realpath((await readFile(capturePath, "utf8")).trim());
+    const expectedRoot = await realpath(root);
+    expect(normalizePathForComparison(observedRoot)).toBe(
+      normalizePathForComparison(expectedRoot)
+    );
   });
 
   it("treats a missing or stopped remote supervisor as an idempotent stop", async () => {
@@ -166,4 +230,9 @@ function findPowerShell(): string | undefined {
     if (result.status === 0) return candidate;
   }
   return undefined;
+}
+
+function normalizePathForComparison(value: string): string {
+  const normalized = path.normalize(value);
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
