@@ -1,0 +1,23 @@
+{
+  "schema_version": "0.1",
+  "seed": 18704,
+  "scenarios": [
+    { "id": "queue.list.1k", "size": 1000 },
+    { "id": "queue.list.10k", "size": 10000 },
+    { "id": "queue.claim.1k", "size": 1000 },
+    { "id": "queue.claim.10k", "size": 10000 },
+    { "id": "state.integrity.1k", "size": 1000 },
+    { "id": "state.event_compaction.1k", "size": 1000 },
+    { "id": "workflow.checkpoint_replay.100", "size": 100 },
+    { "id": "workflow.checkpoint_replay.1k", "size": 1000 },
+    { "id": "rag.lexical_query.1k", "size": 1000 },
+    { "id": "rag.lexical_query.10k", "size": 10000 },
+    { "id": "rag.vector_query.1k", "size": 1000 },
+    { "id": "rag.vector_query.10k", "size": 10000 },
+    { "id": "rag.hybrid_query.1k", "size": 1000 },
+    { "id": "rag.hybrid_query.10k", "size": 10000 },
+    { "id": "board.projection.1k", "size": 1000 },
+    { "id": "projects.supervisor_scan.10", "size": 10 },
+    { "id": "projects.supervisor_scan.50", "size": 50 }
+  ]
+}
