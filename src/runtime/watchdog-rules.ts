@@ -66,9 +66,11 @@ export type WatchdogRuleInput = {
   remote?: {
     configured: boolean;
     external_unreachable: boolean;
+    external_unreachable_count?: number;
     identity_bypass: boolean;
     url_drift: boolean;
     tunnel_disconnected: boolean;
+    tunnel_disconnected_count?: number;
   };
   slo?: {
     status:
@@ -146,7 +148,7 @@ export const defaultWatchdogPolicy: WatchdogPolicy = {
     remote_external_unreachable: {
       enabled: true,
       severity: "high",
-      threshold: 1
+      threshold: 3
     },
     remote_identity_bypass: {
       enabled: true,
@@ -161,7 +163,7 @@ export const defaultWatchdogPolicy: WatchdogPolicy = {
     remote_tunnel_disconnected: {
       enabled: true,
       severity: "critical",
-      threshold: 1
+      threshold: 3
     },
     slo_breach: {
       enabled: true,
@@ -370,9 +372,12 @@ export function evaluateWatchdogRules(
 
   const remote = input.remote;
   if (remote?.configured === true) {
+    const externalUnreachableCount = remote.external_unreachable_count ??
+      (remote.external_unreachable ? 1 : 0);
     if (
       policy.rules.remote_external_unreachable.enabled &&
-      remote.external_unreachable
+      externalUnreachableCount >=
+        policy.rules.remote_external_unreachable.threshold
     ) {
       findings.push(
         finding(
@@ -383,9 +388,10 @@ export function evaluateWatchdogRules(
           {
             title: "Stable remote endpoint is unreachable",
             summary:
-              "The latest remote doctor probe could not reach one or more external endpoints.",
+              "Remote doctor probes repeatedly could not reach one or more external endpoints.",
             evidence: {
               external_unreachable: true,
+              consecutive_failures: externalUnreachableCount,
               threshold: policy.rules.remote_external_unreachable.threshold
             }
           }
@@ -427,9 +433,12 @@ export function evaluateWatchdogRules(
         })
       );
     }
+    const tunnelDisconnectedCount = remote.tunnel_disconnected_count ??
+      (remote.tunnel_disconnected ? 1 : 0);
     if (
       policy.rules.remote_tunnel_disconnected.enabled &&
-      remote.tunnel_disconnected
+      tunnelDisconnectedCount >=
+        policy.rules.remote_tunnel_disconnected.threshold
     ) {
       findings.push(
         finding(
@@ -440,9 +449,10 @@ export function evaluateWatchdogRules(
           {
             title: "Stable remote tunnel is disconnected",
             summary:
-              "Discord interactions and Board endpoints were both unreachable in the latest probe.",
+              "Discord interactions and Board endpoints were repeatedly unreachable.",
             evidence: {
               tunnel_disconnected: true,
+              consecutive_failures: tunnelDisconnectedCount,
               threshold: policy.rules.remote_tunnel_disconnected.threshold
             }
           }

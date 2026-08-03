@@ -128,9 +128,11 @@ describe("runtime watchdog", () => {
     input.remote = {
       configured: true,
       external_unreachable: true,
+      external_unreachable_count: 3,
       identity_bypass: true,
       url_drift: true,
-      tunnel_disconnected: true
+      tunnel_disconnected: true,
+      tunnel_disconnected_count: 3
     };
 
     expect(
@@ -143,6 +145,21 @@ describe("runtime watchdog", () => {
       "remote_tunnel_disconnected",
       "remote_url_drift"
     ]);
+  });
+
+  it("debounces one transient remote probe failure", () => {
+    const input = baseInput("2026-07-23T00:10:00.000Z");
+    input.remote = {
+      configured: true,
+      external_unreachable: true,
+      external_unreachable_count: 1,
+      identity_bypass: false,
+      url_drift: false,
+      tunnel_disconnected: true,
+      tunnel_disconnected_count: 1
+    };
+
+    expect(evaluateWatchdogRules(input, defaultWatchdogPolicy)).toEqual([]);
   });
 
   it("deduplicates, cools down, resolves, and reopens one fingerprint", async () => {
