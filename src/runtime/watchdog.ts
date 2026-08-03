@@ -627,10 +627,22 @@ async function collectWatchdogRuleInput(
             external_unreachable:
               remoteStatus.discord.external_readiness === "unreachable" ||
               remoteStatus.board.external_readiness === "unreachable",
+            external_unreachable_count: Math.max(
+              remoteStatus.discord.external_readiness === "unreachable"
+                ? remoteStatus.discord.consecutive_failures ?? 1
+                : 0,
+              remoteStatus.board.external_readiness === "unreachable"
+                ? remoteStatus.board.consecutive_failures ?? 1
+                : 0
+            ),
             identity_bypass: remoteStatus.identity.status === "bypass_detected",
             url_drift:
               remoteStatus.discord.url_drift || remoteStatus.board.url_drift,
-            tunnel_disconnected: remoteStatus.tunnel.status === "disconnected"
+            tunnel_disconnected: remoteStatus.tunnel.status === "disconnected",
+            tunnel_disconnected_count:
+              remoteStatus.tunnel.status === "disconnected"
+                ? remoteStatus.tunnel.consecutive_failures ?? 1
+                : 0
           },
     slo:
       sloSummary === undefined

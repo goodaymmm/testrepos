@@ -258,6 +258,51 @@ describe("stable remote operations profile", () => {
     });
   });
 
+  it("tracks and resets consecutive external probe failures", async () => {
+    const root = await createRemoteProject();
+    await writeRuntimeStatuses(root);
+    const now = new Date("2026-07-25T00:00:00.000Z");
+    const failingFetch = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).endsWith("/discord/ready")) {
+        return Response.json({ status: "ready", mode: "http_interactions" });
+      }
+      throw new Error("transient board failure");
+    }) as unknown as typeof fetch;
+
+    const first = await inspectStableRemoteOperations(root, {
+      fetchImpl: failingFetch,
+      probeExternal: true,
+      now: () => now
+    });
+    const second = await inspectStableRemoteOperations(root, {
+      fetchImpl: failingFetch,
+      probeExternal: true,
+      now: () => new Date(now.getTime() + 60_000)
+    });
+    const third = await inspectStableRemoteOperations(root, {
+      fetchImpl: failingFetch,
+      probeExternal: true,
+      now: () => new Date(now.getTime() + 120_000)
+    });
+    expect(first.board.consecutive_failures).toBe(1);
+    expect(second.board.consecutive_failures).toBe(2);
+    expect(third.board.consecutive_failures).toBe(3);
+    expect(second.discord.consecutive_failures).toBe(0);
+
+    const recovered = await inspectStableRemoteOperations(root, {
+      probeExternal: true,
+      now: () => new Date(now.getTime() + 180_000),
+      fetchImpl: vi.fn(async (input: string | URL | Request) =>
+        String(input).endsWith("/discord/ready")
+          ? Response.json({ status: "ready", mode: "http_interactions" })
+          : new Response("", { status: 302 })
+      ) as unknown as typeof fetch
+    });
+    expect(recovered.status).toBe("ready");
+    expect(recovered.board.consecutive_failures).toBe(0);
+    expect(recovered.tunnel.consecutive_failures).toBe(0);
+  });
+
   it("adds the fixed remote Board deep link without embedding a token", async () => {
     const root = await createRemoteProject();
     await writeJsonFileAtomic(
