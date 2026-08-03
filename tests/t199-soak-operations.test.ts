@@ -2,12 +2,33 @@ import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises"
 import { spawnSync } from "node:child_process";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const powershell = findPowerShell();
 const runIfPowerShell = powershell ? it : it.skip;
 
 describe("T199 soak operations", () => {
+  it("uses the full soak execution key for retry-safe approval ids", async () => {
+    const identifiers = await import(
+      pathToFileURL(path.resolve("docs", "t199-soak-identifiers.mjs")).href
+    );
+    const first = identifiers.createT199ApprovalId(
+      "SSK-20260803110634-3584ff08ca9c",
+      "2026-08-03",
+      1
+    );
+    const retry = identifiers.createT199ApprovalId(
+      "SSK-20260803134641-3584ff08ca9c",
+      "2026-08-03",
+      1
+    );
+
+    expect(first).not.toBe(retry);
+    expect(first).toContain("20260803110634-3584ff08ca9c");
+    expect(retry).toContain("20260803134641-3584ff08ca9c");
+  });
+
   it("keeps soak times explicit and outside source code", async () => {
     const tasks = await readFile(
       path.resolve("docs", "t199-soak-tasks.ps1"),
@@ -96,6 +117,115 @@ describe("T199 soak operations", () => {
 
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout.trim()).toBe("2026-08-02T18:06:29.5810000+00:00");
+  });
+
+  runIfPowerShell("requires confirmed remote failure at a soak checkpoint", () => {
+    const scriptPath = path.resolve("docs", "t199-soak-control.ps1");
+    const escapedPath = scriptPath.replaceAll("'", "''");
+    const base = {
+      profile: "stable-remote-readonly",
+      status: "degraded",
+      config: { status: "ready" },
+      discord: {
+        local_status: "ready",
+        url_drift: false,
+        external_readiness: "ready",
+        consecutive_failures: 0
+      },
+      board: {
+        local_status: "ready",
+        url_drift: false,
+        external_readiness: "unreachable",
+        consecutive_failures: 2
+      },
+      identity: { status: "not_checked" },
+      tunnel: { status: "not_checked", consecutive_failures: 0 }
+    };
+    const confirmed = structuredClone(base);
+    confirmed.board.consecutive_failures = 3;
+    const bypass = structuredClone(base);
+    bypass.board.external_readiness = "identity_bypass_detected";
+    bypass.identity.status = "bypass_detected";
+    const command = [
+      `$source = Get-Content -LiteralPath '${escapedPath}' -Raw -Encoding UTF8`,
+      "$tokens = $null",
+      "$errors = $null",
+      "$ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)",
+      "$names = @('Test-T199RemoteFailureConfirmed')",
+      "$ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $names -contains $node.Name }, $true) | ForEach-Object { . ([scriptblock]::Create($_.Extent.Text)) }",
+      `$transient = '${JSON.stringify(base)}' | ConvertFrom-Json`,
+      `$confirmed = '${JSON.stringify(confirmed)}' | ConvertFrom-Json`,
+      `$bypass = '${JSON.stringify(bypass)}' | ConvertFrom-Json`,
+      "@((Test-T199RemoteFailureConfirmed $transient 3), (Test-T199RemoteFailureConfirmed $confirmed 3), (Test-T199RemoteFailureConfirmed $bypass 3)) -join ','"
+    ].join("; ");
+    const result = spawnSync(
+      powershell!,
+      ["-NoProfile", "-Command", command],
+      { cwd: path.resolve("."), encoding: "utf8", timeout: 10_000 }
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("False,True,True");
+  });
+
+  runIfPowerShell("defaults the remote failure threshold when config is sparse", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "kairon-t199-threshold-"));
+    const configRoot = path.join(root, ".kairon", "config");
+    await mkdir(configRoot, { recursive: true });
+    await writeFile(path.join(configRoot, "runtime.json"), "{}\n", "utf8");
+
+    const scriptPath = path.resolve("docs", "t199-soak-control.ps1");
+    const escapedPath = scriptPath.replaceAll("'", "''");
+    const escapedRoot = root.replaceAll("'", "''");
+    const command = [
+      "Set-StrictMode -Version Latest",
+      `$source = Get-Content -LiteralPath '${escapedPath}' -Raw -Encoding UTF8`,
+      "$tokens = $null",
+      "$errors = $null",
+      "$ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)",
+      "$name = 'Get-T199RemoteFailureThreshold'",
+      "$ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true) | ForEach-Object { . ([scriptblock]::Create($_.Extent.Text)) }",
+      `$ProjectRoot = '${escapedRoot}'`,
+      "Get-T199RemoteFailureThreshold"
+    ].join("; ");
+    const result = spawnSync(
+      powershell!,
+      ["-NoProfile", "-Command", command],
+      { cwd: path.resolve("."), encoding: "utf8", timeout: 10_000 }
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("3");
+  });
+
+  runIfPowerShell("retries a transient checkpoint probe until it recovers", () => {
+    const scriptPath = path.resolve("docs", "t199-soak-control.ps1");
+    const escapedPath = scriptPath.replaceAll("'", "''");
+    const transient = remoteStatus("degraded", "unreachable", 1);
+    const ready = remoteStatus("ready", "identity_enforced", 0);
+    const command = [
+      `$source = Get-Content -LiteralPath '${escapedPath}' -Raw -Encoding UTF8`,
+      "$tokens = $null",
+      "$errors = $null",
+      "$ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)",
+      "$names = @('Test-T199RemoteCheckpointReady','Test-T199RemoteFailureConfirmed','Invoke-T199RemoteCheckpointProbe')",
+      "$ast.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $names -contains $node.Name }, $true) | ForEach-Object { . ([scriptblock]::Create($_.Extent.Text)) }",
+      "function Get-T199RemoteFailureThreshold { return 3 }",
+      "function Start-Sleep { param([int]$Seconds) }",
+      `$script:responses = @('${JSON.stringify(transient)}','${JSON.stringify(ready)}')`,
+      "$script:index = 0",
+      "function Invoke-KaironJson { param([string[]]$Arguments) $value = $script:responses[$script:index]; $script:index += 1; return $value | ConvertFrom-Json }",
+      "$result = Invoke-T199RemoteCheckpointProbe",
+      "@($result.attempts, $result.failure_threshold, $result.status.status) -join ','"
+    ].join("; ");
+    const result = spawnSync(
+      powershell!,
+      ["-NoProfile", "-Command", command],
+      { cwd: path.resolve("."), encoding: "utf8", timeout: 10_000 }
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("2,3,ready");
   });
 
   runIfPowerShell("requests runtime stop from the configured project root", async () => {
@@ -235,4 +365,35 @@ function findPowerShell(): string | undefined {
 function normalizePathForComparison(value: string): string {
   const normalized = path.normalize(value);
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+function remoteStatus(
+  status: "ready" | "degraded",
+  boardReadiness: "identity_enforced" | "unreachable",
+  boardFailures: number
+) {
+  return {
+    profile: "stable-remote-readonly",
+    status,
+    config: { status: "ready" },
+    discord: {
+      local_status: "ready",
+      url_drift: false,
+      external_readiness: "ready",
+      consecutive_failures: 0
+    },
+    board: {
+      local_status: "ready",
+      url_drift: false,
+      external_readiness: boardReadiness,
+      consecutive_failures: boardFailures
+    },
+    identity: {
+      status: boardReadiness === "identity_enforced" ? "enforced" : "not_checked"
+    },
+    tunnel: {
+      status: boardReadiness === "identity_enforced" ? "connected" : "not_checked",
+      consecutive_failures: 0
+    }
+  };
 }
