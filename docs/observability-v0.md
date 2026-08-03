@@ -15,6 +15,12 @@ diffs, usernames, tokens, raw errors, and project/task/run IDs are rejected.
 Alert policy decisions use the bounded `notification_policy_decision_total`
 metric and never store route IDs or alert payloads as labels.
 
+Remote readiness follows the same consecutive-failure threshold as the remote
+watchdog. An isolated external probe failure remains visible in the remote
+status artifact, but it is not committed as a failed SLO sample until the
+configured failure streak is reached. A successful probe resets the streak and
+is recorded normally.
+
 ## Commands
 
 ```powershell

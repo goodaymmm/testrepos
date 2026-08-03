@@ -143,7 +143,7 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           remote_external_unreachable: {
             enabled: true,
             severity: "high",
-            threshold: 1
+            threshold: 3
           },
           remote_identity_bypass: {
             enabled: true,
@@ -158,7 +158,7 @@ export function createDefaultConfigs(projectRoot: string): ConfigMap {
           remote_tunnel_disconnected: {
             enabled: true,
             severity: "critical",
-            threshold: 1
+            threshold: 3
           },
           slo_breach: {
             enabled: true,

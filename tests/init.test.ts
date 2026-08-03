@@ -60,6 +60,14 @@ describe("initializeProject", () => {
         }
       }
     });
+    expect(configs["runtime.json"]).toMatchObject({
+      watchdog: {
+        rules: {
+          remote_external_unreachable: { threshold: 3 },
+          remote_tunnel_disconnected: { threshold: 3 }
+        }
+      }
+    });
     expect(await validateAllConfigs(root)).toMatchObject({ ok: true, errors: [] });
   });
 
