@@ -80,6 +80,25 @@ readiness判定から分離します。version変更時は `package.json`、
 -
 ```
 
+## 0.3.2 - 2026-08-03
+
+### Summary
+
+- T209のremote readiness debounceを含むT199 Stable soak用一時fixture。
+
+### Tests
+
+- `npm run build`
+- `npm test`
+
+### Manual / Operation Test Evidence
+
+- T199 3h checkpointから段階的に検証する。
+
+### Known Limitations
+
+- T199 certification完了後にtestreposから削除する一時release。
+
 ## 0.3.0 - 2026-07-28
 
 ### Summary
