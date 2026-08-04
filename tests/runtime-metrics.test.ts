@@ -106,6 +106,32 @@ describe("runtime metrics", () => {
     expect(snapshot.metrics.run_latency_ms?.samples).toBe(1);
   });
 
+  it("records health checks as bounded run latency samples", async () => {
+    const root = await createProject();
+    const queue = new WorkQueue(root);
+    await queue.enqueue({
+      type: "health.check",
+      schedule_mode: "active_work",
+      created_at: "2026-07-26T07:59:00.000Z"
+    });
+
+    await new RuntimeLoop(root, {
+      now: () => new Date("2026-07-26T08:00:00.000Z"),
+      handlers: {
+        items: {
+          "health.check": async () => ({ status: "ready" })
+        }
+      }
+    }).runTick();
+
+    const snapshot = await createRuntimeMetricsSnapshot(root, {
+      now: new Date(),
+      windowMinutes: 525_600
+    });
+    expect(snapshot.metrics.queue_ready_age_ms?.latest).toBe(60_000);
+    expect(snapshot.metrics.run_latency_ms?.latest).toBeGreaterThanOrEqual(60_000);
+  });
+
   it("projects only the persisted sanitized SLO summary to Board", async () => {
     const root = await createProject();
     await checkRuntimeSlo(root, {

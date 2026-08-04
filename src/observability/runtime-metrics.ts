@@ -180,7 +180,9 @@ function terminalQueueItemMetrics(
 }
 
 function isRunLikeItem(itemType: QueueItemType): boolean {
-  return ["agent.run", "review.run", "git.transaction"].includes(itemType);
+  return ["agent.run", "health.check", "review.run", "git.transaction"].includes(
+    itemType
+  );
 }
 
 function normalizeItemType(itemType: QueueItemType): QueueItemType {

@@ -416,6 +416,15 @@ function defaultQueueHandlers(
       }
     },
     items: {
+      "health.check": async () => {
+        const status = await getRuntimeStatus(projectRoot);
+        return {
+          status: "ready",
+          checked_at: now.toISOString(),
+          runtime_locked: status.runtimeLock.locked,
+          daemon_status: status.daemonHealth?.status ?? "unknown"
+        };
+      },
       "agent.run": async (item) => {
         const result = await new TaskRunner(projectRoot, {
           interactiveSessionRunner: createAntigravityPtySessionRunner(),

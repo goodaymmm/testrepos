@@ -10,6 +10,7 @@ import type {
 
 export type QueueItemType =
   | "agent.run"
+  | "health.check"
   | "review.run"
   | "git.transaction"
   | "approval.command"
