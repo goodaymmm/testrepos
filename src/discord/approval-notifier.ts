@@ -1,8 +1,14 @@
 import path from "node:path";
 import { readdir } from "node:fs/promises";
-import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
+import { readJsonFile } from "../core/fs/json-file.js";
 import { appendJsonLine } from "../core/fs/jsonl-file.js";
 import { getKaironPaths, toPosixPath } from "../core/fs/paths.js";
+import {
+  ResourceLockAlreadyExistsError,
+  type ResourceLockHandle,
+  withResourceLock,
+  writeJsonFileFenced
+} from "../core/fs/resource-lock.js";
 import {
   ensureApprovalCorrelation,
   trackCorrelationMember
@@ -50,6 +56,14 @@ export type DiscordApprovalNotificationResult = {
     reason: string;
   }>;
 };
+
+export type DiscordApprovalNotificationOptions = {
+  now?: () => Date;
+  maxMessageVerifications?: number;
+  messageVerificationIntervalMs?: number;
+};
+
+const approvalMetadataLockRetryDelaysMs = [25, 50, 100, 200, 400, 800] as const;
 
 export type DiscordApprovalNotificationAuditRecord = {
   schema_version: "0.1";
@@ -110,6 +124,7 @@ type ApprovalRecord = {
     nonce_expires_at?: string;
     notified_at?: string;
     updated_at?: string;
+    message_verification_checked_at?: string;
     board_url?: string;
     board_anchor?: string;
     unsafe_fields_omitted?: boolean;
@@ -123,10 +138,12 @@ export async function notifyPendingDiscordApprovals(
   projectRoot: string,
   gateway: PreparedDiscordGateway & { status: "ready" },
   channel: DiscordApprovalChannel,
-  options: { now?: () => Date } = {}
+  options: DiscordApprovalNotificationOptions = {}
 ): Promise<DiscordApprovalNotificationResult> {
   const now = options.now?.() ?? new Date();
-  const approvals = await readApprovalRecords(projectRoot);
+  const approvals = (await readApprovalRecords(projectRoot)).sort(
+    compareApprovalNotificationPriority
+  );
   const result: DiscordApprovalNotificationResult = {
     scanned: approvals.length,
     sent: 0,
@@ -138,31 +155,14 @@ export async function notifyPendingDiscordApprovals(
     failures: []
   };
   const boardBaseUrl = await readConfiguredBoardBaseUrl(projectRoot);
+  let remainingMessageVerifications = normalizeVerificationLimit(
+    options.maxMessageVerifications
+  );
+  const messageVerificationIntervalMs =
+    options.messageVerificationIntervalMs ?? 15 * 60 * 1_000;
 
   for (const approval of approvals) {
-    const correlation = await ensureApprovalCorrelation(projectRoot, approval, {
-      migrated: approval.correlation_id === undefined
-    });
-    approval.correlation_id = correlation.correlation_id;
     const board = boardTrackingMetadata(boardBaseUrl, approval.id);
-    if (
-      approval.discord?.message_id !== undefined &&
-      !isDiscordSnowflake(approval.discord.message_id)
-    ) {
-      result.skipped += 1;
-      await appendDiscordNotificationAudit(projectRoot, {
-        schema_version: "0.1",
-        approval_id: approval.id,
-        status: "skipped",
-        channel_id: gateway.approval_channel_id,
-        message_id: approval.discord?.message_id,
-        board_url: approval.discord?.board_url ?? board.board_url,
-        board_anchor: approval.discord?.board_anchor ?? board.board_anchor,
-        reason: "invalid_message_id",
-        recorded_at: now.toISOString()
-      });
-      continue;
-    }
     if (shouldRetryApprovalStatusUpdate(approval)) {
       try {
         const update = await updateDiscordApprovalMessage(projectRoot, approval.id, channel, options);
@@ -182,17 +182,6 @@ export async function notifyPendingDiscordApprovals(
           });
         } else {
           result.skipped += 1;
-          await appendDiscordNotificationAudit(projectRoot, {
-            schema_version: "0.1",
-            approval_id: approval.id,
-            status: "skipped",
-            channel_id: gateway.approval_channel_id,
-            message_id: approval.discord?.message_id,
-            board_url: approval.discord?.board_url ?? board.board_url,
-            board_anchor: approval.discord?.board_anchor ?? board.board_anchor,
-            reason: update.reason,
-            recorded_at: now.toISOString()
-          });
         }
       } catch (error) {
         const reason = sanitizeAuditReason(String(error));
@@ -218,34 +207,28 @@ export async function notifyPendingDiscordApprovals(
 
     if (!isOpenApprovalStatus(approval.status)) {
       result.skipped += 1;
-      await appendDiscordNotificationAudit(projectRoot, {
-        schema_version: "0.1",
-        approval_id: approval.id,
-        status: "skipped",
-        channel_id: gateway.approval_channel_id,
-        board_url: approval.discord?.board_url ?? board.board_url,
-        board_anchor: approval.discord?.board_anchor ?? board.board_anchor,
-        reason: "not_pending",
-        recorded_at: now.toISOString()
-      });
       continue;
     }
 
-    if (approval.discord?.message_id !== undefined) {
+    if (isDiscordSnowflake(approval.discord?.message_id)) {
+      if (
+        remainingMessageVerifications <= 0 ||
+        !isMessageVerificationDue(
+          approval,
+          now,
+          messageVerificationIntervalMs
+        )
+      ) {
+        result.skipped += 1;
+        continue;
+      }
+      remainingMessageVerifications -= 1;
       const verification = await verifyDiscordApprovalMessage(channel, approval.discord.message_id);
+      await updateApprovalDiscordMetadata(projectRoot, approval, {
+        message_verification_checked_at: now.toISOString()
+      });
       if (verification.status === "found") {
         result.skipped += 1;
-        await appendDiscordNotificationAudit(projectRoot, {
-          schema_version: "0.1",
-          approval_id: approval.id,
-          status: "skipped",
-          channel_id: gateway.approval_channel_id,
-          message_id: approval.discord.message_id,
-          board_url: approval.discord?.board_url ?? board.board_url,
-          board_anchor: approval.discord?.board_anchor ?? board.board_anchor,
-          reason: "already_sent",
-          recorded_at: now.toISOString()
-        });
         continue;
       }
 
@@ -281,6 +264,7 @@ export async function notifyPendingDiscordApprovals(
         message_id: sent.id,
         nonce: message.nonce,
         notified_at: sentAt,
+        message_verification_checked_at: sentAt,
         nonce_expires_at: defaultNonceExpiresAt(now),
         board_url: input.board_url,
         board_anchor: input.board_url === undefined ? undefined : approvalBoardAnchor(approval.id),
@@ -372,12 +356,8 @@ export async function updateDiscordApprovalMessage(
       board_url: approval.discord?.board_url
     })
   );
-  await writeApprovalRecord(projectRoot, {
-    ...approval,
-    discord: {
-      ...approval.discord,
-      updated_at: (options.now?.() ?? new Date()).toISOString()
-    }
+  await updateApprovalDiscordMetadata(projectRoot, approval, {
+    updated_at: (options.now?.() ?? new Date()).toISOString()
   });
   const correlation = await ensureApprovalCorrelation(projectRoot, approval, {
     migrated: approval.correlation_id === undefined
@@ -463,6 +443,46 @@ async function verifyDiscordApprovalMessage(
 
 function isOpenApprovalStatus(status: unknown): boolean {
   return status === "pending" || status === "snoozed";
+}
+
+function compareApprovalNotificationPriority(
+  left: ApprovalRecord,
+  right: ApprovalRecord
+): number {
+  return notificationPriority(left) - notificationPriority(right);
+}
+
+function notificationPriority(approval: ApprovalRecord): number {
+  if (isOpenApprovalStatus(approval.status) && approval.discord?.message_id === undefined) {
+    return 0;
+  }
+  if (shouldRetryApprovalStatusUpdate(approval)) {
+    return 1;
+  }
+  if (isOpenApprovalStatus(approval.status)) {
+    return 2;
+  }
+  return 3;
+}
+
+function normalizeVerificationLimit(value: number | undefined): number {
+  if (value === undefined) {
+    return 5;
+  }
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+function isMessageVerificationDue(
+  approval: ApprovalRecord,
+  now: Date,
+  intervalMs: number
+): boolean {
+  const checkedAt = approval.discord?.message_verification_checked_at;
+  if (checkedAt === undefined) {
+    return true;
+  }
+  const checkedAtMs = Date.parse(checkedAt);
+  return !Number.isFinite(checkedAtMs) || checkedAtMs + intervalMs <= now.getTime();
 }
 
 function shouldRetryApprovalStatusUpdate(approval: ApprovalRecord): boolean {
@@ -602,21 +622,45 @@ async function updateApprovalDiscordMetadata(
   approval: ApprovalRecord,
   discord: NonNullable<ApprovalRecord["discord"]>
 ): Promise<void> {
-  await writeApprovalRecord(projectRoot, {
-    ...approval,
-    discord_nonce: discord.nonce,
-    discord: {
-      ...approval.discord,
-      ...discord
-    }
+  const filePath = approvalPath(projectRoot, approval.id);
+  await withApprovalMetadataLock(projectRoot, filePath, async (lock) => {
+    const current = (await readApprovalRecord(projectRoot, approval.id)) ?? approval;
+    await writeJsonFileFenced(lock, filePath, {
+      ...current,
+      discord_nonce: discord.nonce ?? current.discord_nonce,
+      discord: {
+        ...current.discord,
+        ...discord
+      }
+    });
   });
 }
 
-async function writeApprovalRecord(
+async function withApprovalMetadataLock<T>(
   projectRoot: string,
-  approval: ApprovalRecord
-): Promise<void> {
-  await writeJsonFileAtomic(approvalPath(projectRoot, approval.id), approval);
+  filePath: string,
+  run: (handle: ResourceLockHandle) => Promise<T>
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await withResourceLock(
+        projectRoot,
+        filePath,
+        { owner: "discord-approval-metadata", ttlMs: 30_000 },
+        run
+      );
+    } catch (error) {
+      if (
+        !(error instanceof ResourceLockAlreadyExistsError) ||
+        attempt >= approvalMetadataLockRetryDelaysMs.length
+      ) {
+        throw error;
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, approvalMetadataLockRetryDelaysMs[attempt])
+      );
+    }
+  }
 }
 
 function approvalPath(projectRoot: string, approvalId: string): string {

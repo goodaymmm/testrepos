@@ -22,6 +22,10 @@ describe("T199 soak operations", () => {
     expect(workload).not.toContain('type: "agent.run"');
     expect(workload).not.toContain("createTaskCommand");
     expect(workload).not.toContain("timeout_ms: 120000");
+    expect(workload).toContain("cleanupPendingApprovals");
+    expect(workload).toContain(
+      "T199 daily notification sample cleanup after workload failure"
+    );
   });
 
   it("uses the full soak execution key for retry-safe approval ids", async () => {
@@ -92,6 +96,10 @@ describe("T199 soak operations", () => {
     expect(supervisor).toContain("supervisor_pid: process.pid");
     expect(supervisor).toContain("t199-remote-supervisor.stop.json");
     expect(supervisor).toContain("heartbeatTimer = setInterval");
+    expect(supervisor).toContain("statusWriteQueue");
+    expect(supervisor).toContain("renameStatusFile");
+    expect(supervisor).toContain('["EACCES", "EBUSY", "EPERM"]');
+    expect(supervisor).toContain("status_error=");
     expect(launcher).toContain('cliArguments[0] !== "stop"');
   });
 

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import path from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
-import { appendJsonLine, readJsonLines } from "../src/core/fs/jsonl-file.js";
+import {
+  appendJsonLine,
+  readJsonLines,
+  readJsonLinesTail
+} from "../src/core/fs/jsonl-file.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { acquireLockFile, releaseLockFile } from "../src/core/fs/lock-file.js";
 import { resolveInside } from "../src/core/fs/paths.js";
@@ -38,6 +42,22 @@ describe("core file state utilities", () => {
     await writeFile(jsonPath, "\uFEFF{\"ok\":true}\n", "utf8");
 
     await expect(readJsonFile(jsonPath)).resolves.toEqual({ ok: true });
+  });
+
+  it("reads only the requested JSONL tail across small chunks", async () => {
+    const root = await createTempProject();
+    const jsonlPath = path.join(root, ".kairon", "events", "tail.jsonl");
+    await mkdir(path.dirname(jsonlPath), { recursive: true });
+    await writeFile(
+      jsonlPath,
+      Array.from({ length: 20 }, (_, index) => JSON.stringify({ index })).join("\n"),
+      "utf8"
+    );
+
+    await expect(
+      readJsonLinesTail<{ index: number }>(jsonlPath, 3, { chunkSizeBytes: 13 })
+    ).resolves.toEqual([{ index: 17 }, { index: 18 }, { index: 19 }]);
+    await expect(readJsonLinesTail(jsonlPath, 0)).resolves.toEqual([]);
   });
 
   it("blocks duplicate lock acquisition", async () => {

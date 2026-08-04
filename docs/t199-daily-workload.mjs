@@ -107,15 +107,11 @@ try {
   }
 
   await waitForNotifications(projectRoot, result.approvals.map((item) => item.id));
-  for (const approval of result.approvals) {
-    const record = await readApproval(projectRoot, approval.id);
-    if (record.status === "pending" || record.status === "snoozed") {
-      await decideApprovalCommand(projectRoot, approval.id, {
-        action: "reject",
-        reason: "T199 daily notification sample completed"
-      });
-    }
-  }
+  await cleanupPendingApprovals(
+    projectRoot,
+    result.approvals.map((approval) => approval.id),
+    "T199 daily notification sample completed"
+  );
 
   const queueRecords = await waitForQueue(
     queue,
@@ -139,6 +135,17 @@ try {
 } catch (error) {
   result.status = "failed";
   result.error = String(error?.message ?? error).replace(/[\r\n]+/gu, " ").slice(0, 500);
+  try {
+    await cleanupPendingApprovals(
+      projectRoot,
+      result.approvals.map((approval) => approval.id),
+      "T199 daily notification sample cleanup after workload failure"
+    );
+  } catch (cleanupError) {
+    result.cleanup_error = String(cleanupError?.message ?? cleanupError)
+      .replace(/[\r\n]+/gu, " ")
+      .slice(0, 500);
+  }
   result.completed_at = new Date().toISOString();
   await writeStatus();
   console.error("status=failed");
@@ -170,6 +177,18 @@ async function waitForQueue(queue, itemIds) {
     await delay(15_000);
   }
   throw new Error("Runtime health queue did not complete within 45 minutes.");
+}
+
+async function cleanupPendingApprovals(root, approvalIds, reason) {
+  for (const approvalId of approvalIds) {
+    const record = await readApproval(root, approvalId);
+    if (record.status === "pending" || record.status === "snoozed") {
+      await decideApprovalCommand(root, approvalId, {
+        action: "reject",
+        reason
+      });
+    }
+  }
 }
 
 async function readApproval(root, approvalId) {

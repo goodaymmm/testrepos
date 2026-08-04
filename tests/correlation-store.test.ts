@@ -13,6 +13,10 @@ import {
 } from "../src/correlation/store.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
 import { readJsonLines } from "../src/core/fs/jsonl-file.js";
+import {
+  acquireResourceLock,
+  releaseResourceLock
+} from "../src/core/fs/resource-lock.js";
 import { createTempProject } from "./test-utils.js";
 
 describe("correlation store", () => {
@@ -126,6 +130,42 @@ describe("correlation store", () => {
         expect.objectContaining({ id: "111111111111111111" })
       ])
     );
+  });
+
+  it("retries a short cross-process correlation lock contention", async () => {
+    const root = await createInitializedProject();
+    const approvalPath = path.join(root, ".kairon", "approvals", "APR-RETRY.json");
+    await writeJsonFileAtomic(approvalPath, {
+      id: "APR-RETRY",
+      status: "pending",
+      created_at: "2026-08-04T00:00:00.000Z"
+    });
+    const correlation = await ensureApprovalCorrelation(
+      root,
+      await readJsonFile(approvalPath)
+    );
+    const artifactPath = correlationArtifactPath(root, correlation.correlation_id);
+    const lock = await acquireResourceLock(root, artifactPath, {
+      owner: "competing-process"
+    });
+    const update = trackCorrelationMember(root, {
+      correlationId: correlation.correlation_id,
+      approvalId: "APR-RETRY",
+      kind: "discord_message",
+      id: "retry-message",
+      status: "sent",
+      artifactPath: ".kairon/approvals/APR-RETRY.json"
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    await releaseResourceLock(lock);
+
+    await expect(update).resolves.toMatchObject({
+      correlation_id: correlation.correlation_id,
+      members: expect.arrayContaining([
+        expect.objectContaining({ kind: "discord_message", id: "retry-message" })
+      ])
+    });
   });
 
   it("detects missing artifacts, stale messages, and orphan follow-ups", async () => {

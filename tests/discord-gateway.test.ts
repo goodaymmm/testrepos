@@ -711,7 +711,7 @@ describe("prepareDiscordGateway", () => {
     await handle.stop();
   });
 
-  it("skips invalid stored message ids without calling Discord during status reconciliation", async () => {
+  it("reposts open approvals with invalid stored message ids", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
     await enableDiscordProvider(root);
@@ -728,10 +728,7 @@ describe("prepareDiscordGateway", () => {
     });
     const client = new FakeDiscordClient("bot-user");
     const rest = new FakeDiscordRestRegistration();
-    const channel = new FailingFetchApprovalChannel(
-      "channel",
-      "Discord fetch must not be called"
-    );
+    const channel = new FakeApprovalChannel("channel");
 
     const handlePromise = startDiscordGateway(root, {
       env: readyEnv(),
@@ -749,21 +746,30 @@ describe("prepareDiscordGateway", () => {
       readJsonFile(path.join(root, ".kairon", "runtime", "discord", "gateway.json"))
     ).resolves.toMatchObject({
       approval_notifications: {
-        skipped: 1,
+        resent: 1,
         failed: 0
       }
     });
-    const audit = await readJsonLines<Record<string, unknown>>(
-      path.join(root, ".kairon", "runtime", "discord", "approval-notifications.jsonl")
-    );
-    expect(audit).toEqual([
+    await expect(
+      readJsonLines<Record<string, unknown>>(
+        path.join(root, ".kairon", "runtime", "discord", "approval-notifications.jsonl")
+      )
+    ).resolves.toEqual([
       expect.objectContaining({
         approval_id: "APR-INVALID-MESSAGE",
-        status: "skipped",
-        message_id: "MSG-1",
-        reason: "invalid_message_id"
+        status: "resent",
+        reason: "message_missing_reposted"
       })
     ]);
+    await expect(
+      readJsonFile<Record<string, unknown>>(
+        path.join(root, ".kairon", "approvals", "APR-INVALID-MESSAGE.json")
+      )
+    ).resolves.toMatchObject({
+      discord: {
+        message_id: "message-1"
+      }
+    });
 
     await handle.stop();
   });
@@ -832,7 +838,7 @@ describe("prepareDiscordGateway", () => {
     await handle.stop();
   });
 
-  it("audits skipped and failed approval notifications without unsafe fields", async () => {
+  it("counts no-op skips but audits only actionable notification failures", async () => {
     const root = await createTempProject();
     await initializeProject({ projectRoot: root });
     await enableDiscordProvider(root);
@@ -892,30 +898,98 @@ describe("prepareDiscordGateway", () => {
     const audit = await readJsonLines<Record<string, unknown>>(
       path.join(root, ".kairon", "runtime", "discord", "approval-notifications.jsonl")
     );
-    expect(audit).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          approval_id: "APR-SKIP-DONE",
-          status: "skipped",
-          reason: "not_pending"
-        }),
-        expect.objectContaining({
-          approval_id: "APR-SKIP-SENT",
-          status: "skipped",
-          reason: "already_sent"
-        }),
-        expect.objectContaining({
-          approval_id: "APR-FAIL",
-          status: "failed",
-          reason: "Error: send failed: token=[redacted]"
-        })
-      ])
-    );
+    expect(audit).toEqual([
+      expect.objectContaining({
+        approval_id: "APR-FAIL",
+        status: "failed",
+        reason: "Error: send failed: token=[redacted]"
+      })
+    ]);
     const auditText = JSON.stringify(audit);
     expect(auditText).not.toContain("SHOULD_NOT_LEAK");
     expect(auditText).not.toContain("diff --git");
     expect(auditText).not.toContain("password=");
 
+    await handle.stop();
+  });
+
+  it("prioritizes unsent approvals and bounds existing message verification", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await enableDiscordProvider(root);
+    const channel = new FakeApprovalChannel("channel");
+    for (let index = 0; index < 7; index += 1) {
+      const messageId = `15284266615890248${index}`;
+      await writeApproval(root, {
+        id: `APR-EXISTING-${index}`,
+        status: "pending",
+        discord: {
+          channel_id: discordIds.channel,
+          message_id: messageId
+        }
+      });
+      channel.addMessage(messageId);
+    }
+    await writeApproval(root, {
+      id: "APR-NEW",
+      status: "pending",
+      title: "New approval"
+    });
+    const client = new FakeDiscordClient("bot-user");
+    const handlePromise = startDiscordGateway(root, {
+      env: readyEnv(),
+      clientFactory: () => client,
+      restFactory: () => new FakeDiscordRestRegistration(),
+      approvalChannelFactory: () => channel,
+      readyTimeoutMs: 50,
+      now: () => new Date("2026-05-25T08:00:00.000Z")
+    });
+    await client.waitForLogin();
+    client.emitReady();
+    const handle = await handlePromise;
+
+    expect(channel.sent).toHaveLength(1);
+    expect(JSON.stringify(channel.sent[0]?.payload)).toContain("APR-NEW");
+    expect(channel.fetches).toHaveLength(5);
+    const audit = await readJsonLines<Record<string, unknown>>(
+      path.join(root, ".kairon", "runtime", "discord", "approval-notifications.jsonl")
+    );
+    expect(audit).toEqual([
+      expect.objectContaining({ approval_id: "APR-NEW", status: "sent" })
+    ]);
+
+    await handle.stop();
+  });
+
+  it("does not overlap slow periodic approval notification scans", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    await enableDiscordProvider(root);
+    const client = new FakeDiscordClient("bot-user");
+    const channel = new BlockingApprovalChannel("channel");
+    const handlePromise = startDiscordGateway(root, {
+      env: readyEnv(),
+      clientFactory: () => client,
+      restFactory: () => new FakeDiscordRestRegistration(),
+      approvalChannelFactory: () => channel,
+      readyTimeoutMs: 50,
+      approvalScanIntervalMs: 5
+    });
+    await client.waitForLogin();
+    client.emitReady();
+    const handle = await handlePromise;
+    await writeApproval(root, {
+      id: "APR-SLOW-SCAN",
+      status: "pending",
+      title: "Slow notification"
+    });
+
+    await channel.waitForSend();
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(channel.sendCount).toBe(1);
+
+    channel.release();
+    await new Promise((resolve) => setTimeout(resolve, 20));
     await handle.stop();
   });
 
@@ -1214,14 +1288,14 @@ describe("prepareDiscordGateway", () => {
       actions: ["request_changes"],
       discord: {
         channel_id: discordIds.channel,
-        message_id: "message-1",
+        message_id: "1528426661589024821",
         nonce: "n42"
       }
     });
     const client = new FakeDiscordClient("bot-user");
     const rest = new FakeDiscordRestRegistration();
     const channel = new FakeApprovalChannel("channel");
-    channel.addMessage("message-1", "edit failed: token=SHOULD_NOT_LEAK");
+    channel.addMessage("1528426661589024821", "edit failed: token=SHOULD_NOT_LEAK");
 
     const handlePromise = startDiscordGateway(root, {
       env: readyEnv(),
@@ -1239,6 +1313,7 @@ describe("prepareDiscordGateway", () => {
       "kr:v1:apr:APR-0001:changes:n42",
       "Add tests before merge. token=SHOULD_NOT_LEAK"
     );
+    interaction.message = { id: "1528426661589024821" };
 
     await client.emitInteraction(interaction);
 
@@ -1481,9 +1556,11 @@ class FakeModalSubmitInteraction implements DiscordGatewayInteraction {
 
 class FakeApprovalChannel implements DiscordApprovalChannel {
   sent: Array<{ id: string; payload: unknown }> = [];
+  fetches: string[] = [];
   messagesById = new Map<string, FakeApprovalMessage>();
   messages = {
     fetch: async (messageId: string) => {
+      this.fetches.push(messageId);
       const message = this.messagesById.get(messageId);
       if (message === undefined) {
         throw new Error(`Message not found: ${messageId}`);
@@ -1513,6 +1590,35 @@ class FailingApprovalChannel implements DiscordApprovalChannel {
 
   async send(): Promise<FakeApprovalMessage> {
     throw new Error(this.reason);
+  }
+}
+
+class BlockingApprovalChannel implements DiscordApprovalChannel {
+  sendCount = 0;
+  private releaseSend!: () => void;
+  private readonly sendReleased = new Promise<void>((resolve) => {
+    this.releaseSend = resolve;
+  });
+  private observeSend!: () => void;
+  private readonly sendObserved = new Promise<void>((resolve) => {
+    this.observeSend = resolve;
+  });
+
+  constructor(readonly id: string) {}
+
+  async send(): Promise<FakeApprovalMessage> {
+    this.sendCount += 1;
+    this.observeSend();
+    await this.sendReleased;
+    return new FakeApprovalMessage("message-1");
+  }
+
+  waitForSend(): Promise<void> {
+    return this.sendObserved;
+  }
+
+  release(): void {
+    this.releaseSend();
   }
 }
 
