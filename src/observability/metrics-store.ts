@@ -93,6 +93,7 @@ const allowedLabelValues: Record<string, readonly string[]> = {
   ],
   item_type: [
     "agent.run",
+    "health.check",
     "review.run",
     "git.transaction",
     "approval.command",

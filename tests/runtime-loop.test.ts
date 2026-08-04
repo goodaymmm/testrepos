@@ -22,6 +22,33 @@ const schedule: ScheduleConfig = {
 };
 
 describe("RuntimeLoop", () => {
+  it("processes a built-in health check without an external agent", async () => {
+    const root = await createInitializedProject();
+    const queue = new WorkQueue(root);
+    const item = await queue.enqueue({
+      type: "health.check",
+      schedule_mode: "standby_work"
+    });
+
+    const result = await new RuntimeLoop(root, {
+      now: () => new Date("2026-05-25T20:00:00.000Z")
+    }).runTick();
+
+    expect(result).toMatchObject({
+      action: "processed-item",
+      queue_result: { item_id: item.id, item_type: "health.check" }
+    });
+    await expect(queue.list("completed")).resolves.toMatchObject([
+      {
+        id: item.id,
+        result: {
+          status: "ready",
+          checked_at: "2026-05-25T20:00:00.000Z"
+        }
+      }
+    ]);
+  });
+
   it("processes ready queue items during active work", async () => {
     const root = await createInitializedProject();
     const queue = new WorkQueue(root);

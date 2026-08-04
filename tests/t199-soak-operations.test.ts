@@ -9,6 +9,21 @@ const powershell = findPowerShell();
 const runIfPowerShell = powershell ? it : it.skip;
 
 describe("T199 soak operations", () => {
+  it("uses bounded runtime health queue samples instead of external agents", async () => {
+    const workload = await readFile(
+      path.resolve("docs", "t199-daily-workload.mjs"),
+      "utf8"
+    );
+
+    expect(workload).toContain('type: "health.check"');
+    expect(workload).toContain(":runtime-health:");
+    expect(workload).toContain("await writeStatus();");
+    expect(workload).toContain("Runtime health queue failed");
+    expect(workload).not.toContain('type: "agent.run"');
+    expect(workload).not.toContain("createTaskCommand");
+    expect(workload).not.toContain("timeout_ms: 120000");
+  });
+
   it("uses the full soak execution key for retry-safe approval ids", async () => {
     const identifiers = await import(
       pathToFileURL(path.resolve("docs", "t199-soak-identifiers.mjs")).href

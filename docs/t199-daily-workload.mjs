@@ -8,7 +8,6 @@ import {
 } from "../dist/cli/commands/approval.js";
 import { metricsSloCheckCommand } from "../dist/cli/commands/metrics.js";
 import { runRemoteDoctorCommand } from "../dist/cli/commands/remote.js";
-import { createTaskCommand } from "../dist/cli/commands/task.js";
 import { WorkQueue } from "../dist/queue/work-queue.js";
 import { createT199ApprovalId } from "./t199-soak-identifiers.mjs";
 
@@ -47,9 +46,10 @@ const result = {
 };
 
 try {
+  await writeStatus();
   const queue = new WorkQueue(projectRoot);
   for (let index = 1; index <= 5; index += 1) {
-    const idempotencyKey = `t199:${soakId}:${date}:agent-health:${index}`;
+    const idempotencyKey = `t199:${soakId}:${date}:runtime-health:${index}`;
     const existing = (await queue.list()).find(
       (item) => item.idempotency_key === idempotencyKey
     );
@@ -57,30 +57,13 @@ try {
       result.queue_items.push({ id: existing.id, created: false });
       continue;
     }
-    const output = await createTaskCommand(projectRoot, {
-      title: `T199 daily health sample ${date} ${index}`,
-      persona: "researcher",
-      description:
-        "Return one short operational health observation. Do not modify files, run external tools, or create commits.",
-      capability: ["research"],
-      tag: ["t199-soak", "daily-health"],
-      priority: "20",
-      scheduleMode: "standby_work"
-    });
-    const taskId = readOutputValue(output, "task_id");
     const enqueued = await queue.enqueueIdempotent({
-      type: "agent.run",
-      task_id: taskId,
+      type: "health.check",
       priority: 20,
       idempotency_key: idempotencyKey,
       schedule_mode: "standby_work",
       payload: {
-        persona: "researcher",
-        capabilities: ["research"],
-        tags: ["t199-soak", "daily-health"],
-        code_producing: false,
-        commit_requested: false,
-        timeout_ms: 120000
+        check: "runtime_status"
       },
       test_scope: {
         kind: "operation_test",
@@ -88,7 +71,7 @@ try {
         expires_at: new Date(Date.now() + 48 * 60 * 60 * 1_000).toISOString()
       }
     });
-    result.queue_items.push({ id: enqueued.item.id, task_id: taskId, created: true });
+    result.queue_items.push({ id: enqueued.item.id, created: true });
   }
 
   for (let index = 1; index <= 5; index += 1) {
@@ -134,7 +117,16 @@ try {
     }
   }
 
-  await waitForQueue(queue, result.queue_items.map((item) => item.id));
+  const queueRecords = await waitForQueue(
+    queue,
+    result.queue_items.map((item) => item.id)
+  );
+  const failedQueueItems = queueRecords.filter((item) => item.status === "failed");
+  if (failedQueueItems.length > 0) {
+    throw new Error(
+      `Runtime health queue failed: ${failedQueueItems.map((item) => item.id).join(",")}`
+    );
+  }
   result.slo = parseKeyValues(await metricsSloCheckCommand(projectRoot));
   result.status = "completed";
   result.completed_at = new Date().toISOString();
@@ -172,10 +164,12 @@ async function waitForQueue(queue, itemIds) {
   while (Date.now() < deadline) {
     const state = await queue.list();
     const records = itemIds.map((id) => state.find((item) => item.id === id));
-    if (records.every((item) => item && ["completed", "failed"].includes(item.status))) return;
+    if (records.every((item) => item && ["completed", "failed"].includes(item.status))) {
+      return records;
+    }
     await delay(15_000);
   }
-  throw new Error("Agent health queue did not complete within 45 minutes.");
+  throw new Error("Runtime health queue did not complete within 45 minutes.");
 }
 
 async function readApproval(root, approvalId) {
@@ -195,12 +189,6 @@ function resolveProjectRoot(args) {
   const index = args.indexOf("--project-root");
   if (index < 0 || !args[index + 1]) throw new Error("--project-root is required.");
   return path.resolve(args[index + 1]);
-}
-
-function readOutputValue(output, name) {
-  const match = output.match(new RegExp(`^${name}=(.+)$`, "mu"));
-  if (!match) throw new Error(`Kairon output is missing ${name}.`);
-  return match[1].trim();
 }
 
 function parseKeyValues(output) {

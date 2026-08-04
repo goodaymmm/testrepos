@@ -195,7 +195,14 @@ function isStandbyAllowedDispatch(item: QueueItem): boolean {
     return false;
   }
 
-  if (["approval.command", "schedule.command", "maintenance.run"].includes(item.type)) {
+  if (
+    [
+      "approval.command",
+      "health.check",
+      "schedule.command",
+      "maintenance.run"
+    ].includes(item.type)
+  ) {
     return true;
   }
 

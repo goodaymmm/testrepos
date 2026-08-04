@@ -1131,7 +1131,7 @@ function isClaimExpired(item: QueueItem, now: Date, fallbackTimeoutMs: number): 
 }
 
 function isSafeToRequeue(item: QueueItem): boolean {
-  if (!["agent.run", "maintenance.run"].includes(item.type)) {
+  if (!["agent.run", "health.check", "maintenance.run"].includes(item.type)) {
     return false;
   }
 
