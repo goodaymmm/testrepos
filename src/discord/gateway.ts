@@ -425,9 +425,32 @@ export async function startDiscordGateway(
   const client = await (options.clientFactory ?? createDiscordJsClient)(prepared);
   let reconnectAttempts = 0;
   let approvalScanTimer: NodeJS.Timeout | undefined;
+  let notificationScanInFlight: Promise<void> | undefined;
   let lastApprovalNotificationResult: DiscordApprovalNotificationResult | undefined;
   let lastWatchdogNotificationResult: DiscordWatchdogNotificationResult | undefined;
   let approvalChannel: DiscordApprovalChannel | null = null;
+  const scanNotifications = (): Promise<void> => {
+    if (notificationScanInFlight !== undefined) {
+      return notificationScanInFlight;
+    }
+    const scan = (async () => {
+      lastApprovalNotificationResult = await notifyPendingDiscordApprovals(
+        projectRoot,
+        prepared,
+        approvalChannel!,
+        { now }
+      );
+      lastWatchdogNotificationResult = await notifyPendingDiscordWatchdogAlerts(
+        projectRoot,
+        approvalChannel!,
+        { now }
+      );
+    })();
+    notificationScanInFlight = scan.finally(() => {
+      notificationScanInFlight = undefined;
+    });
+    return notificationScanInFlight;
+  };
   client.on("interactionCreate", (interaction) =>
     handleGatewayInteraction(
       projectRoot,
@@ -562,17 +585,7 @@ export async function startDiscordGateway(
   if (approvalChannel !== null) {
     const notificationFailure = await handleDiscordGatewaySetupFailure(
       async () => {
-        lastApprovalNotificationResult = await notifyPendingDiscordApprovals(
-          projectRoot,
-          prepared,
-          approvalChannel!,
-          { now }
-        );
-        lastWatchdogNotificationResult = await notifyPendingDiscordWatchdogAlerts(
-          projectRoot,
-          approvalChannel!,
-          { now }
-        );
+        await scanNotifications();
       },
       {
         projectRoot,
@@ -590,18 +603,7 @@ export async function startDiscordGateway(
     }
 
     approvalScanTimer = setInterval(() => {
-      void notifyPendingDiscordApprovals(projectRoot, prepared, approvalChannel!, {
-        now
-      })
-        .then((result) => {
-          lastApprovalNotificationResult = result;
-          return notifyPendingDiscordWatchdogAlerts(projectRoot, approvalChannel!, {
-            now
-          });
-        })
-        .then((result) => {
-          lastWatchdogNotificationResult = result;
-        })
+      void scanNotifications()
         .catch((error) =>
           writeGatewayStatus(projectRoot, {
             schema_version: "0.1",
@@ -650,6 +652,7 @@ export async function startDiscordGateway(
       if (approvalScanTimer !== undefined) {
         clearInterval(approvalScanTimer);
       }
+      await notificationScanInFlight?.catch(() => undefined);
       await client.destroy();
       await writeGatewayStatus(projectRoot, {
         schema_version: "0.1",

@@ -9,7 +9,15 @@ import {
   showApprovalCommand
 } from "../src/cli/commands/approval.js";
 import { initializeProject } from "../src/cli/commands/init.js";
+import {
+  correlationArtifactPath,
+  ensureApprovalCorrelation
+} from "../src/correlation/store.js";
 import { readJsonFile, writeJsonFileAtomic } from "../src/core/fs/json-file.js";
+import {
+  acquireResourceLock,
+  releaseResourceLock
+} from "../src/core/fs/resource-lock.js";
 import { WorkQueue } from "../src/queue/work-queue.js";
 import { StateApplier } from "../src/state/state-applier.js";
 import { createTempProject } from "./test-utils.js";
@@ -51,6 +59,34 @@ describe("ApprovalQueue", () => {
     await expect(listApprovalsCommand(root)).resolves.toContain(
       "id=APR-0003 status=confirmation_required type=deploy confirmation=board"
     );
+  });
+
+  it("does not mutate an existing correlation while listing approvals", async () => {
+    const root = await createTempProject();
+    await initializeProject({ projectRoot: root });
+    const approval = {
+      id: "APR-LOCKED-CORRELATION",
+      status: "pending",
+      created_at: "2026-08-04T00:00:00.000Z"
+    };
+    await writeApproval(root, approval);
+    const correlation = await ensureApprovalCorrelation(root, approval);
+    const lock = await acquireResourceLock(
+      root,
+      correlationArtifactPath(root, correlation.correlation_id),
+      { owner: "approval-list-read-test" }
+    );
+
+    try {
+      await expect(new ApprovalQueue(root).list()).resolves.toEqual([
+        expect.objectContaining({
+          id: approval.id,
+          correlation_id: correlation.correlation_id
+        })
+      ]);
+    } finally {
+      await releaseResourceLock(lock);
+    }
   });
 
   it("shows sanitized details without raw diff, logs, or secrets", async () => {

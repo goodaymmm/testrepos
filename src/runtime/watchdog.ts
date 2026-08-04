@@ -3,7 +3,11 @@ import path from "node:path";
 import { listProviderPolicyHealth } from "../agents/provider-policy.js";
 import { loadConfigFile } from "../core/config/load-config.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
-import { appendJsonLine, readJsonLines } from "../core/fs/jsonl-file.js";
+import {
+  appendJsonLine,
+  readJsonLines,
+  readJsonLinesTail
+} from "../core/fs/jsonl-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
 import { withResourceLock } from "../core/fs/resource-lock.js";
 import { nextId } from "../core/ids/counter.js";
@@ -1001,7 +1005,7 @@ async function readNotificationRecords(
   );
   try {
     await access(filePath);
-    return (await readJsonLines<Record<string, unknown>>(filePath)).slice(-2_000);
+    return await readJsonLinesTail<Record<string, unknown>>(filePath, 2_000);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return [];

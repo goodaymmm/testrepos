@@ -3,7 +3,12 @@ import path from "node:path";
 import { appendJsonLine } from "../core/fs/jsonl-file.js";
 import { readJsonFile, writeJsonFileAtomic } from "../core/fs/json-file.js";
 import { getKaironPaths, resolveInside, toPosixPath } from "../core/fs/paths.js";
-import { withResourceLock, writeJsonFileFenced } from "../core/fs/resource-lock.js";
+import {
+  ResourceLockAlreadyExistsError,
+  type ResourceLockHandle,
+  withResourceLock,
+  writeJsonFileFenced
+} from "../core/fs/resource-lock.js";
 import { nextId } from "../core/ids/counter.js";
 
 export type CorrelationMemberKind =
@@ -97,6 +102,7 @@ const safeStatusPattern = /^[a-z0-9][a-z0-9._-]{0,63}$/u;
 const terminalApprovalStatuses = new Set(["decided", "completed", "rejected", "cancelled"]);
 const terminalDiscordStatuses = new Set(["decided", "completed", "rejected", "cancelled", "updated"]);
 const mutationLocks = new Map<string, Promise<void>>();
+const correlationLockRetryDelaysMs = [25, 50, 100, 200, 400, 800, 1_000] as const;
 
 export async function ensureApprovalCorrelation(
   projectRoot: string,
@@ -127,7 +133,7 @@ async function ensureApprovalCorrelationUnlocked(
       : validateCorrelationId(explicitCorrelationId);
 
   if (approval.correlation_id !== correlationId) {
-    await withResourceLock(
+    await withCorrelationResourceLock(
       projectRoot,
       approvalPath,
       { owner: "correlation-approval-link", ttlMs: 30_000 },
@@ -232,7 +238,7 @@ async function trackCorrelationMemberUnlocked(
   const correlationId = await resolveCorrelationIdUnlocked(projectRoot, input, id);
   const filePath = correlationArtifactPath(projectRoot, correlationId);
 
-  return withResourceLock(
+  return withCorrelationResourceLock(
     projectRoot,
     filePath,
     { owner: "correlation-store", ttlMs: 30_000 },
@@ -564,4 +570,29 @@ async function withMutationLock<T>(
       mutationLocks.delete(key);
     }
   }
+}
+
+async function withCorrelationResourceLock<T>(
+  projectRoot: string,
+  resourcePath: string,
+  options: { owner: string; ttlMs: number },
+  run: (handle: ResourceLockHandle) => Promise<T>
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await withResourceLock(projectRoot, resourcePath, options, run);
+    } catch (error) {
+      if (
+        !(error instanceof ResourceLockAlreadyExistsError) ||
+        attempt >= correlationLockRetryDelaysMs.length
+      ) {
+        throw error;
+      }
+      await delay(correlationLockRetryDelaysMs[attempt]);
+    }
+  }
+}
+
+function delay(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }

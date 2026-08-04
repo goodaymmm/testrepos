@@ -26,10 +26,12 @@ const notificationsPath = path.join(
 );
 const restartDelayMs = 5_000;
 const boardRotationMs = 12 * 60 * 60 * 1_000;
+const statusRenameRetryDelaysMs = [25, 50, 100, 200, 400, 800, 1_000];
 const children = new Map();
 let shuttingDown = false;
 let boardAccess;
 let statusWriteSequence = 0;
+let statusWriteQueue = Promise.resolve();
 let heartbeatTimer;
 let stopRequestTimer;
 
@@ -340,6 +342,12 @@ async function runCliCapture(args) {
 }
 
 async function writeStatus(status, extra = {}) {
+  const write = statusWriteQueue.then(() => writeStatusAtomic(status, extra));
+  statusWriteQueue = write.catch(() => undefined);
+  return write;
+}
+
+async function writeStatusAtomic(status, extra = {}) {
   const value = {
     schema_version: "0.1",
     artifact_kind: "t199_remote_supervisor_status",
@@ -363,8 +371,30 @@ async function writeStatus(status, extra = {}) {
     ...extra
   };
   const temporary = `${statusPath}.tmp-${process.pid}-${statusWriteSequence++}`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
-  await rename(temporary, statusPath);
+  try {
+    await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await renameStatusFile(temporary, statusPath);
+  } catch (error) {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+async function renameStatusFile(source, destination) {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await rename(source, destination);
+      return;
+    } catch (error) {
+      if (
+        !["EACCES", "EBUSY", "EPERM"].includes(error?.code) ||
+        attempt >= statusRenameRetryDelaysMs.length
+      ) {
+        throw error;
+      }
+      await delay(statusRenameRetryDelaysMs[attempt]);
+    }
+  }
 }
 
 function pipeLog(name, stream) {
@@ -381,7 +411,12 @@ async function appendLog(name, message) {
 async function recordError(component, error) {
   const message = String(error?.message ?? error).replace(/[\r\n]+/gu, " ").slice(0, 500);
   await appendLog(component, `error=${message}`);
-  await writeStatus("degraded", { component, error: message });
+  await writeStatus("degraded", { component, error: message }).catch(async (statusError) => {
+    const statusMessage = String(statusError?.message ?? statusError)
+      .replace(/[\r\n]+/gu, " ")
+      .slice(0, 500);
+    await appendLog(component, `status_error=${statusMessage}`).catch(() => undefined);
+  });
 }
 
 function resolveProjectRoot(args) {

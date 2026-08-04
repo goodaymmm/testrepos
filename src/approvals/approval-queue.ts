@@ -132,16 +132,13 @@ export class ApprovalQueue {
         .map((entry) => readJsonFile<ApprovalRecord>(resolveInside(approvalsDir, entry)))
     );
 
-    return Promise.all(
-      approvals
-        .filter((approval) => typeof approval.id === "string")
-        .map(async (approval) => {
-          const correlation = await ensureApprovalCorrelation(this.projectRoot, approval, {
-            migrated: approval.correlation_id === undefined
-          });
-          return { ...approval, correlation_id: correlation.correlation_id };
-        })
-    );
+    const correlated: ApprovalRecord[] = [];
+    for (const approval of approvals.filter(
+      (candidate) => typeof candidate.id === "string"
+    )) {
+      correlated.push(await this.ensureLegacyCorrelation(approval));
+    }
+    return correlated;
   }
 
   private async readApproval(approvalId: string): Promise<ApprovalRecord> {
@@ -149,10 +146,7 @@ export class ApprovalQueue {
       const approval = await readJsonFile<ApprovalRecord>(
         resolveInside(getKaironPaths(this.projectRoot).approvalsDir, `${approvalId}.json`)
       );
-      const correlation = await ensureApprovalCorrelation(this.projectRoot, approval, {
-        migrated: approval.correlation_id === undefined
-      });
-      return { ...approval, correlation_id: correlation.correlation_id };
+      return this.ensureLegacyCorrelation(approval);
     } catch (error) {
       if (String(error).includes("ENOENT")) {
         throw new ApprovalNotFoundError(approvalId);
@@ -164,6 +158,21 @@ export class ApprovalQueue {
 
   private now(): Date {
     return this.options.now?.() ?? new Date();
+  }
+
+  private async ensureLegacyCorrelation(
+    approval: ApprovalRecord
+  ): Promise<ApprovalRecord> {
+    if (
+      typeof approval.correlation_id === "string" &&
+      approval.correlation_id.trim().length > 0
+    ) {
+      return approval;
+    }
+    const correlation = await ensureApprovalCorrelation(this.projectRoot, approval, {
+      migrated: true
+    });
+    return { ...approval, correlation_id: correlation.correlation_id };
   }
 }
 
