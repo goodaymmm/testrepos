@@ -26,6 +26,9 @@ describe("T199 soak operations", () => {
     expect(workload).toContain(
       "T199 daily notification sample cleanup after workload failure"
     );
+    expect(workload).toContain("const remoteProbeIntervalMs = 30_000;");
+    expect(workload).toContain("await delay(remoteProbeIntervalMs);");
+    expect(workload).not.toContain("await delay(1_000);");
   });
 
   it("uses the full soak execution key for retry-safe approval ids", async () => {
