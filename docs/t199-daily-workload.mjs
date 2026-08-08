@@ -11,6 +11,8 @@ import { runRemoteDoctorCommand } from "../dist/cli/commands/remote.js";
 import { WorkQueue } from "../dist/queue/work-queue.js";
 import { createT199ApprovalId } from "./t199-soak-identifiers.mjs";
 
+const remoteProbeIntervalMs = 30_000;
+
 const projectRoot = resolveProjectRoot(process.argv.slice(2));
 const runtimeRoot = path.join(projectRoot, ".kairon", "runtime");
 const lockPath = path.join(runtimeRoot, "t199-daily-workload.lock");
@@ -101,9 +103,16 @@ try {
     const probe = JSON.parse(output);
     result.remote_probes.push({
       discord: probe.discord?.external_readiness ?? "unknown",
-      board: probe.board?.external_readiness ?? "unknown"
+      discord_attempts: probe.discord?.probe?.attempts ?? 0,
+      discord_failure_category:
+        probe.discord?.probe?.failure_category ?? "none",
+      board: probe.board?.external_readiness ?? "unknown",
+      board_attempts: probe.board?.probe?.attempts ?? 0,
+      board_failure_category: probe.board?.probe?.failure_category ?? "none"
     });
-    await delay(1_000);
+    if (index < 3) {
+      await delay(remoteProbeIntervalMs);
+    }
   }
 
   await waitForNotifications(projectRoot, result.approvals.map((item) => item.id));

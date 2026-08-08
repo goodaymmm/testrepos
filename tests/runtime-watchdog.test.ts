@@ -147,16 +147,16 @@ describe("runtime watchdog", () => {
     ]);
   });
 
-  it("debounces one transient remote probe failure", () => {
+  it("debounces fewer than three transient remote probe failures", () => {
     const input = baseInput("2026-07-23T00:10:00.000Z");
     input.remote = {
       configured: true,
       external_unreachable: true,
-      external_unreachable_count: 1,
+      external_unreachable_count: 2,
       identity_bypass: false,
       url_drift: false,
       tunnel_disconnected: true,
-      tunnel_disconnected_count: 1
+      tunnel_disconnected_count: 2
     };
 
     expect(evaluateWatchdogRules(input, defaultWatchdogPolicy)).toEqual([]);

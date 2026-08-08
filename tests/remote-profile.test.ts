@@ -211,11 +211,13 @@ describe("stable remote operations profile", () => {
       discord: {
         local_status: "ready",
         external_readiness: "ready",
+        probe: { attempts: 1 },
         url_drift: false
       },
       board: {
         local_status: "ready",
         external_readiness: "identity_enforced",
+        probe: { attempts: 1 },
         url_drift: false
       },
       identity: { status: "enforced" },
@@ -261,6 +263,65 @@ describe("stable remote operations profile", () => {
     });
   });
 
+  it("retries one transient timeout inside a logical probe", async () => {
+    const root = await createRemoteProject();
+    await writeRuntimeStatuses(root);
+    let boardAttempts = 0;
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).endsWith("/discord/ready")) {
+        return Response.json({ status: "ready", mode: "http_interactions" });
+      }
+      boardAttempts += 1;
+      if (boardAttempts === 1) {
+        const error = new Error("request timed out with secret=do-not-store");
+        error.name = "AbortError";
+        throw error;
+      }
+      return new Response("", { status: 302 });
+    }) as unknown as typeof fetch;
+
+    const status = await inspectStableRemoteOperations(root, {
+      fetchImpl,
+      probeExternal: true,
+      probeRetryBackoffMs: 0
+    });
+
+    expect(status.status).toBe("ready");
+    expect(status.board).toMatchObject({
+      external_readiness: "identity_enforced",
+      consecutive_failures: 0,
+      probe: { attempts: 2 }
+    });
+    expect(JSON.stringify(status)).not.toContain("do-not-store");
+  });
+
+  it("counts all failed retry attempts as one logical probe failure", async () => {
+    const root = await createRemoteProject();
+    await writeRuntimeStatuses(root);
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).endsWith("/discord/ready")) {
+        return Response.json({ status: "ready", mode: "http_interactions" });
+      }
+      throw new Error("network unavailable token=do-not-store");
+    }) as unknown as typeof fetch;
+
+    const status = await inspectStableRemoteOperations(root, {
+      fetchImpl,
+      probeExternal: true,
+      probeRetryBackoffMs: 0
+    });
+
+    expect(status.board).toMatchObject({
+      external_readiness: "unreachable",
+      consecutive_failures: 1,
+      probe: {
+        attempts: 3,
+        failure_category: "network"
+      }
+    });
+    expect(JSON.stringify(status)).not.toContain("do-not-store");
+  });
+
   it("tracks and resets consecutive external probe failures", async () => {
     const root = await createRemoteProject();
     await writeRuntimeStatuses(root);
@@ -275,16 +336,19 @@ describe("stable remote operations profile", () => {
     const first = await inspectStableRemoteOperations(root, {
       fetchImpl: failingFetch,
       probeExternal: true,
+      probeRetryBackoffMs: 0,
       now: () => now
     });
     const second = await inspectStableRemoteOperations(root, {
       fetchImpl: failingFetch,
       probeExternal: true,
+      probeRetryBackoffMs: 0,
       now: () => new Date(now.getTime() + 60_000)
     });
     const third = await inspectStableRemoteOperations(root, {
       fetchImpl: failingFetch,
       probeExternal: true,
+      probeRetryBackoffMs: 0,
       now: () => new Date(now.getTime() + 120_000)
     });
     expect(first.board.consecutive_failures).toBe(1);
@@ -325,7 +389,7 @@ describe("stable remote operations profile", () => {
       if (boardOutcomes.shift() === "ready") {
         return new Response("", { status: 302 });
       }
-      throw new Error("transient board failure");
+      return new Response("not found", { status: 404 });
     }) as unknown as typeof fetch;
     vi.stubGlobal("fetch", failingFetch);
 
@@ -433,6 +497,7 @@ describe("stable remote operations profile", () => {
 
     const disconnected = await inspectStableRemoteOperations(root, {
       probeExternal: true,
+      probeRetryBackoffMs: 0,
       fetchImpl: vi.fn(async () => {
         throw new Error("network unavailable");
       }) as unknown as typeof fetch
