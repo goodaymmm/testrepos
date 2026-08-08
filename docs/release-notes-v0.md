@@ -7,6 +7,11 @@ Kaironのrelease判断に使う手動release notesです。自動生成ではな
 
 <!-- kairon:release-notes-unreleased -->
 
+## 0.3.4 - 2026-08-08
+
+- T214でStable remote外部probeを論理retry化し、一時的な疎通揺らぎによる
+  HIGH incident誤検知を抑制。失敗分類とattempt証跡も追加。
+
 0.3.0 Stable baseline確定後の変更をここへ記録します。
 
 - T197: opt-inのWindows scheduled update check、release通知deduplicate、read-only guard、
