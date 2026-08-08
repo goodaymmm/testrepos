@@ -142,6 +142,39 @@ describe("T199 soak operations", () => {
     expect(result.stdout.trim()).toBe("2026-08-02T18:06:29.5810000+00:00");
   });
 
+  runIfPowerShell("accepts a T199 start window that crosses midnight", () => {
+    const tasksPath = path.resolve("docs", "t199-soak-tasks.ps1");
+    const controlPath = path.resolve("docs", "t199-soak-control.ps1");
+    const escaped = (value: string) => value.replaceAll("'", "''");
+    const command = [
+      `$tasks = Get-Content -LiteralPath '${escaped(tasksPath)}' -Raw -Encoding UTF8`,
+      `$control = Get-Content -LiteralPath '${escaped(controlPath)}' -Raw -Encoding UTF8`,
+      "$tokens = $null",
+      "$errors = $null",
+      "$tasksAst = [Management.Automation.Language.Parser]::ParseInput($tasks, [ref]$tokens, [ref]$errors)",
+      "$taskNames = @('ConvertTo-KaironTimeOfDay','Assert-KaironSchedule')",
+      "$tasksAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $taskNames -contains $node.Name }, $true) | ForEach-Object { . ([scriptblock]::Create($_.Extent.Text)) }",
+      "$schedule = [pscustomobject]@{ start_window_from='23:45'; start_window_to='00:00'; daily_workload_at='00:10'; discord_owner_user_id='12345678901234567'; discord_allowed_user_ids='12345678901234567' }",
+      "Assert-KaironSchedule $schedule",
+      "$tokens = $null",
+      "$errors = $null",
+      "$controlAst = [Management.Automation.Language.Parser]::ParseInput($control, [ref]$tokens, [ref]$errors)",
+      "$controlNames = @('Test-T199TimeWithinWindow')",
+      "$controlAst.FindAll({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $controlNames -contains $node.Name }, $true) | ForEach-Object { . ([scriptblock]::Create($_.Extent.Text)) }",
+      "$from = [TimeSpan]::Parse('23:45')",
+      "$to = [TimeSpan]::Parse('00:00')",
+      "@((Test-T199TimeWithinWindow ([TimeSpan]::Parse('23:50')) $from $to), (Test-T199TimeWithinWindow ([TimeSpan]::Parse('00:00')) $from $to), (Test-T199TimeWithinWindow ([TimeSpan]::Parse('00:01')) $from $to)) -join ','"
+    ].join("; ");
+    const result = spawnSync(
+      powershell!,
+      ["-NoProfile", "-Command", command],
+      { cwd: path.resolve("."), encoding: "utf8", timeout: 10_000 }
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("True,True,False");
+  });
+
   runIfPowerShell("requires confirmed remote failure at a soak checkpoint", () => {
     const scriptPath = path.resolve("docs", "t199-soak-control.ps1");
     const escapedPath = scriptPath.replaceAll("'", "''");

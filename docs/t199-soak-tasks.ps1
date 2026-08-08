@@ -53,10 +53,17 @@ function Assert-KaironSchedule {
   $from = ConvertTo-KaironTimeOfDay "start_window_from" ([string]$Schedule.start_window_from)
   $to = ConvertTo-KaironTimeOfDay "start_window_to" ([string]$Schedule.start_window_to)
   $daily = ConvertTo-KaironTimeOfDay "daily_workload_at" ([string]$Schedule.daily_workload_at)
-  if ($from -gt $to) {
-    throw "The T199 start window must not cross midnight."
+  $windowEnd = if ($to -lt $from) {
+    $to.Add([TimeSpan]::FromDays(1))
+  } else {
+    $to
   }
-  if ($daily -le $to) {
+  $dailyStart = if ($daily -le $from) {
+    $daily.Add([TimeSpan]::FromDays(1))
+  } else {
+    $daily
+  }
+  if ($dailyStart -le $windowEnd) {
     throw "The daily workload must start after the T199 start window closes."
   }
   if ([string]$Schedule.discord_owner_user_id -notmatch '^\d{17,20}$') {

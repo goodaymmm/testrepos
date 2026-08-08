@@ -193,6 +193,19 @@ function Convert-T199TimeOfDay([string]$Value) {
   )
 }
 
+function Test-T199TimeWithinWindow {
+  param(
+    [Parameter(Mandatory = $true)][TimeSpan]$Value,
+    [Parameter(Mandatory = $true)][TimeSpan]$From,
+    [Parameter(Mandatory = $true)][TimeSpan]$To
+  )
+
+  if ($From -le $To) {
+    return $Value -ge $From -and $Value -le $To
+  }
+  return $Value -ge $From -or $Value -le $To
+}
+
 function ConvertTo-T199DateTimeOffset([object]$Value) {
   if ($null -eq $Value) {
     throw "T199 timestamp is missing."
@@ -464,10 +477,7 @@ switch ($Action) {
     $localNow = Get-Date
     $windowFrom = Convert-T199TimeOfDay ([string]$schedule.start_window_from)
     $windowTo = Convert-T199TimeOfDay ([string]$schedule.start_window_to)
-    if (
-      $localNow.TimeOfDay -lt $windowFrom -or
-      $localNow.TimeOfDay -gt $windowTo
-    ) {
+    if (-not (Test-T199TimeWithinWindow $localNow.TimeOfDay $windowFrom $windowTo)) {
       throw "Start T199 between $($schedule.start_window_from) and $($schedule.start_window_to) local time so the $($schedule.daily_workload_at) daily workload covers the first and final day."
     }
     Assert-CleanQueue
